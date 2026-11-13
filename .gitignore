@@ -1,0 +1,15 @@
+# OpenVSP distribution (download separately; see README)
+/OpenVSP-3.56.0-win64/
+
+# Run outputs
+/runs/
+examples/*.json
+examples/*.log
+
+# Development probes and test runs (only the parameter inventory is kept)
+/dev/*
+!/dev/inventory.txt
+!/dev/inventory.vspscript
+
+__pycache__/
+*.pyc

@@ -1,0 +1,334 @@
+ ##CONTAINER VSPAEROSettings id=OBBLAYUXVB 
+ PARM|VSPAERO|GeomSet|type=1|val=-1|min=-1|max=1000|Thick surface geometry set 
+ PARM|VSPAERO|ThinGeomSet|type=1|val=1|min=-1|max=1000|Thin surface geometry set 
+ PARM|VSPAERO|UseMode|type=2|val=0|min=0|max=1|Flag to control whether modes are used instead of sets. 
+ PARM|VSPAERO|CGUseMode|type=2|val=0|min=0|max=1|Flag to control whether modes are used instead of sets or CG calc. 
+ PARM|VSPAERO|NRef|type=1|val=0|min=0|max=6|Number of mesh refinements to generate 
+ PARM|VSPAERO|CullFrac|type=0|val=0.03|min=0|max=1|Area fraction of thin orphan regions to cull. 
+ PARM|VSPAERO|CullFracFlag|type=2|val=0|min=0|max=1|Flag to enable orphan culling. 
+ PARM|VSPAERO|FindBodyWakesFlag|type=2|val=0|min=0|max=1|Flag to control whether body wakes are detected. 
+ PARM|VSPAERO|MergeDegenTriRegions|type=2|val=0|min=0|max=1|Flag to control whether merge degenerate triangle regions. 
+ PARM|VSPAERO|CleanIntersections|type=2|val=0|min=0|max=1|Flag to clean intersections. 
+ PARM|VSPAERO|CleanIntersectionsLenRatio|type=0|val=0.1|min=0|max=0.5|Length ratio of intersection segments to clean. 
+ PARM|VSPAERO|Sref|type=0|val=100|min=0|max=1e+12|Reference area 
+ PARM|VSPAERO|bref|type=0|val=1|min=0|max=1e+06|Reference span 
+ PARM|VSPAERO|cref|type=0|val=1|min=0|max=1e+06|Reference chord 
+ PARM|VSPAERO|RefFlag|type=1|val=0|min=0|max=1|Reference quantity flag 
+ PARM|VSPAERO|MACFlag|type=2|val=0|min=0|max=1|Use MAC instead of Cave for cbar 
+ PARM|VSPAERO|SCurveFlag|type=2|val=0|min=0|max=1|Use Scurve instead of Stot for Sref 
+ PARM|VSPAERO|MassSet|type=1|val=1|min=-1|max=1000|Mass property set 
+ PARM|VSPAERO|MassDegenSet|type=1|val=-1|min=-1|max=1000|Mass property degen set 
+ PARM|VSPAERO|NumMassSlice|type=1|val=10|min=10|max=200|Number of mass property slices 
+ PARM|VSPAERO|MassSliceDir|type=1|val=0|min=0|max=2|Slicing direction for mass property integration 
+ PARM|VSPAERO|Xcg|type=0|val=0|min=-1e+12|max=1e+12|X Center of Gravity 
+ PARM|VSPAERO|Ycg|type=0|val=0|min=-1e+12|max=1e+12|Y Center of Gravity 
+ PARM|VSPAERO|Zcg|type=0|val=0|min=-1e+12|max=1e+12|Z Center of Gravity 
+ PARM|VSPAERO|AlphaStart|type=0|val=0|min=-180|max=180|Angle of attack (Start) 
+ PARM|VSPAERO|AlphaEnd|type=0|val=10|min=-180|max=180|Angle of attack (End) 
+ PARM|VSPAERO|AlphaNpts|type=1|val=3|min=1|max=100|Angle of attack (Num Points) 
+ PARM|VSPAERO|BetaStart|type=0|val=0|min=-180|max=180|Angle of sideslip (Start) 
+ PARM|VSPAERO|BetaEnd|type=0|val=0|min=-180|max=180|Angle of sideslip (End) 
+ PARM|VSPAERO|BetaNpts|type=1|val=1|min=1|max=100|Angle of sideslip (Num Points) 
+ PARM|VSPAERO|MachStart|type=0|val=0|min=0|max=5|Freestream Mach number (Start) 
+ PARM|VSPAERO|MachEnd|type=0|val=0|min=0|max=5|Freestream Mach number (End) 
+ PARM|VSPAERO|MachNpts|type=1|val=1|min=1|max=100|Freestream Mach number (Num Points) 
+ PARM|VSPAERO|ReCref|type=0|val=1e+07|min=0|max=1e+12|Reynolds Number Along Reference Chord (Start) 
+ PARM|VSPAERO|ReCrefEnd|type=0|val=2e+07|min=0|max=1e+12|Reynolds Number Along Reference Chord (End) 
+ PARM|VSPAERO|ReCrefNpts|type=1|val=1|min=1|max=100|Reynolds Number Along Reference Chord (Num Points) 
+ PARM|VSPAERO|NCPU|type=1|val=4|min=1|max=255|Number of processors to use 
+ PARM|VSPAERO|FixedWakeFlag|type=2|val=0|min=0|max=1|Flag to enable a fixed wake. 
+ PARM|VSPAERO|WakeNumIter|type=1|val=5|min=3|max=255|Number of wake iterations to execute 
+ PARM|VSPAERO|RootWakeNodes|type=1|val=8|min=0|max=1e+12|Number of Wake Nodes 
+ PARM|VSPAERO|m_ConvergenceXMinIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_ConvergenceXMaxIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_ConvergenceYMinIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_ConvergenceYMaxIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_ConvergenceXMin|type=0|val=-1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_ConvergenceXMax|type=0|val=1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_ConvergenceYMin|type=0|val=-1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_ConvergenceYMax|type=0|val=1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_LoadDistTimeIndex|type=1|val=-1|min=-1|max=1e+12|Default Description 
+ PARM|VSPAERO|m_LoadDistXMinIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_LoadDistXMaxIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_LoadDistYMinIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_LoadDistYMaxIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_LoadDistXMin|type=0|val=-1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_LoadDistXMax|type=0|val=1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_LoadDistYMin|type=0|val=-1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_LoadDistYMax|type=0|val=1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_SweepXMinIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_SweepXMaxIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_SweepYMinIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_SweepYMaxIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_SweepXMin|type=0|val=-1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_SweepXMax|type=0|val=1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_SweepYMin|type=0|val=-1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_SweepYMax|type=0|val=1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_CpSliceXMinIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_CpSliceXMaxIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_CpSliceYMinIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_CpSliceYMaxIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_CpSliceXMin|type=0|val=-1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_CpSliceXMax|type=0|val=1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_CpSliceYMin|type=0|val=-1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_CpSliceYMax|type=0|val=1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|CpSliceYAxisFlipFlag|type=2|val=0|min=0|max=1|Flag to Flip Y Axis in Cp Slice Plot 
+ PARM|VSPAERO|CpSlicePlotLinesFlag|type=2|val=1|min=0|max=1|Flag to Plot Lines 
+ PARM|VSPAERO|m_UnsteadyXMinIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_UnsteadyXMaxIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_UnsteadyYMinIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_UnsteadyYMaxIsManual|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_UnsteadyXMin|type=0|val=-1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_UnsteadyXMax|type=0|val=1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_UnsteadyYMin|type=0|val=-1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|m_UnsteadyYMax|type=0|val=1|min=-1e+12|max=1e+12|Default Description 
+ PARM|VSPAERO|UnsteadyGroupSelectType|type=1|val=0|min=0|max=2|Default Description 
+ PARM|VSPAERO|LoadDistSelectType|type=1|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|Vinf|type=0|val=100|min=0|max=1e+06|Freestream Velocity Through Propeller or Actuator Disk or for Stability Analysis 
+ PARM|VSPAERO|Rho|type=0|val=0.002377|min=0|max=1000|Freestream Density. Used to Calculate Propeller or Actuator Disk Coefficients 
+ PARM|VSPAERO|Vref|type=0|val=100|min=0|max=1e+12|Reference Velocity. Set to Rotor Tip Speed for Hover Analysis (Vinf = 0) 
+ PARM|VSPAERO|ManualVrefFlag|type=2|val=0|min=0|max=1|Flag to Set Vref Manually or Automatically Equal to Vinf 
+ PARM|VSPAERO|Machref|type=0|val=0.3|min=0|max=1e+12|Reference Mach Number. Set to Rotor Tip Mach Number for Hover Analysis (Vinf = 0) 
+ PARM|VSPAERO|Symmetry|type=2|val=0|min=0|max=1|Toggle X-Z Symmetry to Improve Calculation Time 
+ PARM|VSPAERO|Write2DFEMFlag|type=2|val=0|min=0|max=1|Toggle File Write for 2D FEM 
+ PARM|VSPAERO|WriteTecplotFlag|type=2|val=0|min=0|max=1|Toggle to write Tecplot file 
+ PARM|VSPAERO|Clo2D|type=0|val=0|min=-1000|max=1000|Airfoil lift coefficient for minimum drag point 
+ PARM|VSPAERO|StallModel|type=1|val=0|min=0|max=1|Stall Modeling Option 
+ PARM|VSPAERO|CLMax2D|type=0|val=1|min=-1000|max=1000|Maximum 2D lift coefficient. 
+ PARM|VSPAERO|FarDist|type=0|val=-1|min=-1|max=1e+06|Far Field Distance for Wake Adaptation 
+ PARM|VSPAERO|FarDistToggle|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|CpSliceFlag|type=2|val=1|min=0|max=1|Flag to Calculate Cp Slices for Each Run Case 
+ PARM|VSPAERO|GroundEffect|type=0|val=-1|min=-1|max=1e+06|Ground Effect Distance 
+ PARM|VSPAERO|GroundEffectToggle|type=2|val=0|min=0|max=1|Default Description 
+ PARM|VSPAERO|m_PropBladesMode|type=1|val=0|min=0|max=2|Mode for VSPAERO treatment of prop/rotor blades. 
+ PARM|VSPAERO|UnsteadyType|type=1|val=0|min=0|max=6|Unsteady Calculation Type 
+ PARM|VSPAERO|FreezeMultiPoleAtIteration|type=1|val=10000|min=0|max=1e+12|Freeze the multipole expansion update 
+ PARM|VSPAERO|m_FreezeWakeAtIteration|type=1|val=10000|min=0|max=1e+12|Freeze the wake after this number of iterations 
+ PARM|VSPAERO|FreezeWakeRootVortices|type=2|val=0|min=0|max=1|Freeze the root wake vortices 
+ PARM|VSPAERO|ImplicitWake|type=2|val=0|min=0|max=1|Turn on implicit wake 
+ PARM|VSPAERO|ImplicitWakeStartIteration|type=1|val=0|min=0|max=1e+12|Iteration at which to start implicit wake solve 
+ PARM|VSPAERO|WakeRelax|type=0|val=1|min=0|max=1|Wake relaxation factor 
+ PARM|VSPAERO|ForwardGMRESConvergenceFactor|type=0|val=1|min=0|max=1e+12|User Forward GMRES residual reduction factor... this scales the default residual reduction 
+ PARM|VSPAERO|AdjointGMRESConvergenceFactor|type=0|val=1|min=0|max=1e+12|User Adjoint GMRES residual reduction factor... this scales the default residual reduction 
+ PARM|VSPAERO|NonLinearConvergenceFactor|type=0|val=1|min=0|max=1e+12|User non-linear residual reduction factor on solution of overall nonlinear system... this scales the default residual reduction 
+ PARM|VSPAERO|CoreSizeFactor|type=0|val=1|min=0|max=1e+12|Adjust the wake core size model up or down, default value is 1. 
+ PARM|VSPAERO|FarAway|type=0|val=5|min=0|max=1e+12|Set the multipole far away value 
+ PARM|VSPAERO|UpdateMatrixPreconditioner|type=2|val=0|min=0|max=1|Force update of matrix preconditioners every newton iteration 
+ PARM|VSPAERO|UseWakeNodeMatrixPreconditioner|type=2|val=0|min=0|max=1|Turn on the wake matrix preconditioner 
+ PARM|VSPAERO|QuadTreeBufferLevels|type=1|val=0|min=0|max=100|Set number of buffer levels for quad tree... the higher the level, the more cells 
+ PARM|VSPAERO|TimeStepSize|type=0|val=0.001|min=0|max=1e+09|Size of Time Step for Unsteady Analysis 
+ PARM|VSPAERO|NumTimeSteps|type=1|val=25|min=0|max=1e+09|Number of Time Steps for Unsteady Analysis 
+ PARM|VSPAERO|StartAveragingTimeStep|type=1|val=1|min=0|max=1e+12|Set the time step to start averaging time accurate forces. 
+ PARM|VSPAERO|AutoTimeStepFlag|type=2|val=1|min=0|max=1|Flag for VSPAERO to Automatically Calculate the Time Step for the Slowest Rotor to Complete a Set Number of Revolutions 
+ PARM|VSPAERO|AutoTimeNumRevs|type=1|val=5|min=0|max=1e+09|Number of Revolutions for the Slowest Rotor to Complete in Auto Time Step Mode 
+ PARM|VSPAERO|HoverRampFlag|type=2|val=0|min=0|max=1|Flag to Add Hoverramp 
+ PARM|VSPAERO|HoverRamp|type=0|val=0|min=-1e+12|max=1e+12|Decay Freestream Velocity from V1 to Vinf 
+ PARM|VSPAERO|FromSteadyState|type=2|val=0|min=0|max=1|Flag to Indicate Steady State 
+ PARM|VSPAERO|NoiseCalcFlag|type=2|val=0|min=0|max=1|Do Calculations for Noise and Write PSU-WOPWOP Files 
+ PARM|VSPAERO|NoiseCalcType|type=1|val=0|min=0|max=2|Type of Noise Calculation 
+ PARM|VSPAERO|NoiseUnits|type=1|val=0|min=0|max=1|Model Units for Noise Calculation 
+ PARM|VSPAERO|UniformPropRPMFlag|type=2|val=1|min=0|max=1|Flag to Set RPM to the Same Value for All Unsteady Propellers 
+ PARM|CpSlice|CutType|type=1|val=1|min=0|max=2|Perpendicular Axis for the Cut 
+ PARM|CpSlice|CutPosition|type=0|val=0|min=-1e+12|max=1e+12|Position of the Cut from Orgin Along Perpendicular Axis 
+ PARM|CpSlice|DrawCutFlag|type=2|val=1|min=0|max=1|Flag to Draw the CpSlice Cutting Plane 
+ ##CONTAINER ParasiteDragSettings id=MZOAJJEEZT 
+ PARM|ParasiteDrag|SortBy|type=1|val=0|min=0|max=2|Flag to determine what geometries are sorted by 
+ PARM|ParasiteDrag|RefFlag|type=1|val=0|min=0|max=1|Reference quantity flag 
+ PARM|ParasiteDrag|Sref|type=0|val=100|min=0|max=1e+12|Reference area 
+ PARM|ParasiteDrag|LamCfEqnType|type=1|val=0|min=0|max=1|Laminar Cf Equation Choice 
+ PARM|ParasiteDrag|TurbCfEqnType|type=1|val=10|min=0|max=20|Turbulent Cf Equation Choice 
+ PARM|ParasiteDrag|AltLengthUnit|type=1|val=0|min=0|max=1|Altitude Units 
+ PARM|ParasiteDrag|LengthUnit|type=1|val=4|min=0|max=6|Length Units 
+ PARM|ParasiteDrag|TempUnit|type=1|val=2|min=0|max=3|Temperature Units 
+ PARM|ParasiteDrag|PresUnit|type=1|val=0|min=0|max=10|Pressure Units 
+ PARM|ParasiteDrag|FreestreamType|type=1|val=0|min=0|max=5|Assigns the desired inputs to describe the freestream properties 
+ PARM|ParasiteDrag|Mach|type=0|val=0|min=0|max=1000|Mach Number for Current Flight Condition 
+ PARM|ParasiteDrag|Re_L|type=0|val=0|min=0|max=1e+12|Reynolds Number Per Unit Length 
+ PARM|ParasiteDrag|Temp|type=0|val=288.15|min=-459.67|max=1e+12|Temperature 
+ PARM|ParasiteDrag|Pres|type=0|val=2116.22|min=0.0001|max=1e+12|Pressure 
+ PARM|ParasiteDrag|Density|type=0|val=0.07647|min=1e-12|max=1e+12|Density 
+ PARM|ParasiteDrag|DynaVisc|type=0|val=1e-12|min=1e-12|max=1e+12|Dynamic Viscosity for Current Condition 
+ PARM|ParasiteDrag|SpecificHeatRatio|type=0|val=1.4|min=-1|max=1000|Specific Heat Ratio 
+ PARM|ParasiteDrag|Vinf|type=0|val=500|min=0|max=1e+12|Free Stream Velocity 
+ PARM|ParasiteDrag|VinfUnitType|type=1|val=0|min=0|max=6|Units for Freestream Velocity 
+ PARM|ParasiteDrag|Alt|type=0|val=20000|min=0|max=271823|Physical Altitude from Sea Level 
+ PARM|ParasiteDrag|DeltaTemp|type=0|val=0|min=-1e+12|max=1e+12|Delta Temperature from STP 
+ PARM|ParasiteDrag|ExportSubCompFlag|type=2|val=0|min=0|max=1|Flag to Export Sub-Component Information 
+ PARM|ParasiteDrag|ExcresVal|type=0|val=0|min=0|max=200|Excrescence Value 
+ PARM|ParasiteDrag|ExcresType|type=1|val=0|min=0|max=4|Excrescence Type 
+ PARM|ParasiteDrag|Set|type=1|val=1|min=0|max=1000|Selected set for operation 
+ PARM|ParasiteDrag|UseModeMassFlag|type=2|val=0|min=0|max=1|Default Description 
+ ##CONTAINER WaveDragSettings id=AKRIPTQTHZ 
+ PARM|WaveDrag|NumSlices|type=1|val=20|min=3|max=100|Number of Wave Drag Slices 
+ PARM|WaveDrag|NumRotSects|type=1|val=10|min=3|max=30|Number of Rotation Sections 
+ PARM|WaveDrag|MachNumber|type=0|val=1.5|min=1|max=5|Mach Number 
+ PARM|WaveDrag|SelSetIndex|type=1|val=1|min=0|max=1000|Selected Set Index 
+ PARM|WaveDrag|UseMode|type=2|val=0|min=0|max=1|Default Description 
+ PARM|WaveDrag|RefFlag|type=1|val=0|min=0|max=1|Reference quantity flag 
+ PARM|WaveDrag|Sref|type=0|val=100|min=0.001|max=1e+12|Reference Area 
+ PARM|WaveDrag|SymmFlag|type=2|val=1|min=0|max=1|Default Description 
+ PARM|WaveDrag|PlaneFlag|type=2|val=0|min=0|max=1|Default Description 
+ PARM|WaveDrag|ThetaIndex|type=1|val=1|min=1|max=10000|Default Description 
+ PARM|WaveDrag|SlicingLoc|type=0|val=0|min=-1e+12|max=1e+12|View slice location 
+ PARM|WaveDrag|SelBodyIndex|type=1|val=0|min=0|max=1e+12|Selected Body of Rev Index 
+ PARM|WaveDrag|AreaPlotType|type=1|val=0|min=0|max=2|Area distribution plot type 
+ PARM|WaveDrag|PointPlotFlag|type=2|val=1|min=0|max=1|Default Description 
+ ANALYSIS BladeElement 
+ ANALYSIS CpSlicer 
+ ANALYSIS CompGeom 
+ ANALYSIS DegenGeom 
+ ANALYSIS PlanarSlice 
+ ANALYSIS DegenGeomMesh 
+ ANALYSIS EmintonLord 
+ ANALYSIS GeometryAnalysis 
+ ANALYSIS MassProp 
+ ANALYSIS FeaMeshAnalysis 
+ ANALYSIS Projection 
+ ANALYSIS SurfacePatches 
+ ANALYSIS WaveDrag 
+ ANALYSIS VSPAERODegenGeom 
+ ANALYSIS VSPAEROComputeGeometry 
+ ANALYSIS VSPAEROSinglePoint 
+ ANALYSIS VSPAEROSweep 
+ ANALYSIS VSPAEROReadPreviousAnalysis 
+ ANALYSIS ParasiteDrag 
+ ANALYSIS SurfaceIntersection 
+ ANALYSIS CfdMeshAnalysis 
+ ANALYSIS FeaMeshExport 
+ ##INPUTS VSPAEROSweep 
+   [input_name]                  [type]       	[#]	[current values-->]
+   2DFEMFlag                     integer      	1	0 
+   AdjointGMRESConvergenceFactor double       	1	1.000000 
+   AlphaEnd                      double       	1	10.000000 
+   AlphaNpts                     integer      	1	3 
+   AlphaStart                    double       	1	0.000000 
+   AutoTimeNumRevs               integer      	1	5 
+   AutoTimeStepFlag              integer      	1	1 
+   BetaEnd                       double       	1	0.000000 
+   BetaNpts                      integer      	1	1 
+   BetaStart                     double       	1	0.000000 
+   CGDegenSet                    integer      	1	-1 
+   CGGeomSet                     integer      	1	1 
+   CGModeID                      string       	1	 
+   CGUseModeFlag                 integer      	1	0 
+   CLMax2D                       double       	1	1.000000 
+   Clo2D                         double       	1	0.000000 
+   CoreSizeFactor                double       	1	1.000000 
+   FarAway                       double       	1	5.000000 
+   FarDist                       double       	1	-1.000000 
+   FarDistToggle                 integer      	1	0 
+   FixedWakeFlag                 integer      	1	0 
+   ForwardGMRESConvergenceFactor double       	1	1.000000 
+   FreezeMultiPoleAtIteration    integer      	1	10000 
+   FreezeWakeAtIteration         integer      	1	10000 
+   FreezeWakeRootVortices        integer      	1	0 
+   FromSteadyState               integer      	1	0 
+   GeomSet                       integer      	1	-1 
+   GroundEffect                  double       	1	-1.000000 
+   GroundEffectToggle            integer      	1	0 
+   HoverRamp                     double       	1	0.000000 
+   HoverRampFlag                 integer      	1	0 
+   ImplicitWake                  integer      	1	0 
+   ImplicitWakeStartIteration    integer      	1	0 
+   MACFlag                       integer      	1	0 
+   MachEnd                       double       	1	0.000000 
+   MachNpts                      integer      	1	1 
+   MachStart                     double       	1	0.000000 
+   Machref                       double       	1	0.300000 
+   ManualVrefFlag                integer      	1	0 
+   MassSliceDir                  integer      	1	0 
+   ModeID                        string       	1	 
+   NCPU                          integer      	1	4 
+   NoiseCalcFlag                 integer      	1	0 
+   NoiseCalcType                 integer      	1	0 
+   NoiseUnits                    integer      	1	0 
+   NonLinearConvergenceFactor    double       	1	1.000000 
+   NumMassSlice                  integer      	1	10 
+   NumTimeSteps                  integer      	1	25 
+   NumWakeNodes                  integer      	1	8 
+   PropBladesMode                integer      	1	0 
+   QuadTreeBufferLevels          integer      	1	0 
+   ReCref                        double       	1	10000000.000000 
+   ReCrefEnd                     double       	1	20000000.000000 
+   ReCrefNpts                    integer      	1	1 
+   RedirectFile                  string       	1	stdout 
+   RefFlag                       integer      	1	0 
+   Rho                           double       	1	0.002377 
+   SCurveFlag                    integer      	1	0 
+   Sref                          double       	1	100.000000 
+   StallModel                    integer      	1	0 
+   StartAveragingTimeStep        integer      	1	1 
+   StopBeforeRun                 integer      	1	0 
+   Symmetry                      integer      	1	0 
+   TecplotFlag                   integer      	1	0 
+   ThinGeomSet                   integer      	1	1 
+   TimeStepSize                  double       	1	0.001000 
+   UnsteadyType                  integer      	1	0 
+   UpdateMatrixPreconditioner    integer      	1	0 
+   UseModeFlag                   integer      	1	0 
+   UseWakeNodeMatrixPreconditionerinteger      	1	0 
+   Vinf                          double       	1	100.000000 
+   Vref                          double       	1	100.000000 
+   WakeNumIter                   integer      	1	5 
+   WakeRelax                     double       	1	1.000000 
+   WingID                        string       	1	 
+   Xcg                           double       	1	0.000000 
+   Ycg                           double       	1	0.000000 
+   Zcg                           double       	1	0.000000 
+   bref                          double       	1	1.000000 
+   cref                          double       	1	1.000000 
+ ##INPUTS VSPAEROComputeGeometry 
+   [input_name]                  [type]       	[#]	[current values-->]
+   CleanIntersectionsFlag        integer      	1	0 
+   CleanIntersectionsLenRatio    double       	1	0.100000 
+   CullFrac                      double       	1	0.030000 
+   CullFracFlag                  integer      	1	0 
+   FindBodyWakesFlag             integer      	1	0 
+   GeomSet                       integer      	1	-1 
+   MergeDegenTriRegionsFlag      integer      	1	0 
+   ModeID                        string       	1	 
+   NRef                          integer      	1	0 
+   SingleGeomID                  string       	1	 
+   Symmetry                      integer      	1	0 
+   ThinGeomSet                   integer      	1	1 
+   UseModeFlag                   integer      	1	0 
+ ##INPUTS ParasiteDrag 
+   [input_name]                  [type]       	[#]	[current values-->]
+   AltLengthUnit                 integer      	1	0 
+   Altitude                      double       	1	20000.000000 
+   DeltaTemp                     double       	1	0.000000 
+   Density                       double       	1	0.076470 
+   DynaVisc                      double       	1	0.000000 
+   ExportSubCompFlag             integer      	1	0 
+   FileName                      string       	1	ParasiteDragBuildUp.csv 
+   FreestreamPropChoice          integer      	1	0 
+   GeomSet                       integer      	1	1 
+   KineVisc                      double       	1	0.000000 
+   LamCfEqnChoice                integer      	1	0 
+   LengthUnit                    integer      	1	4 
+   Mach                          double       	1	0.000000 
+   ModeID                        string       	1	 
+   PresUnit                      integer      	1	0 
+   Pressure                      double       	1	2116.221000 
+   Re_L                          double       	1	0.000000 
+   RecomputeGeom                 integer      	1	1 
+   RefFlag                       integer      	1	0 
+   SpecificHeatRatio             double       	1	1.400000 
+   Sref                          double       	1	100.000000 
+   TempUnit                      integer      	1	2 
+   Temperature                   double       	1	288.150000 
+   TurbCfEqnChoice               integer      	1	10 
+   UseModeFlag                   integer      	1	0 
+   VelocityUnit                  integer      	1	0 
+   Vinf                          double       	1	500.000000 
+   WingID                        string       	1	 
+ ##INPUTS WaveDrag 
+   [input_name]                  [type]       	[#]	[current values-->]
+   Mach                          double       	1	1.500000 
+   ModeID                        string       	1	 
+   NumRotSects                   integer      	1	10 
+   NumSlices                     integer      	1	20 
+   SSFlow_vec                    string       	1	
+   Set                           integer      	1	1 
+   SymmFlag                      integer      	1	1 
+   UseModeFlag                   integer      	1	0 

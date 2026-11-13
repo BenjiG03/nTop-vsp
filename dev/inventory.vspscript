@@ -1,0 +1,28 @@
+void dumpContainer(string cname)
+{
+    string cid = FindContainer(cname, 0);
+    Print("##CONTAINER " + cname + " id=" + cid);
+    array<string> @groups = FindContainerGroupNames(cid);
+    for (int g = 0; g < int(groups.size()); g++)
+    {
+        array<string> @pids = FindContainerParmIDs(cid);
+        for (int i = 0; i < int(pids.size()); i++)
+        {
+            string pid = pids[i];
+            if (GetParmGroupName(pid) != groups[g]) continue;
+            Print("PARM|" + groups[g] + "|" + GetParmName(pid) + "|type=" + GetParmType(pid) + "|val=" + GetParmVal(pid) + "|min=" + GetParmLowerLimit(pid) + "|max=" + GetParmUpperLimit(pid) + "|" + GetParmDescript(pid));
+        }
+    }
+}
+void main()
+{
+    dumpContainer("VSPAEROSettings");
+    dumpContainer("ParasiteDragSettings");
+    dumpContainer("WaveDragSettings");
+    array<string> @names = ListAnalysis();
+    for (int i = 0; i < int(names.size()); i++) Print("ANALYSIS " + names[i]);
+    Print("##INPUTS VSPAEROSweep"); PrintAnalysisInputs("VSPAEROSweep");
+    Print("##INPUTS VSPAEROComputeGeometry"); PrintAnalysisInputs("VSPAEROComputeGeometry");
+    Print("##INPUTS ParasiteDrag"); PrintAnalysisInputs("ParasiteDrag");
+    Print("##INPUTS WaveDrag"); PrintAnalysisInputs("WaveDrag");
+}

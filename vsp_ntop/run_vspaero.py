@@ -1,17 +1,19 @@
-"""VSPAERO panel analysis of a tessellated surface, driven from nTop.
+"""VSPAERO analysis of a tessellated surface (panel method or vortex lattice), driven from nTop.
 
     python run_vspaero.py SETTINGS_FILE
 
 Steps (each logged to ``<case>.ntvsp.log``):
 
 1. OpenVSP imports the surface mesh (``<case>.stl``, metres) as a MeshGeom and writes VSPAERO's panel file
-   (``VSPAEROComputeGeometry``: ``<case>.vspgeom``, ``<case>.vkey``).
+   (``VSPAEROComputeGeometry``: ``<case>.vspgeom``, ``<case>.vkey``). With ``method = vlm`` the surface is then
+   marked thin in the ``.vkey`` file, so VSPAERO solves it as a vortex lattice (a camber sheet) instead of panels.
 2. Trailing-edge wakes are added to the panel file (``vspgeom.py``) along the mesh edges joining the trailing-edge
-   vertices the user lists: VSP marks none on a tessellation.
+   vertices the user lists: VSP marks none on a tessellation. A thin surface's file is then rewritten in VSPAERO's
+   polygon layout (``vspgeom.polygon_layout``), so VSPAERO solves on the triangles as given.
 3. ``<case>.vspaero`` is written with every setting, in the form OpenVSP itself writes it.
 4. ``vspaero.exe`` solves all Mach x alpha x beta x Re_cref combinations in one run.
-5. Results for nTop: ``<case>.ntvsp.polar.csv`` (one row per case), per-case surface pressure point maps,
-   and the wake lines.
+5. Results for nTop: ``<case>.ntvsp.polar.csv`` (one row per case), per-case surface pressure point maps (the
+   pressure jump across the sheet on a thin surface), the panels behind them, and the wake lines.
 
 Settings (``key = value``; lengths in metres, angles in degrees, SI elsewhere) are listed in ``KEYS`` below.
 """
@@ -124,6 +126,9 @@ def read_polar(path):
         if r[0] == "Beta" and header is None:
             header = r
         elif header is not None:
+            if any("nan" in v.lower() for v in r[:len(header)]):
+                raise DriverError(f"VSPAERO did not converge (NaN results) for Mach {r[1]}, alpha {r[2]}, beta "
+                                  f"{r[0]}; see the .vspaero.log")
             try:
                 data.append([float(v) for v in r[:len(header)]])
             except ValueError:
@@ -137,13 +142,23 @@ def clean(name):
     return name.replace("/", "_over_").replace("Re_over_1e6", "Re_1e6")
 
 
-def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, log):
-    """Per-case Cp and pressure difference point maps at triangle centroids and nodes."""
+def surface_outputs(work, case, g: vspgeom.VSPGeom, order, method, s: Settings, header, data, log):
+    """Per-case Cp and pressure difference point maps at triangle centroids and nodes.
+
+    ``order``: the face of ``g`` behind each of VSPAERO's level-0 triangles. On a thin surface (``method`` vlm) the
+    values are the pressure jump across the sheet, Cp on the side the face normals point to minus Cp on
+    the other side. Also writes ``<case>.ntvsp.panels.txt``
+    (the triangles in that order) for VSPAERO Thin Surface Projection (VSP).
+    """
     cases = adb.read_cases(os.path.join(work, case + ".adb.cases"))
-    blocks, n_tri = adb.read_cp(os.path.join(work, case + ".adb"), len(cases))
-    err = adb.check_against_tecplot(blocks, os.path.join(work, case + ".tec.dat"))
-    log(f"surface pressures: {len(cases)} conditions, {n_tri} panels (check against Tecplot output: {err:.1e})")
-    faces = g.faces
+    try:
+        blocks, n_tri = adb.read_cp(os.path.join(work, case + ".adb"), cases, len(order))
+        err = adb.check_against_tecplot(blocks, os.path.join(work, case + ".tec.dat"))
+    except ValueError as e:
+        raise DriverError(f"surface pressures: {e}")
+    log(f"surface pressures: {len(cases)} conditions, {n_tri} loops with the wakes (check against Tecplot output: "
+        f"{err:.1e})")
+    faces = [g.faces[i] for i in order]
     if any(len(f) != 3 for f in faces):
         raise DriverError("the panel file has non-triangular faces")
     nf = len(faces)
@@ -156,6 +171,11 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, l
         areas.append(0.5 * math.sqrt(cx[0] ** 2 + cx[1] ** 2 + cx[2] ** 2))
     q = 0.5 * s.real("rho") * s.real("vinf") ** 2
     used = sorted({i for f in faces for i in f})
+    index = {v: k for k, v in enumerate(used)}
+    with open(os.path.join(work, case + ".ntvsp.panels.txt"), "w", newline="\n") as f:
+        f.write(f"{method} {len(used)} {nf}\n")
+        f.writelines(f"{g.nodes[i][0]!r} {g.nodes[i][1]!r} {g.nodes[i][2]!r}\n" for i in used)
+        f.writelines(" ".join(str(index[i]) for i in t) + "\n" for t in faces)
     i_mach, i_aoa, i_beta = header.index("Mach"), header.index("AoA"), header.index("Beta")
     for row_number, row in enumerate(data, start=1):
         # VSPAERO solves Mach 0 as Mach 0.001 and lists it so in .adb.cases; the case list has 7 decimals.
@@ -203,6 +223,18 @@ def main(settings_path):
     geom = os.path.join(work, case + ".vspgeom")
     if not os.path.isfile(geom):
         raise DriverError("OpenVSP wrote no .vspgeom file")
+    method = s.text("method", "panel")
+    if method not in ("panel", "vlm"):
+        raise DriverError(f"method = {method}: expected panel or vlm")
+    n_free = vspgeom.free_edges(vspgeom.read(geom))
+    if method == "vlm":
+        vspgeom.set_thick(os.path.join(work, case + ".vkey"), False)
+        log(f"method: vortex lattice (the mesh is a thin camber surface; {n_free} free edges)")
+    else:
+        log("method: panel (the mesh is a thick, closed surface)")
+        if n_free:
+            log(f"warning: the mesh has {n_free} free edges, so it is not closed; the panel method needs a closed "
+                "surface (use the vortex lattice method for a thin sheet)")
 
     # 2. Trailing-edge wakes.
     try:
@@ -212,6 +244,16 @@ def main(settings_path):
     log(f"wakes: {n_wakes} trailing edges, {n_edges} edges")
     if n_wakes == 0:
         log("warning: no trailing-edge wakes; VSPAERO will shed no vorticity and the surface carries almost no lift")
+    tri_geom = vspgeom.read(geom)
+    order = list(range(len(tri_geom.faces)))
+    if method == "vlm":
+        # VSPAERO's own pairing of triangles can drop trailing-wake edges behind swept trailing edges (see
+        # vspgeom.polygon_layout); hand it the triangles as its solution grid instead, as OpenVSP does for wings.
+        try:
+            order = vspgeom.polygon_layout(geom, geom)
+        except ValueError as e:
+            raise DriverError(f"thin surface: {e}")
+        log("panel file in VSPAERO's polygon layout: VSPAERO solves on the mesh triangles as given")
     wake_pts, wake_ids = [], []
     for k, line in enumerate(polylines, start=1):
         wake_pts += line
@@ -251,10 +293,10 @@ def main(settings_path):
         raise DriverError(f"VSPAERO wrote no .polar file; see {case}.vspaero.log")
     header, data = read_polar(polar)
     if len(data) != n_cases:
-        log(f"warning: {len(data)} rows in the polar for {n_cases} cases")
+        raise DriverError(f"VSPAERO's polar has {len(data)} rows for {n_cases} cases; see {case}.vspaero.log")
     write_csv(os.path.join(work, case + ".ntvsp.polar.csv"), ["Case"] + [clean(h) for h in header],
               [[i] + row for i, row in enumerate(data, start=1)])
-    surface_outputs(work, case, vspgeom.read(geom), s, header, data, log)
+    surface_outputs(work, case, tri_geom, order, method, s, header, data, log)
     log("done")
     log.close()
 

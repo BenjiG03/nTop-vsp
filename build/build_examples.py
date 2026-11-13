@@ -19,9 +19,12 @@ sys.path.insert(0, HERE)
 
 import drag_blocks as d  # noqa: E402
 import vspaero_blocks as v  # noqa: E402
-from kit import ANGLE, AREA, LENGTH, ROOT  # noqa: E402
-from ntopfile import Graph, save_host  # noqa: E402
+from kit import ANGLE, AREA, DENSITY, LENGTH, ROOT, VELOCITY  # noqa: E402
+from ntopfile import Graph, Ref, save_host  # noqa: E402
 from ntrun import NTOPCL  # noqa: E402
+
+# The viscous correction is ntop_newtonian's (nTop blocks only); its builder sits beside this repository.
+NEWTONIAN_DIR = os.path.join(os.path.dirname(ROOT), "ntop_newtonian")
 
 EXAMPLES = os.path.join(ROOT, "examples")
 RUNS = ROOT + "/runs"
@@ -53,6 +56,26 @@ TE_VERTICES = [
     (20303.8809, -115.1828, 2470.3538), (20028.3242, -114.8675, 2337.3604), (19747.9395, -114.5467, 2202.0374),
     (19461.2637, -114.2187, 2063.6765), (19162.7051, -113.8771, 1919.5811), (18953.6777, -113.6379, 1818.6980),
     (18877.2461, 0.0000, 1781.7574), (18862.1055, 123.3809, 1774.3940),
+]
+
+
+# The thin HL-20 for the vortex lattice: a planform sheet at z = 0 (millimetres), not the same model as NTOP_MESH.
+VLM_MESH = ROOT + "/h20_vlm_mesh_from ntop.stl"
+
+# Trailing-edge vertices of VLM_MESH (millimetres): the two wing trailing edges (x about 16.4 to 16.9 m) and the
+# body's base edge (x = 20.64 m), boundary vertices of the sheet.
+VLM_TE_VERTICES = [
+    (16439.3613, -3841.5801, 0.0000), (16614.8105, -3596.3240, 0.0000), (16742.0059, -3322.9771, 0.0000),
+    (16822.1855, -3031.9111, 0.0000), (16856.9727, -2732.9224, 0.0000), (16871.7324, -2431.1794, 0.0000),
+    (16859.3633, -2129.1995, 0.0000), (16829.9824, -1828.6278, 0.0000), (16772.3750, -1532.1338, 0.0000),
+    (16716.3008, -1235.1611, 0.0000), (16652.6250, -939.7012, 0.0000), (16652.6250, 939.7012, 0.0000),
+    (16716.3008, 1235.1613, 0.0000), (16772.3750, 1532.1340, 0.0000), (16829.9824, 1828.6281, 0.0000),
+    (16859.3633, 2129.2000, 0.0000), (16871.7324, 2431.1802, 0.0000), (16856.9727, 2732.9231, 0.0000),
+    (16822.1855, 3031.9119, 0.0000), (16742.0039, 3322.9778, 0.0000), (16614.8105, 3596.3247, 0.0000),
+    (16439.3613, 3841.5811, 0.0000), (20638.2422, -1457.4578, 0.0000), (20638.2422, -1165.9663, 0.0000),
+    (20638.2422, -874.4747, 0.0000), (20638.2422, -582.9832, 0.0000), (20638.2422, -291.4916, 0.0000),
+    (20638.2422, -0.0000, 0.0000), (20638.2422, 291.4916, 0.0000), (20638.2422, 582.9832, 0.0000),
+    (20638.2422, 874.4747, 0.0000), (20638.2422, 1165.9663, 0.0000), (20638.2422, 1457.4578, 0.0000),
 ]
 
 
@@ -132,6 +155,61 @@ def vspaero_example():
     return g, blocks, group
 
 
+def vlm_example():
+    flow, solver, wakes = v.flow_block(), v.solver_block(), v.wake_block()
+    ana, coef, surf, lines, proj = (v.analysis_block(), v.coefficient_block(), v.surface_block(), v.wake_lines_block(),
+                                    v.projection_block())
+    blocks = [flow, solver, wakes, ana, coef, surf, lines, proj]
+    g = Graph()
+    g.comment("# HL-20 with VSPAERO's vortex lattice\nThis notebook runs VSPAERO's vortex lattice method on a thin "
+              "model of the HL-20: a planform sheet at z = 0, meshed in nTop. It is not the same geometry as the thick "
+              "mesh of the panel example, so the numbers differ from it. The conditions match that example: Mach 0, "
+              "alpha 1, 5.5 and 10 degrees, Sref = 100, cref = bref = 1, moments about the origin. The thin solution "
+              "is then shown on the thick mesh.\n\nThe blocks call Python and OpenVSP with Run Command: allow them "
+              "when nTop asks. Logs: `runs/hl20_vlm.ntvsp.log` and `runs/hl20_vlm_projection.ntvsp.log`.")
+    g.comment("**1. Geometry.** The thin sheet (Import Mesh, millimetres): one open surface whose triangles become "
+              "the vortex lattice. The thick mesh is only for the projection in step 7.")
+    sheet = g.block("import_mesh<file_path,unit_length_enum>[1.1.0]", "mesh",
+                    [g.file_path(VLM_MESH), g.unit_length("mm")], "HL-20 Thin Mesh")
+    thick = import_mesh(g)
+    g.comment("**2. Flow condition and solver settings**, as in the panel example.")
+    fc = call(g, flow, {"Alpha Start": lambda g: g.real(math.radians(1.0), ANGLE),
+                        "Alpha End": lambda g: g.real(math.radians(10.0), ANGLE),
+                        "Alpha Points": lambda g: g.integer(3)}, "Flow Condition")
+    ss = call(g, solver, {"Processors": lambda g: g.integer(8)}, "Solver Settings")
+    g.comment("**3. Wakes.** The vertices along the sheet's trailing edges: the two wing trailing edges and the body's "
+              "base edge. The edges of the sheet joining them shed the wakes.")
+    pts = [g.point(x, y, z) for x, y, z in VLM_TE_VERTICES]
+    te_points = g.block("core.list<point>", "list<point>", pts, "Trailing Edge Vertices")
+    ws = call(g, wakes, {"Trailing Edge Vertices": te_points}, "Wake Settings")
+    g.comment("**4. Analysis** with Method = Vortex lattice.")
+    res = call(g, ana, {"Surface Mesh": sheet, "Method": choose(v.METHODS, "Vortex lattice (thin surface)"),
+                        "Reference Area": lambda g: g.real(100.0, AREA),
+                        "Reference Span": lambda g: g.real(1.0, LENGTH), "Reference Chord": lambda g: g.real(1.0, LENGTH),
+                        "Flow Condition": fc, "Solver Settings": ss, "Wake Settings": ws,
+                        "Working Directory": lambda g: g.file_path(RUNS), "Case Name": lambda g: g.text("hl20_vlm")},
+               "HL-20 VSPAERO VLM")
+    g.comment("**5. Coefficients**, one value per angle of attack.")
+    outs = {}
+    for name in ("AoA", "CLtot", "CDtot", "CMytot"):
+        outs[name] = call(g, coef, {"Results": res, "Coefficient": choose(v.POLAR_COLUMNS, name)}, name)
+    g.comment("**6. Pressure jump on the sheet** for case 2 (alpha 5.5 degrees): Cp on the side the triangle normals "
+              "point to (here +z, the upper side) minus Cp on the lower side, so negative where the sheet lifts.")
+    jump = call(g, surf, {"Results": res, "Case Number": lambda g: g.integer(2)}, "Pressure Jump (alpha 5.5)")
+    g.comment("**7. Thin solution on the thick mesh.** Each point of the thick HL-20 mesh takes half the jump at the "
+              "closest point of the sheet, with the sign of its side: suction on the upper surface, pressure on the "
+              "lower surface. This is the lifting part of the pressure only. The fins and the vertical tail are not "
+              "in the thin model; Maximum Distance (3 m) leaves out their outer parts (the body lies within about 2.5 m of the sheet).")
+    cp = call(g, proj, {"Results": res, "Thick Mesh": thick, "Case Number": lambda g: g.integer(2),
+                        "Maximum Distance": lambda g: g.real(3.0, LENGTH),
+                        "Working Directory": lambda g: g.file_path(RUNS),
+                        "Case Name": lambda g: g.text("hl20_vlm_projection")}, "Cp on Thick Mesh (alpha 5.5)")
+    g.comment("**8. Wake check.** The trailing-edge nodes the wakes left from, coloured by wake number.")
+    wl = call(g, lines, {"Results": res}, "Wake Lines")
+    group = g.block("core.group<any>", "group",
+                    [outs["AoA"], outs["CLtot"], outs["CDtot"], outs["CMytot"], jump, cp, wl], "Outputs")
+    return g, blocks, group
+
 # --- Parasite drag ---------------------------------------------------------------------------------------------------
 
 def parasite_example():
@@ -189,10 +267,132 @@ def wave_example():
     return g, blocks, group
 
 
+# --- Drag buildup ---------------------------------------------------------------------------------------------------
+
+# Flight condition of the buildup example: Mach 0.5 at 6096 m (20,000 ft) in the US Standard Atmosphere 1976, as
+# the Parasite Drag example. Subsonic, because VSPAERO's panel method gave no usable supersonic result on the HL-20
+# (see the README); so there is no wave drag and the viscous correction is ntop_newtonian's subsonic block.
+BUILDUP_MACH = 0.5
+BUILDUP_ALTITUDE = 6096.0  # m
+BUILDUP_T = 288.15 - 0.0065 * BUILDUP_ALTITUDE  # K, troposphere
+BUILDUP_P = 101325.0 * (BUILDUP_T / 288.15) ** (9.80665 / (0.0065 * 287.05287))  # Pa
+GAS_R, GAMMA = 287.05, 1.4
+
+
+def var(g, typ, leaf, name):
+    """A named notebook variable holding leaf."""
+    return g.block(f"core.var<{typ}>", typ, [leaf], name)
+
+
+def buildup_conditions():
+    """(Vinf m/s, rho kg/m^3, Re per metre) of the buildup flight condition, for VSPAERO's dimensional inputs."""
+    vinf = BUILDUP_MACH * math.sqrt(GAMMA * GAS_R * BUILDUP_T)
+    rho = BUILDUP_P / (GAS_R * BUILDUP_T)
+    mu = 1.458e-6 * BUILDUP_T ** 1.5 / (BUILDUP_T + 110.4)
+    return vinf, rho, rho * vinf / mu
+
+
+def buildup_example():
+    if NEWTONIAN_DIR not in sys.path:
+        sys.path.append(NEWTONIAN_DIR)
+    import viscous  # ntop_newtonian
+
+    flow, solver, wakes = v.flow_block(), v.solver_block(), v.wake_block()
+    ana, surf = v.analysis_block(), v.surface_block()
+    friction, buildup = viscous.block("Coefficients", subsonic=True), d.buildup_block()
+    blocks = [flow, solver, wakes, ana, surf, friction, buildup]
+    vinf, rho, re_per_m = buildup_conditions()
+    cref = 1.0
+    g = Graph()
+    g.comment("# HL-20 drag buildup\nCL, CD and CMy of the HL-20 at Mach 0.5 (6096 m, US Standard Atmosphere 1976) "
+              "from two analyses that share one flight condition and one reference: VSPAERO's panel method (inviscid "
+              "pressure) and the nTop-native subsonic viscous correction from `ntop_newtonian` (skin friction on "
+              "VSPAERO's surface pressure). **Drag Buildup (VSP)** adds them and exports the table "
+              "`runs/hl20_buildup.ntvsp.buildup.csv`. Subsonic, so there is no wave drag: Wave Drag Results is left "
+              "empty (above Mach 1, connect a Wave Drag (VSP) run at the same Mach number and Sref, and use the "
+              "supersonic viscous block).\n\nThe blocks call Python and OpenVSP with Run Command: allow them when "
+              "nTop asks.")
+    g.comment("**1. Shared flight condition and reference.** Every analysis takes these values from here, so they "
+              "cannot drift apart. Moments are about the origin over Sref and cref (OpenVSP's defaults, as in "
+              "`hl20.vspaero`).")
+    mach = var(g, "real", g.real(BUILDUP_MACH), "Mach")
+    a0 = var(g, "real", g.real(math.radians(1.0), ANGLE), "Alpha Start")
+    a1 = var(g, "real", g.real(math.radians(10.0), ANGLE), "Alpha End")
+    na = var(g, "integer", g.integer(3), "Alpha Points")
+    sref = var(g, "real", g.real(100.0, AREA), "Reference Area")
+    cref_i = var(g, "real", g.real(cref, LENGTH), "Reference Chord")
+    center = var(g, "point", g.point(0.0, 0.0, 0.0), "Moment Reference Point")
+    g.comment("**Freestream state** at 6096 m: static pressure and temperature for the viscous correction. VSPAERO's "
+              f"dimensional inputs are set to match: Vinf = {vinf:.1f} m/s, rho = {rho:.5f} kg/m^3, Re_cref = "
+              f"{re_per_m * cref:.4g}. They do not change VSPAERO's coefficients, and its own viscous estimate (the only "
+              "thing Re_cref changes) is left out of the buildup.")
+    p_inf = var(g, "real", g.real(BUILDUP_P, viscous.PRESSURE), "Freestream Pressure")
+    t_inf = var(g, "real", g.real(BUILDUP_T, viscous.TEMPERATURE), "Freestream Temperature")
+
+    g.comment("**2. Geometry.** VSPAERO uses the nTop mesh of the HL-20 (millimetres) as given. The viscous correction "
+              "integrates over nTop's implicit HL-20 (`h20.implicit`, the body the mesh was made from): its surface "
+              "integrals run about a third faster than on an implicit made from the mesh, with the same result "
+              "(friction CD within 0.2%).")
+    mesh = import_mesh(g)
+    body = g.block("import_implicit<file_path>", "implicit", [g.file_path(ROOT + "/h20.implicit")], "HL-20 Body")
+
+    g.comment("**3. VSPAERO** at the shared Mach number and angles, with the trailing-edge vertices of the VSPAERO "
+              "example.")
+    fc = call(g, flow, {"Mach Start": mach, "Mach End": mach, "Alpha Start": a0, "Alpha End": a1, "Alpha Points": na,
+                        "Re_cref Start": lambda g: g.real(re_per_m * cref),
+                        "Re_cref End": lambda g: g.real(re_per_m * cref),
+                        "Freestream Velocity": lambda g: g.real(vinf, VELOCITY),
+                        "Freestream Density": lambda g: g.real(rho, DENSITY)}, "Flow Condition")
+    ss = call(g, solver, {"Processors": lambda g: g.integer(8)}, "Solver Settings")
+    pts = [g.point(x, y, z) for x, y, z in TE_VERTICES]
+    te_points = g.block("core.list<point>", "list<point>", pts, "Trailing Edge Vertices")
+    ws = call(g, wakes, {"Trailing Edge Vertices": te_points}, "Wake Settings")
+    aero = call(g, ana, {"Surface Mesh": mesh, "Reference Area": sref, "Reference Chord": cref_i,
+                         "Reference Span": lambda g: g.real(1.0, LENGTH), "Moment Reference Point": center,
+                         "Flow Condition": fc, "Solver Settings": ss, "Wake Settings": ws,
+                         "Working Directory": lambda g: g.file_path(RUNS),
+                         "Case Name": lambda g: g.text("hl20_buildup_vspaero")}, "HL-20 VSPAERO")
+
+    g.comment("**4. Viscous correction.** VSPAERO's surface Cp of each case (at the mesh nodes) becomes a field (Field "
+              "from Point Map), and ntop_newtonian's Viscous Correction Subsonic Coefficients block computes skin "
+              "friction on the implicit body at the edge state that Cp gives, at that case's angle of attack (from the "
+              "shared Alpha inputs). One call per case gives all eight friction coefficients; CD, CL and Cm are picked "
+              "from each list. Reference Length is cref, so its Cm matches VSPAERO's CMy. Fully turbulent, adiabatic "
+              "wall. Each call is six surface integrals over the HL-20: several minutes per case.")
+    alphas = g.block("sequence_from_bounds<real,real,integer>", "list<real>", [a0, a1, na], "Angles of Attack")
+    shared = {"Body": body, "Mach": mach, "Reference Area": sref, "Reference Length": cref_i, "Moment Center": center,
+              "Freestream Pressure": p_inf, "Freestream Temperature": t_inf}
+    per_case = []
+    for i in range(3):
+        cp_map = call(g, surf, {"Results": aero, "Case Number": lambda g, n=i + 1: g.integer(n),
+                                "Sample Points": choose(v.SURFACE_POINTS, "Nodes")}, f"Surface Cp, Case {i + 1}")
+        cp_field = g.block("field_from_point_map<real_point_map,point_cloud_interpolation_enum,point_cloud_extrapolation_enum>",
+                           "real_field", [cp_map, g.enum("point_cloud_interpolation_enum", 0),
+                                          g.enum("point_cloud_extrapolation_enum", 0)], f"Cp Field, Case {i + 1}")
+        per_case.append(call(g, friction, {**shared, "Pressure Coefficient": cp_field,
+                                           "Angle of Attack": Ref(alphas, (i,))}, f"Viscous, Case {i + 1}"))
+    visc = {}
+    for label in ("CD", "CL", "Cm"):
+        k = viscous.COEFFICIENTS.index(label)
+        visc[label] = g.block("core.list<real>", "list<real>", [Ref(c, (k,)) for c in per_case], f"Viscous {label}")
+
+    g.comment("**5. Buildup.** CL = CLi + CL_viscous, CD = CDi + CD_viscous, CMy = CMiy + Cm_viscous per case (no "
+              "wave drag below Mach 1). The block writes the table to `runs/hl20_buildup.ntvsp.buildup.csv` and "
+              "outputs it.")
+    table = call(g, buildup, {"VSPAERO Results": aero, "Viscous CD": visc["CD"],
+                              "Viscous CL": visc["CL"], "Viscous CMy": visc["Cm"],
+                              "Working Directory": lambda g: g.file_path(RUNS),
+                              "Case Name": lambda g: g.text("hl20_buildup")}, "HL-20 Drag Buildup")
+    group = g.block("core.group<any>", "group", [table, visc["CD"], visc["CL"], visc["Cm"]], "Outputs")
+    return g, blocks, group
+
+
 EXAMPLE_BUILDERS = {
     "HL-20 VSPAERO": vspaero_example,
+    "HL-20 VSPAERO VLM": vlm_example,
     "HL-20 Parasite Drag": parasite_example,
     "HL-20 Wave Drag": wave_example,
+    "HL-20 Drag Buildup": buildup_example,
 }
 
 

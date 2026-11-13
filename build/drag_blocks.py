@@ -4,7 +4,7 @@ from __future__ import annotations
 from ntopfile import Graph, InputSpec
 
 from kit import (AREA, F_choice, F_int, F_length, F_real, F_switch, F_text, Field, Kit, analysis, d_choice,
-                 d_int, d_path, d_real, make_block, model_inputs, prop, run_inputs)
+                 d_int, d_path, d_real, d_text, make_block, model_inputs, prop, run_inputs)
 
 # --- Parasite drag -------------------------------------------------------------------------------------------------
 
@@ -238,3 +238,62 @@ def wave_areas_block():
     return make_block("wave_areas", "Wave Drag Area Distribution (VSP)",
                       "The equivalent area distribution of one rotation section of a Wave Drag run: x/L stations or "
                       "slice areas, as a list.", specs, "list<real>", g, out)
+
+
+# --- Drag buildup ----------------------------------------------------------------------------------------------------
+
+def _viscous(name, key, what):
+    return Field(InputSpec(name, "list<real>",
+                           f"{what} of the viscous correction, one value per VSPAERO case in case order (or one value "
+                           "for every case). Leave at 0 for none.",
+                           None, lambda g: g.block("core.list<real>", "list<real>", [g.real(0.0)], top=False)),
+                 key, "reals", default=(0.0,))
+
+
+BUILDUP_VISCOUS = [
+    _viscous("Viscous CD", "viscous_cd", "Drag coefficient"),
+    _viscous("Viscous CL", "viscous_cl", "Lift coefficient"),
+    _viscous("Viscous CMy", "viscous_cmy", "Pitching moment coefficient (about VSPAERO's moment reference point, "
+             "over Sref and cref)"),
+]
+BUILDUP_COLUMNS = ("Case", "Mach", "AoA", "Beta", "CL_inviscid", "CL_viscous", "CL", "CD_inviscid", "CD_wave",
+                   "CD_viscous", "CD", "CMy_inviscid", "CMy_viscous", "CMy", "L_over_D", "CS", "CMx", "CMz")
+
+
+def buildup_block():
+    own = (
+        InputSpec("VSPAERO Results", "text", "Output of VSPAERO Analysis (VSP)."),
+        InputSpec("Wave Drag Results", "text", "Output of Wave Drag (VSP), run at the same Mach number and Sref. "
+                  "Leave empty for no wave drag (subsonic).", default=d_text("")),
+    ) + tuple(f.spec for f in BUILDUP_VISCOUS)
+    specs = own + run_inputs("buildup")
+    g = Graph()
+    k = Kit(g)
+    model = model_inputs(specs)
+
+    def inp(name):  # the buildup runs no OpenVSP program; its helper commands run in the driver folder
+        return model("Driver Directory" if name == "OpenVSP Directory" else name)
+
+    g.comment("**Drag buildup.** OpenVSP has no tool that adds these together, so a Python driver does: per VSPAERO "
+              "case, CL = CLi + CL_viscous, CD = CDi + CD_wave + CD_viscous, CMy = CMiy + CMy_viscous. CLi, CDi and "
+              "CMiy are VSPAERO's inviscid parts; its own viscous estimate (CDo) is left out because the viscous "
+              "correction replaces it.")
+    g.comment("**Shared conditions.** The driver stops if Wave Drag's Mach number differs from any VSPAERO case's or "
+              "its Sref from VSPAERO's, and if a viscous list has neither one value per case nor a single value. It "
+              "cannot see the viscous correction's inputs: wire its Mach, angles, Sref, reference length (cref) and "
+              "moment center from the same values as VSPAERO's.")
+    lines = [k.line("vspaero_results", inp("VSPAERO Results")), k.line("wave_results", inp("Wave Drag Results"))]
+    lines += k.field_lines(BUILDUP_VISCOUS, lambda f: inp(f.spec.name))
+    base = analysis(g, k, inp, "run_buildup.py", lambda ready: [], lines, "Drag Buildup")
+    g.comment("**Table.** The driver writes `<Case Name>.ntvsp.buildup.csv` (one row per case: " +
+              ", ".join(BUILDUP_COLUMNS) + "); Import Table brings it back as the block's output. Extract Column "
+              "and Scalar from Text turn a column into numbers.")
+    out = g.block("import_table<file_path,bool>", "table", [k.cat([base, ".ntvsp.buildup.csv"]), g.boolean(True)],
+                  "Buildup Table")
+    return make_block(
+        "drag_buildup", "Drag Buildup (VSP)",
+        "Adds VSPAERO's inviscid coefficients, Wave Drag's CD_wave and a viscous correction (lists of CD, CL and CMy, "
+        "e.g. from the Viscous Correction Coefficient (nTop) block) and exports the table of coefficients to "
+        "`<Case Name>.ntvsp.buildup.csv` in the Working Directory. The output is that table. All three must use "
+        "the same flight condition and reference: the driver checks what it can (Mach number and Sref of the wave "
+        "drag run, number of viscous values).", specs, "table", g, out)

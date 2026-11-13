@@ -81,7 +81,10 @@ WAKE_FIELDS = [
           "te", "points", default=((0.0, 0.0, 0.0),)),
     F_length("Vertex Tolerance", "te_tolerance", 1e-4, "How far a listed point may be from its mesh vertex (the "
              "nearest vertex within this distance is taken; a point with none is an error)."),
-    F_switch("Find Body Wakes", "find_body_wakes", False, "Also run OpenVSP's own body-wake finder (FindBodyWakesFlag)."),
+    F_switch("Find Body Wakes", "find_body_wakes", False, "OpenVSP's FindBodyWakesFlag (an option of its "
+             "experimental mode): OpenVSP also marks wakes behind the blunt bases of its own body components. On an "
+             "imported mesh it found none in testing (the HL-20 meshes), so leave it off and list the trailing-edge "
+             "vertices instead."),
 ]
 
 
@@ -125,11 +128,11 @@ def wake_block():
     return settings_block(
         "vspaero_wakes", "VSPAERO Wake Settings (VSP)",
         "Where VSPAERO sheds wakes from the surface mesh. OpenVSP marks wakes only on its own wings, never on a "
-        "tessellation, and without wakes the panel method carries almost no lift. You list the mesh vertices on the "
-        "trailing edges; the mesh edges joining them shed the wakes. Check the result with **VSPAERO Wake Lines "
-        "(VSP)**.", WAKE_FIELDS,
-        ["**Wake settings.** VSPAERO's panel method sheds vorticity only from edges listed as wakes in its panel "
-         "file. The driver adds them after OpenVSP converts the mesh.",
+        "tessellation, and without wakes VSPAERO (panel or vortex lattice) carries almost no lift. You list the mesh "
+        "vertices on the trailing edges; the mesh edges joining them shed the wakes. Check the result with **VSPAERO "
+        "Wake Lines (VSP)**.", WAKE_FIELDS,
+        ["**Wake settings.** VSPAERO sheds vorticity only from edges listed as wakes in its panel file. The driver "
+         "adds them after OpenVSP converts the mesh.",
          "**Trailing-edge vertices.** Each listed point is matched to the mesh vertex within Vertex Tolerance. Every "
          "mesh edge whose two ends are listed becomes a wake edge, and connected wake edges form one wake. The run "
          "stops with an error if a point is not a mesh vertex, if a listed vertex has no listed neighbour, if three "
@@ -138,10 +141,19 @@ def wake_block():
 
 # --- Analysis --------------------------------------------------------------------------------------------------------
 
+METHODS = ("Panel (thick surface)", "Vortex lattice (thin surface)")
+METHOD_KEYS = ("panel", "vlm")
+
 def analysis_block(flow=FLOW_FIELDS, solver=SOLVER_FIELDS, wakes=WAKE_FIELDS):
     own = (
-        InputSpec("Surface Mesh", "mesh", "Closed, outward-facing surface tessellation of the vehicle (a Mesh). It is "
-                  "used as given: VSPAERO's panels are its triangles, so mesh quality is the user's to set."),
+        InputSpec("Surface Mesh", "mesh", "Surface tessellation (a Mesh), used as given: VSPAERO's panels are its "
+                  "triangles, so mesh quality is the user's to set. Panel method: the closed, outward-facing surface of "
+                  "the vehicle. Vortex lattice: the thin camber surface (an open sheet, e.g. a planform)."),
+        InputSpec("Method", "choice", "Panel: VSPAERO's panel method on a thick, closed surface (surface pressures on "
+                  "both sides). Vortex lattice: VSPAERO's vortex lattice method on a thin surface (one sheet; the "
+                  "result is the pressure jump across it). OpenVSP's thin geometry set builds thin surfaces only from "
+                  "its own wings, so the driver passes the mesh through the thick set and marks it thin for VSPAERO.",
+                  default=d_choice(METHODS)),
         InputSpec("Reference Area", "real", "Sref.", AREA, d_real(1.0, AREA)),
         InputSpec("Reference Span", "real", "bref.", LENGTH, d_real(1.0, LENGTH)),
         InputSpec("Reference Chord", "real", "cref.", LENGTH, d_real(1.0, LENGTH)),
@@ -159,6 +171,10 @@ def analysis_block(flow=FLOW_FIELDS, solver=SOLVER_FIELDS, wakes=WAKE_FIELDS):
               "3. The Python driver has OpenVSP convert the mesh into VSPAERO panels, adds trailing-edge wakes, writes "
               "the `.vspaero` input and runs `vspaero.exe` for every Mach x alpha x beta x Re_cref case. 4. The "
               "output is the path of the results, for the VSPAERO reader blocks.")
+    g.comment("**Method.** Panel: the mesh is a closed, thick surface. Vortex lattice: the mesh is a thin sheet; the "
+              "driver marks it thin in OpenVSP's `.vkey` file and writes the panel file in the polygon layout OpenVSP "
+              "uses for its own wings, so VSPAERO solves on the triangles as given (its own regrouping of triangles "
+              "can lose wake edges behind swept trailing edges).")
 
     def exports(base):
         g.comment("**Geometry.** Export Mesh writes the Surface Mesh as `<Case Name>.stl` in metres; every length "
@@ -168,6 +184,7 @@ def analysis_block(flow=FLOW_FIELDS, solver=SOLVER_FIELDS, wakes=WAKE_FIELDS):
                         [path, inp("Surface Mesh"), g.unit_length("m")], "Export Surface Mesh")]
 
     lines = [
+        k.line("method", k.pick(inp("Method"), METHOD_KEYS)),
         k.line("sref", k.num(inp("Reference Area"), 1.0, AREA)),
         k.line("bref", k.num(inp("Reference Span"), 1.0, LENGTH)),
         k.line("cref", k.num(inp("Reference Chord"), 1.0, LENGTH)),
@@ -177,15 +194,17 @@ def analysis_block(flow=FLOW_FIELDS, solver=SOLVER_FIELDS, wakes=WAKE_FIELDS):
     out = analysis(g, k, inp, "run_vspaero.py", exports, lines, "VSPAERO")
     return make_block(
         "vspaero_analysis", "VSPAERO Analysis (VSP)",
-        "Runs OpenVSP's **VSPAERO** panel method on a surface mesh and returns the path of its results (connect it to "
-        "the VSPAERO reader blocks). Settings come from **VSPAERO Flow Condition**, **VSPAERO Solver Settings** and "
-        "**VSPAERO Wake Settings** (VSP).\n\nThe mesh is used as given: it should be closed, outward-facing, and have "
-        "sharp trailing edges or trailing-edge curves for the wakes. Reference area, span, chord and moment point are "
-        "inputs (they are not taken from the geometry). Files are written to the Working Directory under the Case "
-        "Name; the run's log is `<Case Name>.ntvsp.log`.\n\nNot exposed (out of scope): X-Z symmetry, 2D FEM and "
-        "Tecplot output, reference quantities and CG from the model, stall model, propellers and actuator disks, "
-        "stability analyses, slicer, control surfaces. Thin (VLM) surfaces need OpenVSP's parametric wings and "
-        "cannot come from a tessellation.", specs, "text", g, out)
+        "Runs OpenVSP's **VSPAERO** on a surface mesh, with the panel method (thick, closed surface) or the vortex "
+        "lattice method (thin sheet), and returns the path of its results (connect it to the VSPAERO reader blocks). "
+        "Settings come from **VSPAERO Flow Condition**, **VSPAERO Solver Settings** and **VSPAERO Wake Settings** "
+        "(VSP).\n\nThe mesh is used as given. Panel method: closed and outward-facing. Vortex lattice: one open sheet "
+        "(a camber surface or planform); its surface results are the pressure jump across the sheet, and **VSPAERO "
+        "Thin Surface Projection (VSP)** shows them on a thick mesh. Either way, wakes leave the trailing-edge "
+        "vertices listed in Wake Settings. Reference area, span, chord and moment point are inputs (they are not "
+        "taken from the geometry). Files are written to the Working Directory under the Case Name; the run's log is "
+        "`<Case Name>.ntvsp.log`.\n\nNot exposed (out of scope): X-Z symmetry, 2D FEM and Tecplot output, reference "
+        "quantities and CG from the model, stall model, propellers and actuator disks, stability analyses, slicer, "
+        "control surfaces.", specs, "text", g, out)
 
 
 def prop_of(ref, c):
@@ -240,7 +259,9 @@ def surface_block():
         InputSpec("Case Number", "integer", "Case, counted from 1 in the order of VSPAERO Coefficient's lists.",
                   default=d_int(1)),
         InputSpec("Quantity", "choice", "Cp, or p - p_inf = 0.5 Rho Vinf^2 Cp in pascals (Flow Condition's velocity and "
-                  "density).", default=d_choice(SURFACE_QUANTITIES)),
+                  "density). Vortex lattice runs: the jump across the sheet instead, Cp on the side the triangle "
+                  "normals point to minus Cp on the other side (negative where the sheet lifts toward its normals), "
+                  "or the same jump in pascals.", default=d_choice(SURFACE_QUANTITIES)),
         InputSpec("Sample Points", "choice", "Panel centroids carry VSPAERO's own values; node values are area-weighted "
                   "averages of the panels around each node; both together give the densest colouring.",
                   default=d_choice(SURFACE_POINTS, 2)),
@@ -260,7 +281,9 @@ def surface_block():
                   [path, g.unit_length("m"), scale], "Surface Pressure")
     return make_block("vspaero_surface", "VSPAERO Surface Pressure (VSP)",
                       "Surface pressure of one VSPAERO case as a **Scalar Point Map** for contour plots in nTop: Cp or "
-                      "p - p_inf (Pa), at panel centroids, nodes, or both.", specs, "real_point_map", g, out)
+                      "p - p_inf (Pa), at panel centroids, nodes, or both. For a vortex lattice run these are the "
+                      "pressure jump across the sheet; **VSPAERO Thin Surface Projection (VSP)** maps them onto a "
+                      "thick mesh.", specs, "real_point_map", g, out)
 
 
 def wake_lines_block():
@@ -277,3 +300,63 @@ def wake_lines_block():
     return make_block("vspaero_wake_lines", "VSPAERO Wake Lines (VSP)",
                       "The trailing edges VSPAERO shed wakes from, as a Scalar Point Map (value: wake number).",
                       specs, "real_point_map", g, out)
+
+
+# --- Thin surface projection -------------------------------------------------------------------------------------
+
+PROJECTION_QUANTITIES = ("Cp (half the jump, by side)", "p - p_inf (half the jump, by side)", "Pressure jump (Cp)")
+PROJECTION_KEYS = ("cp", "dp", "jump")
+
+
+def projection_block():
+    own = (
+        InputSpec("Results", "text", "Output of VSPAERO Analysis (VSP) run with the vortex lattice method."),
+        InputSpec("Thick Mesh", "mesh", "The vehicle's thick surface mesh (closed, outward-facing) to colour. It need "
+                  "not match the thin sheet: each of its points takes the value of the closest point of the sheet."),
+        InputSpec("Case Number", "integer", "Case, counted from 1 in the order of VSPAERO Coefficient's lists.",
+                  default=d_int(1)),
+        InputSpec("Maximum Distance", "real", "Points of the thick mesh farther than this from the sheet are left out "
+                  "(for parts the sheet does not model, such as fins).", LENGTH, d_real(1000.0, LENGTH)),
+        InputSpec("Quantity", "choice", "Cp: each point gets half the jump, with the sign of its side of the sheet "
+                  "(+ where its outward normal points the way the sheet's normals do, - otherwise): the lifting part of "
+                  "the pressure. p - p_inf: the same in pascals (Flow Condition's velocity and density). Pressure jump: "
+                  "the jump itself, unsigned by side.", default=d_choice(PROJECTION_QUANTITIES)),
+        InputSpec("Sample Points", "choice", "Nodes, triangle centroids, or both, of the thick mesh.",
+                  default=d_choice(SURFACE_POINTS, 2)),
+    )
+    specs = own + run_inputs("hl20_projection")
+    g = Graph()
+    k = Kit(g)
+    model = model_inputs(specs)
+
+    def inp(name):  # no OpenVSP program runs here; helper commands run in the driver folder
+        return model("Driver Directory" if name == "OpenVSP Directory" else name)
+
+    g.comment("**Thin to thick projection.** A vortex lattice gives only the pressure jump across its sheet. The "
+              "driver `run_project.py` finds, for every node and centroid of the thick mesh, the closest point of the "
+              "sheet, interpolates the jump there, and gives the point half of it with the sign of its side: Cp = "
+              "+jump/2 where the thick surface faces the way the sheet normals point, -jump/2 on the other side. That "
+              "is the lifting part of the pressure only; a thin solution has no thickness effect.")
+
+    def exports(base):
+        g.comment("**Thick mesh.** Exported as `<Case Name>.stl` in metres for the driver.")
+        return [g.block("export_mesh<file_path,mesh,unit_length_enum>", "mesh_file_data",
+                        [k.cat([base, ".stl"]), inp("Thick Mesh"), g.unit_length("m")], "Export Thick Mesh")]
+
+    lines = [k.line("vspaero_results", inp("Results")), k.line("case_number", k.num(inp("Case Number"))),
+             k.line("max_distance", k.num(inp("Maximum Distance"), 1.0, LENGTH))]
+    base = analysis(g, k, inp, "run_project.py", exports, lines, "Thin Surface Projection")
+    g.comment("**Point map.** The driver writes every quantity at nodes, centroids and both; the block imports the "
+              "chosen one as a Scalar Point Map (x, y, z in metres).")
+    path = k.cat([base, ".ntvsp.proj.", k.pick(inp("Quantity"), PROJECTION_KEYS), ".",
+                  k.pick(inp("Sample Points"), ("centroids", "nodes", "both")), ".csv"], name="Point Map File")
+    scale = g.leaf("real_field", {"expression": "1", "units": {}})
+    out = g.block("import_real_point_map<file_path,unit_length_enum,real_field>", "real_point_map",
+                  [path, g.unit_length("m"), scale], "Projected Pressure")
+    return make_block(
+        "vspaero_thin_projection", "VSPAERO Thin Surface Projection (VSP)",
+        "Shows a vortex lattice (thin surface) VSPAERO solution on the vehicle's thick mesh, for visualization: a "
+        "**Scalar Point Map** at the thick mesh's points. Each point takes the pressure jump at the closest point of "
+        "the thin sheet; Cp and p - p_inf give it half the jump with the sign of its side (the lifting part of the "
+        "pressure), Pressure jump gives the jump itself. Points beyond Maximum Distance from the sheet are left out. "
+        "Coefficients still come from **VSPAERO Coefficient (VSP)**.", specs, "real_point_map", g, out)

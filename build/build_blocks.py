@@ -30,6 +30,7 @@ def blocks():
         ("VSPAERO Coefficient (VSP)", v.coefficient_block()),
         ("VSPAERO Surface Pressure (VSP)", v.surface_block()),
         ("VSPAERO Wake Lines (VSP)", v.wake_lines_block()),
+        ("VSPAERO Thin Surface Projection (VSP)", v.projection_block()),
         ("Parasite Drag Component (VSP)", d.component_block()),
         ("Parasite Drag (VSP)", d.parasite_block()),
         ("Parasite Drag Result (VSP)", d.parasite_result_block()),
@@ -37,6 +38,7 @@ def blocks():
         ("Wave Drag (VSP)", d.wave_block()),
         ("Wave Drag Result (VSP)", d.wave_result_block()),
         ("Wave Drag Area Distribution (VSP)", d.wave_areas_block()),
+        ("Drag Buildup (VSP)", d.buildup_block()),
     ]
 
 

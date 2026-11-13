@@ -1,15 +1,20 @@
 """Surface pressure per case from VSPAERO's binary ``.adb`` (aerothermal database) file.
 
-The layout was worked out against VSPAERO 7.2.2 (OpenVSP 3.56) outputs; the Tecplot file VSPAERO writes for
-its last case is used as a check (see ``check_against_tecplot``):
+Layout (VSPAERO 7.2.2 / OpenVSP 3.56, ``VSP_SOLVER::WriteOutAerothermalDatabase*``), in 4-byte words:
 
-* int32 words. Word 5: node count, word 6: triangle count (VSPAERO's, which is the ``.vspgeom`` triangles in
-  order, followed by extra triangles it adds along wakes).
-* For each solved (Mach, alpha, beta) condition, one block of ``3 * triangles`` float32 words: per triangle
-  (Cp, unsteady Cp, a third quantity). The unsteady Cp column is exactly zero in steady runs, which is how the
-  blocks are found. Reynolds-number variants share the same block (the potential solution does not depend on it).
+* A header and the geometry. Word 6 of the file is the number of level-0 loops: the triangles of the ``.vspgeom``
+  file in order (for the polygon layout, the triangles of its triangulation section), followed by the triangles
+  VSPAERO builds along the wakes.
+* Per solved (Mach, alpha, beta) condition: Mach, alpha and beta (float32, angles in radians), Cp clip limits,
+  solver-level arrays (doubles), then one (Cp, unsteady Cp, circulation) float32 triple per level-0 loop, then the
+  number of trailing vortices (int32) and their data. On thick (panel) surfaces Cp is the surface pressure
+  coefficient; on thin (vortex lattice) surfaces it is the pressure jump across the sheet: Cp on the side the
+  triangle normals point to, minus Cp on the other side (negative where the sheet lifts toward its normals).
 
-The conditions are listed, in order, in ``<case>.adb.cases`` ("Mach AoA Beta Case: n ...").
+The conditions are listed, in order, in ``<case>.adb.cases`` ("Mach AoA Beta Case: n ..."). Each condition's header
+is found by its Mach, alpha and beta; the triple block is the run of ``3 * loops`` words after it whose middle
+column (unsteady Cp, zero in steady runs) is all zero and which is followed by the trailing-vortex count. The
+Tecplot file VSPAERO writes for its last case checks the result (``check_against_tecplot``).
 """
 from __future__ import annotations
 
@@ -31,8 +36,16 @@ def read_cases(path):
     return out
 
 
-def read_cp(path, n_cases):
-    """List (one per case) of per-triangle Cp lists, in VSPAERO's triangle order."""
+def _close(a, b, tol):
+    return abs(a - b) <= tol * max(1.0, abs(b))
+
+
+def read_cp(path, cases, n_surface):
+    """List (one per case of ``cases``) of per-loop Cp lists, in VSPAERO's level-0 loop order.
+
+    ``n_surface``: the number of surface triangles (they come first; the wake loops after them carry no pressure).
+    Most of them have a non-zero Cp, which tells the pressure block from runs of zeros elsewhere in the file.
+    """
     with open(path, "rb") as f:
         raw = f.read()
     n = len(raw) // 4
@@ -40,22 +53,32 @@ def read_cp(path, n_cases):
     ints.frombytes(raw[: 4 * n])
     floats = array("f")
     floats.frombytes(raw[: 4 * n])
-    n_tri = ints[6]
+    n_tri, n_nodes = ints[6], ints[5]
     width = 3 * n_tri
     blocks = []
-    k = 0
-    while k + width <= n and len(blocks) < n_cases:
-        if ints[k + 1] == 0 and ints[k + 4] == 0 and ints[k + 7] == 0 and floats[k] != 0.0:
-            mid = ints[k + 1:k + width:3]
-            if not any(mid):
-                cp = floats[k:k + width:3]
-                if all(math.isfinite(v) and abs(v) < 1e4 for v in cp):
-                    blocks.append(list(cp))
-                    k += width
-                    continue
-        k += 1
-    if len(blocks) != n_cases:
-        raise ValueError(f"{path}: found {len(blocks)} pressure blocks for {n_cases} cases")
+    pos = 0
+    for mach, alpha, beta in cases:
+        a, b = math.radians(alpha), math.radians(beta)
+        head = next((k for k in range(pos, n - 5)
+                     if _close(floats[k], mach, 1e-5) and abs(floats[k + 1] - a) < 2e-6 and abs(floats[k + 2] - b) < 2e-6),
+                    None)
+        if head is None:
+            raise ValueError(f"{path}: no results header for Mach {mach}, alpha {alpha}, beta {beta}")
+        found = None
+        k = head + 5
+        while k + width < n:
+            if ints[k + 1] == 0 and ints[k + 4] == 0 and 0 <= ints[k + width] <= n_nodes:
+                if not any(ints[k + 1:k + width:3]):
+                    cp = floats[k:k + width:3]
+                    if (all(math.isfinite(v) and abs(v) < 1e4 for v in cp)
+                            and sum(1 for v in cp[:n_surface] if v != 0.0) * 2 > n_surface):
+                        found = list(cp)
+                        break
+            k += 1
+        if found is None:
+            raise ValueError(f"{path}: no surface pressures after the header of Mach {mach}, alpha {alpha}, beta {beta}")
+        blocks.append(found)
+        pos = k + width
     return blocks, n_tri
 
 

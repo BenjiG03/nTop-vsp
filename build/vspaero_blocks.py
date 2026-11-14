@@ -302,6 +302,34 @@ def wake_lines_block():
                       specs, "real_point_map", g, out)
 
 
+FACE_POINTS = ("4 per face (each face split in four)", "1 per face (face centroids)")
+
+
+def mesh_faces_block():
+    specs = (
+        InputSpec("Results", "text", "Output of VSPAERO Analysis (VSP), panel method."),
+        InputSpec("Points per Face", "choice", "Face centroids, or the centroids of each face split in four at its "
+                  "edge midpoints (a finer rule; moments converge better, at a little more time).",
+                  default=d_choice(FACE_POINTS)),
+    )
+    g = Graph()
+    k = Kit(g)
+    inp = model_inputs(specs)
+    g.comment("**Mesh faces.** On a panel run the driver writes the analysed mesh's triangles as surface points with "
+              "the area each stands for: `x, y, z, area` (metres, square metres). Feed this point map to the Mesh Faces "
+              "input of ntop_newtonian's Viscous Correction on Mesh blocks, which then sum the skin friction over the "
+              "points instead of integrating it over the body: seconds instead of minutes.")
+    n = k.pick(inp("Points per Face"), ("4", "1"))
+    path = k.cat([inp("Results"), ".ntvsp.faces.", n, ".csv"], name="Faces File")
+    scale = g.leaf("real_field", {"expression": "1", "units": {}})
+    out = g.block("import_real_point_map<file_path,unit_length_enum,real_field>", "real_point_map",
+                  [path, g.unit_length("m"), scale], "Mesh Faces")
+    return make_block("vspaero_mesh_faces", "VSPAERO Mesh Faces (VSP)",
+                      "The panel mesh of a VSPAERO run as surface points weighted by area (Scalar Point Map, value: "
+                      "m^2), for the Mesh Faces input of the Viscous Correction on Mesh blocks. Panel runs only.",
+                      specs, "real_point_map", g, out)
+
+
 # --- Thin surface projection -------------------------------------------------------------------------------------
 
 PROJECTION_QUANTITIES = ("Cp (half the jump, by side)", "p - p_inf (half the jump, by side)", "Pressure jump (Cp)")

@@ -44,6 +44,7 @@ OpenVSP is not in the repository: unpack the Windows 64-bit OpenVSP 3.56.0 build
 | VSPAERO Surface Pressure (VSP) | Scalar Point Map | Cp or p - p_inf of one case at panel centroids, nodes or both — the contour plot (vortex lattice: the jump across the sheet) |
 | VSPAERO Wake Lines (VSP) | Scalar Point Map | the trailing-edge nodes wakes were shed from (value = wake number) |
 | VSPAERO Thin Surface Projection (VSP) | Scalar Point Map | a vortex lattice solution shown on a thick mesh: half the pressure jump, signed by side, at the thick mesh's points |
+| VSPAERO Mesh Faces (VSP) | Scalar Point Map | a panel run's mesh as surface points weighted by area (m^2), 1 or 4 per face, for ntop_newtonian's Viscous Correction on Mesh blocks |
 | Parasite Drag Component (VSP) | text | one component's form factor equations, % laminar, Q, roughness, temperature ratios |
 | Parasite Drag (VSP) | results path | OpenVSP model, units, Sref, Cf equations, speed, altitude, dT, gamma, components |
 | Parasite Drag Result (VSP) | real | total CD, f, Re/L and the flight condition |
@@ -201,7 +202,13 @@ one value for all). It cannot see the viscous correction's inputs.
 fit VSPAERO's output:
 
 * VSPAERO Surface Pressure gives each case's Cp as a point map; Field from Point Map turns it into the Cp field
-  the viscous block takes. The body is the implicit made from the same mesh (Implicit Body from Mesh).
+  the viscous block takes. The body is an implicit of the same geometry (nTop's own, or Implicit Body from Mesh).
+* **On-mesh blocks.** Viscous Correction on Mesh and Viscous Correction Subsonic on Mesh sum friction over
+  surface points with their areas instead of integrating over the body: seconds instead of minutes per call.
+  **VSPAERO Mesh Faces (VSP)** supplies the points: on panel runs the driver writes the analysed mesh's faces as
+  `<Case Name>.ntvsp.faces.{1,4}.csv` (face centroids, or each face split in four at its edge midpoints, with
+  the area each point stands for). On the HL-20 the six friction coefficients take about 3 s against about 140 s
+  for the integrals, CD within 0.4%; Cm, a small difference of large opposite moments, needs the 4-point rule.
 * Axes and coefficients agree: x aft, z up, y = z x x in both; CD and CL in wind axes; Cm nose-up about the
   moment center, so with Reference Length = cref its Cm is VSPAERO's CMy.
 * **Two blocks, by Mach number.** Viscous Correction Coefficient (nTop) takes the edge state from the Rayleigh
@@ -223,21 +230,20 @@ results instead of returning an empty polar.
 **Subsonic buildup on the HL-20** (`examples/HL-20 Drag Buildup.ntop`): Mach 0.5 at 6096 m (US Standard
 Atmosphere 1976: 46,563 Pa, 248.5 K), alpha 1, 5.5, 10, Sref 100, cref 1, moments about the origin; VSPAERO's panel
 method on the nTop mesh (wakes as in the VSPAERO example), no wave drag, and the subsonic viscous correction
-(fully turbulent, adiabatic wall) on nTop's implicit HL-20 (`h20.implicit`) with each case's Cp at the mesh nodes.
+(on-mesh block, fully turbulent, adiabatic wall) summed over the analysed mesh's faces (4 points per face), with
+normals from nTop's implicit HL-20 (`h20.implicit`) and each case's Cp at the mesh nodes.
 
 | alpha | CL inviscid | CL viscous | CL | CD inviscid | CD viscous | CD | CMy inviscid | CMy viscous | CMy |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | 0.1042 | 0.0002 | 0.1043 | 0.0289 | 0.0087 | 0.0376 | -2.0716 | 0.0037 | -2.0679 |
-| 5.5 | 0.1341 | -0.0002 | 0.1339 | 0.0355 | 0.0088 | 0.0443 | -1.5690 | 0.0002 | -1.5688 |
-| 10 | 0.1639 | -0.0006 | 0.1634 | 0.0410 | 0.0088 | 0.0498 | -1.0893 | -0.0033 | -1.0926 |
+| 1 | 0.1042 | 0.0001 | 0.1043 | 0.0289 | 0.0086 | 0.0376 | -2.0716 | 0.0037 | -2.0679 |
+| 5.5 | 0.1341 | -0.0002 | 0.1339 | 0.0355 | 0.0086 | 0.0442 | -1.5690 | 0.0002 | -1.5688 |
+| 10 | 0.1639 | -0.0006 | 0.1634 | 0.0410 | 0.0087 | 0.0497 | -1.0893 | -0.0032 | -1.0926 |
 
-* 999 s in nTop: VSPAERO 184 s, then one viscous call per case, 5 to 9 minutes each (nTop ran them partly in
-  parallel). Each viscous call is six surface integrals over the HL-20 at 24 to 36 s each. The single-coefficient
-  viscous block computes all six whichever coefficient it outputs, so the example uses the list block once per case
-  and picks CD, CL and Cm from it (nine single-coefficient calls would take over an hour). On an implicit made from
-  the mesh the same call takes about 50% longer; with a constant Cp field instead of the point map, about 40%
-  less.
-* The friction CD (0.0087) is below OpenVSP's own Parasite Drag CD0 for the same flight condition (0.0137, on the
+* 216 s in nTop, 184 s of it VSPAERO; the three viscous calls take seconds. With the integral block (Viscous
+  Correction Subsonic Coefficients) the same notebook took 999 s, each call being six surface integrals over the
+  HL-20 at 24 to 36 s each. At 5.5 degrees the on-mesh block gives friction CD 0.008649 against the integral's
+  0.008686 (-0.4%) and Cm within 1% (4 points per face; 1 point per face is 0.4% on CD but 10% on Cm).
+* The friction CD (0.0086) is below OpenVSP's own Parasite Drag CD0 for the same flight condition (0.0137, on the
   OpenVSP model with form factors and interference), as flat-plate friction without form factors should be.
 * The inviscid CD comes from VSPAERO's panels on triangles, which disagreed with OpenVSP's own panels at Mach 0 (see
   the HL-20 test case below); treat it with care.

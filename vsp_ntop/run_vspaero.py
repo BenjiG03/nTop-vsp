@@ -148,7 +148,8 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, order, method, s: Settings, 
     ``order``: the face of ``g`` behind each of VSPAERO's level-0 triangles. On a thin surface (``method`` vlm) the
     values are the pressure jump across the sheet, Cp on the side the face normals point to minus Cp on
     the other side. Also writes ``<case>.ntvsp.panels.txt``
-    (the triangles in that order) for VSPAERO Thin Surface Projection (VSP).
+    (the triangles in that order) for VSPAERO Thin Surface Projection (VSP), and on panel runs
+    ``<case>.ntvsp.faces.{1,4}.csv`` (surface points with their areas) for VSPAERO Mesh Faces (VSP).
     """
     cases = adb.read_cases(os.path.join(work, case + ".adb.cases"))
     try:
@@ -169,6 +170,18 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, order, method, s: Settings, 
         u, v = [b[k] - a[k] for k in range(3)], [c[k] - a[k] for k in range(3)]
         cx = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
         areas.append(0.5 * math.sqrt(cx[0] ** 2 + cx[1] ** 2 + cx[2] ** 2))
+    if method == "panel":
+        # Surface points with the area each stands for, for the Viscous Correction on Mesh blocks: the face
+        # centroids, and the centroids of each face split in four at its edge midpoints.
+        write_point_map(os.path.join(work, case + ".ntvsp.faces.1.csv"), centroids, areas)
+        four_pts, four_areas = [], []
+        for f, a in zip(faces, areas):
+            p, q_, r = (g.nodes[i] for i in f)
+            pq, qr, rp = ([(u[k] + v[k]) / 2 for k in range(3)] for u, v in ((p, q_), (q_, r), (r, p)))
+            for t in ((p, pq, rp), (pq, q_, qr), (rp, qr, r), (pq, qr, rp)):
+                four_pts.append(tuple(sum(v[k] for v in t) / 3.0 for k in range(3)))
+                four_areas.append(a / 4.0)
+        write_point_map(os.path.join(work, case + ".ntvsp.faces.4.csv"), four_pts, four_areas)
     q = 0.5 * s.real("rho") * s.real("vinf") ** 2
     used = sorted({i for f in faces for i in f})
     index = {v: k for k, v in enumerate(used)}

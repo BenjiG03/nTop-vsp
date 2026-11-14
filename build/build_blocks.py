@@ -31,6 +31,7 @@ def blocks():
         ("VSPAERO Surface Pressure (VSP)", v.surface_block()),
         ("VSPAERO Wake Lines (VSP)", v.wake_lines_block()),
         ("VSPAERO Thin Surface Projection (VSP)", v.projection_block()),
+        ("VSPAERO Mesh Faces (VSP)", v.mesh_faces_block()),
         ("Parasite Drag Component (VSP)", d.component_block()),
         ("Parasite Drag (VSP)", d.parasite_block()),
         ("Parasite Drag Result (VSP)", d.parasite_result_block()),

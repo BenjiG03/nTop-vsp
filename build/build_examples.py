@@ -298,9 +298,9 @@ def buildup_example():
     import viscous  # ntop_newtonian
 
     flow, solver, wakes = v.flow_block(), v.solver_block(), v.wake_block()
-    ana, surf = v.analysis_block(), v.surface_block()
-    friction, buildup = viscous.block("Coefficients", subsonic=True), d.buildup_block()
-    blocks = [flow, solver, wakes, ana, surf, friction, buildup]
+    ana, surf, mesh_faces = v.analysis_block(), v.surface_block(), v.mesh_faces_block()
+    friction, buildup = viscous.block("Coefficients", subsonic=True, faces=True), d.buildup_block()
+    blocks = [flow, solver, wakes, ana, surf, mesh_faces, friction, buildup]
     vinf, rho, re_per_m = buildup_conditions()
     cref = 1.0
     g = Graph()
@@ -330,9 +330,8 @@ def buildup_example():
     t_inf = var(g, "real", g.real(BUILDUP_T, viscous.TEMPERATURE), "Freestream Temperature")
 
     g.comment("**2. Geometry.** VSPAERO uses the nTop mesh of the HL-20 (millimetres) as given. The viscous correction "
-              "integrates over nTop's implicit HL-20 (`h20.implicit`, the body the mesh was made from): its surface "
-              "integrals run about a third faster than on an implicit made from the mesh, with the same result "
-              "(friction CD within 0.2%).")
+              "sums friction over that mesh's faces and takes the surface normal and the most upstream point from "
+              "nTop's implicit HL-20 (`h20.implicit`, the body the mesh was made from).")
     mesh = import_mesh(g)
     body = g.block("import_implicit<file_path>", "implicit", [g.file_path(ROOT + "/h20.implicit")], "HL-20 Body")
 
@@ -354,13 +353,16 @@ def buildup_example():
                          "Case Name": lambda g: g.text("hl20_buildup_vspaero")}, "HL-20 VSPAERO")
 
     g.comment("**4. Viscous correction.** VSPAERO's surface Cp of each case (at the mesh nodes) becomes a field (Field "
-              "from Point Map), and ntop_newtonian's Viscous Correction Subsonic Coefficients block computes skin "
-              "friction on the implicit body at the edge state that Cp gives, at that case's angle of attack (from the "
-              "shared Alpha inputs). One call per case gives all eight friction coefficients; CD, CL and Cm are picked "
-              "from each list. Reference Length is cref, so its Cm matches VSPAERO's CMy. Fully turbulent, adiabatic "
-              "wall. Each call is six surface integrals over the HL-20: several minutes per case.")
+              "from Point Map), and ntop_newtonian's Viscous Correction Subsonic on Mesh Coefficients block computes skin "
+              "friction at the edge state that Cp gives, at that case's angle of attack (from the shared Alpha "
+              "inputs), summed over the analysed mesh's faces (VSPAERO Mesh Faces, 4 points per face). One call per "
+              "case gives all eight friction coefficients; CD, CL and Cm are picked from each list. Reference Length "
+              "is cref, so its Cm matches VSPAERO's CMy. Fully turbulent, adiabatic wall. Each call takes seconds; "
+              "the integral blocks (Viscous Correction Subsonic Coefficients) give the same CD within 0.1% in about "
+              "5 minutes per case.")
+    faces = call(g, mesh_faces, {"Results": aero}, "HL-20 Mesh Faces")
     alphas = g.block("sequence_from_bounds<real,real,integer>", "list<real>", [a0, a1, na], "Angles of Attack")
-    shared = {"Body": body, "Mach": mach, "Reference Area": sref, "Reference Length": cref_i, "Moment Center": center,
+    shared = {"Body": body, "Mesh Faces": faces, "Mach": mach, "Reference Area": sref, "Reference Length": cref_i, "Moment Center": center,
               "Freestream Pressure": p_inf, "Freestream Temperature": t_inf}
     per_case = []
     for i in range(3):

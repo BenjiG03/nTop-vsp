@@ -4,7 +4,7 @@ from __future__ import annotations
 from ntopfile import Graph, InputSpec
 
 from kit import (AREA, F_choice, F_int, F_length, F_real, F_switch, F_text, Field, Kit, analysis, d_choice,
-                 d_int, d_path, d_real, d_text, make_block, model_inputs, prop, run_inputs)
+                 d_int, d_real, d_text, make_block, model_inputs, run_inputs)
 
 # --- Parasite drag -------------------------------------------------------------------------------------------------
 
@@ -78,9 +78,11 @@ PARASITE_FIELDS = [
     F_choice("Laminar Cf Equation", "lam_cf", LAM_CF, (0, 1), 0, "Laminar skin-friction equation."),
     F_choice("Turbulent Cf Equation", "turb_cf", [n for n, _ in TURB_CF], [v for _, v in TURB_CF], 9,
              "Turbulent skin-friction equation."),
-    F_real("Speed", "speed", 500.0, description="Freestream speed, in Speed Unit."),
-    F_choice("Speed Unit", "speed_unit", SPEED_UNITS, range(len(SPEED_UNITS)), 0, "Unit of Speed (Mach: Speed is the "
-             "Mach number)."),
+    F_real("Speed Start", "speed_start", 0.3, description="First freestream speed of the sweep, in Speed Unit."),
+    F_real("Speed End", "speed_end", 2.0, description="Last freestream speed, in Speed Unit."),
+    F_int("Speed Points", "speed_npts", 5, "Number of speeds, evenly spaced from Start to End (1: Start only)."),
+    F_choice("Speed Unit", "speed_unit", SPEED_UNITS, range(len(SPEED_UNITS)), 6, "Unit of the speeds (Mach: they are "
+             "Mach numbers, which an aero database matches with VSPAERO's)."),
     F_length("Altitude", "altitude", 6096.0, "Geometric altitude in the US Standard Atmosphere 1976."),
     F_real("Temperature Offset", "delta_temp", 0.0, description="Temperature offset from the standard atmosphere, kelvin."),
     F_real("Specific Heat Ratio", "gamma", 1.4, description="Gamma of the air."),
@@ -91,9 +93,9 @@ PARASITE_FIELDS = [
 
 def parasite_block():
     own = (
-        InputSpec("OpenVSP Model", "file_path", "The .vsp3 model. Parasite Drag works on OpenVSP's own components "
-                  "(wings, fuselages, pods...): it needs their wetted areas and reference lengths, thickness and "
-                  "fineness ratios, and it leaves out imported meshes.", default=d_path("C:/model.vsp3")),
+        InputSpec("OpenVSP Model", "text", "Output of OpenVSP Model (VSP), or the path of any .vsp3 model. Parasite Drag "
+                  "works on OpenVSP's own components (wings, fuselages...): it needs their wetted areas, reference "
+                  "lengths and thickness or fineness ratios."),
     ) + tuple(f.spec for f in PARASITE_FIELDS) + (
         InputSpec("Components", "list<text>", "Per-component settings from Parasite Drag Component (VSP) blocks, in a "
                   "List. Leave the default (one empty line) to use the settings stored in the model.",
@@ -108,19 +110,19 @@ def parasite_block():
               "times its wetted area over Sref. The flow condition is the US Standard Atmosphere 1976 at the "
               "Altitude and Temperature Offset, with Speed in Speed Unit.")
     lines = k.field_lines(PARASITE_FIELDS, lambda f: inp(f.spec.name))
-    lines.append(k.line("model", k.cat([inp("OpenVSP Model")])))
+    lines.append(k.line("model", inp("OpenVSP Model")))
     lines.append(k.cat([k.join(inp("Components"), "\n"), "\n"]))
-    out = analysis(g, k, inp, "run_parasite.py", lambda base: [], lines, "Parasite Drag")
+    out = analysis(g, k, inp, "run_parasite", lambda base: [], lines, "Parasite Drag")
     return make_block(
         "parasite_drag", "Parasite Drag (VSP)",
-        "Runs OpenVSP's **Parasite Drag** tool on an OpenVSP model and returns the path of its results (connect it to "
-        "Parasite Drag Result or Parasite Drag Component Values). All settings of OpenVSP's Parasite Drag screen are "
-        "inputs: geometry set, model length unit, reference area, laminar and turbulent Cf equations, speed and its "
-        "unit, altitude and temperature offset (US Standard Atmosphere 1976), specific heat ratio, sub-component "
-        "export, and each component's form factor equation, % laminar, Q, roughness and temperature ratios.\n\n"
-        "**Geometry is an OpenVSP model, not a mesh:** OpenVSP computes the form-factor inputs (reference length, "
-        "thickness or fineness ratio) from its parametric components and excludes imported meshes from the "
-        "buildup.\n\nNot exposed (out of scope): other atmosphere models, excrescences, reference area from a wing.",
+        "Runs OpenVSP's **Parasite Drag** tool on an OpenVSP model over a sweep of speeds (or Mach numbers) and returns "
+        "the path of its results (connect it to Parasite Drag Result, Parasite Drag Component Values or Aero Database). "
+        "All settings of OpenVSP's Parasite Drag screen are inputs: geometry set, model length unit, reference area, "
+        "laminar and turbulent Cf equations, speed and its unit, altitude and temperature offset (US Standard "
+        "Atmosphere 1976), specific heat ratio, sub-component export, and each component's form factor equation, % "
+        "laminar, Q, roughness and temperature ratios. OpenVSP takes the form-factor inputs (reference length, "
+        "thickness or fineness ratio) from the model's components.\n\nNot exposed (out of scope): other atmosphere "
+        "models, excrescences, reference area from a wing.",
         specs, "text", g, out)
 
 
@@ -143,69 +145,82 @@ def _reader(key, display, description, file_suffix, labels, out_type, comment, c
     path = k.cat([inp("Results"), file_suffix])
     table = g.block("import_table<file_path,bool>", "table", [path, g.boolean(True)], "Import Results Table")
     col = g.block("extract_column<table,text>", "list<text>", [table, k.pick(inp(choice_name), labels)], top=False)
-    values = g.block("scalar_from_text<text>", "real", [col], "Values")
-    out = values
-    if out_type == "real":
-        out = g.block("core.var<real>", "real", [prop(values, 0)], "Value")
+    out = g.block("scalar_from_text<text>", "real", [col], "Values")
     return make_block(key, display, description, specs, out_type, g, out)
 
 
 def parasite_result_block():
     return _reader("parasite_result", "Parasite Drag Result (VSP)",
-                   "A total of a Parasite Drag run: CD (total and geometry), drag area f, Reynolds number per unit "
-                   "length, and the flight condition OpenVSP used (Mach, Vinf, altitude, temperature, pressure, "
-                   "density, in the units OpenVSP reports for the chosen Speed Unit; altitude in metres, temperature "
-                   "in kelvin, pressure in pascals).",
-                   ".ntvsp.parasite.csv", PARASITE_RESULTS, "real",
-                   "**Parasite Drag totals.** The driver writes one row of totals to `<Case Name>.ntvsp.parasite.csv`; "
-                   "Import Table reads it and the chosen column becomes a real.")
+                   "A total of a Parasite Drag run, one value per speed of the sweep: CD (total and geometry), drag area "
+                   "f, Reynolds number per unit length, and the flight condition OpenVSP used (Mach, Vinf, altitude, "
+                   "temperature, pressure, density, in the units OpenVSP reports for the chosen Speed Unit; altitude in "
+                   "metres, temperature in kelvin, pressure in pascals).",
+                   ".ntvsp.parasite.csv", PARASITE_RESULTS, "list<real>",
+                   "**Parasite Drag totals.** The driver writes one row per speed to `<Case Name>.ntvsp.parasite.csv`; "
+                   "Import Table reads it and the chosen column becomes a list.")
 
 
 def parasite_components_block():
-    return _reader("parasite_components", "Parasite Drag Component Values (VSP)",
-                   "One column of the Parasite Drag table, one value per component in OpenVSP's order (CD, % of total, "
-                   "f, Cf, form factor, Q, wetted area, reference length, t/c or fineness ratio, Reynolds number...).",
-                   ".ntvsp.parasite_components.csv", PARASITE_COMPONENT_COLUMNS, "list<real>",
-                   "**Parasite Drag table.** One row per component in `<Case Name>.ntvsp.parasite_components.csv`; the "
-                   "chosen column comes out as a list.", choice_name="Column", choice_doc="Which column of the table.")
+    specs = (
+        InputSpec("Results", "text", "Output of Parasite Drag (VSP)."),
+        InputSpec("Speed Number", "integer", "Which speed of the sweep, counted from 1.", default=d_int(1)),
+        InputSpec("Column", "choice", "Which column of the table.", default=d_choice(PARASITE_COMPONENT_COLUMNS)),
+    )
+    g = Graph()
+    k = Kit(g)
+    inp = model_inputs(specs)
+    g.comment("**Parasite Drag table.** One row per component in `<Case Name>.ntvsp.parasite_components.<n>.csv` for "
+              "speed n; the chosen column comes out as a list.")
+    path = k.cat([inp("Results"), ".ntvsp.parasite_components.", k.num(inp("Speed Number")), ".csv"])
+    table = g.block("import_table<file_path,bool>", "table", [path, g.boolean(True)], "Import Results Table")
+    col = g.block("extract_column<table,text>", "list<text>", [table, k.pick(inp("Column"), PARASITE_COMPONENT_COLUMNS)],
+                  top=False)
+    out = g.block("scalar_from_text<text>", "real", [col], "Values")
+    return make_block("parasite_components", "Parasite Drag Component Values (VSP)",
+                      "One column of the Parasite Drag table at one speed of the sweep, one value per component in "
+                      "OpenVSP's order (CD, % of total, f, Cf, form factor, Q, wetted area, reference length, t/c or "
+                      "fineness ratio, Reynolds number...).", specs, "list<real>", g, out)
 
 
 # --- Wave drag --------------------------------------------------------------------------------------------------------
 
 WAVE_FIELDS = [
-    F_real("Mach", "mach", 1.5, description="Freestream Mach number (1 or more)."),
-    F_int("Number of Slices", "num_slices", 20, "Mach-plane cuts along the body for each rotation section (3 to 100)."),
-    F_int("Number of Rotation Sections", "num_rot_sects", 10, "Roll angles at which the body is cut (3 to 30)."),
+    F_real("Mach Start", "mach_start", 1.2, description="First Mach number of the sweep (1 or more)."),
+    F_real("Mach End", "mach_end", 2.0, description="Last Mach number."),
+    F_int("Mach Points", "mach_npts", 5, "Number of Mach numbers, evenly spaced from Start to End (1: Start only)."),
+    F_int("Number of Slices", "num_slices", 30, "Mach-plane cuts along the configuration for each rotation section. The "
+          "result keeps changing with this when the area distribution has steps (a blunt base, an inlet face): check "
+          "it at 20 and 40."),
+    F_int("Number of Rotation Sections", "num_rot_sects", 30, "Roll angles at which the configuration is cut. Wings of "
+          "high aspect ratio need many (the result falls towards linear theory as they increase): 30 is converged for "
+          "slender aircraft such as the X-59, a straight wing of aspect ratio 12 needs over 120."),
     Field(InputSpec("Reference Area", "real", "Sref.", AREA, d_real(1.0, AREA)), "sref", "real", (1.0, AREA)),
-    F_switch("Symmetry", "symmetry", True, "Use the body's x-z symmetry to cut only half the rotation sections."),
+    F_switch("Symmetry", "symmetry", True, "Use the configuration's x-z symmetry to cut only half the rotation sections."),
+    F_choice("Geometry Set", "geom_set", ("All", "Thick", "Thin"), ("all", "thick", "thin"), 0,
+             "Components of the model to include (by OpenVSP set)."),
 ]
 
 
 def wave_block():
-    own = (InputSpec("Surface Mesh", "mesh", "Closed surface tessellation of the vehicle, used as given."),) + \
+    own = (InputSpec("OpenVSP Model", "text", "Output of OpenVSP Model (VSP), or the path of any .vsp3 model."),) + \
         tuple(f.spec for f in WAVE_FIELDS)
     specs = own + run_inputs("wave")
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**OpenVSP Wave Drag.** OpenVSP cuts the body with Mach planes (inclined at the Mach angle) at each "
-              "rotation section, turns each set of cut areas into an equivalent area distribution, and averages the "
-              "von Karman slender-body wave drag over the roll angles. CD_wave = D / (q Sref).")
-
-    def exports(base):
-        g.comment("**Geometry.** The Surface Mesh is exported as `<Case Name>.stl` in metres; OpenVSP imports it as "
-                  "a mesh component.")
-        return [g.block("export_mesh<file_path,mesh,unit_length_enum>", "mesh_file_data",
-                        [k.cat([base, ".stl"]), inp("Surface Mesh"), g.unit_length("m")], "Export Surface Mesh")]
-
-    lines = k.field_lines(WAVE_FIELDS, lambda f: inp(f.spec.name))
-    out = analysis(g, k, inp, "run_wave.py", exports, lines, "Wave Drag")
+    g.comment("**OpenVSP Wave Drag** at each Mach number of the sweep. OpenVSP cuts the model with Mach planes "
+              "(inclined at the Mach angle) at each rotation section, turns each set of cut areas into an equivalent "
+              "area distribution, and averages the von Karman slender-body wave drag over the roll angles: the "
+              "supersonic area rule, zero-lift linear theory. CD_wave = D / (q Sref).")
+    lines = k.field_lines(WAVE_FIELDS, lambda f: inp(f.spec.name)) + [k.line("model", inp("OpenVSP Model"))]
+    out = analysis(g, k, inp, "run_wave", lambda base: [], lines, "Wave Drag")
     return make_block(
         "wave_drag", "Wave Drag (VSP)",
-        "Runs OpenVSP's **Wave Drag** (supersonic area rule) on a surface mesh and returns the path of its results "
-        "(connect it to Wave Drag Result or Wave Drag Area Distribution). Inputs are those of OpenVSP's Wave Drag "
-        "screen: Mach, number of slices, number of rotation sections, reference area and symmetry. Not exposed (out "
-        "of scope): inflow and outflow faces.", specs, "text", g, out)
+        "Runs OpenVSP's **Wave Drag** (supersonic area rule) on an OpenVSP model over a sweep of Mach numbers and returns "
+        "the path of its results (connect it to Wave Drag Result, Wave Drag Area Distribution or Aero Database). Inputs "
+        "are those of OpenVSP's Wave Drag screen: Mach, number of slices, number of rotation sections, reference area, "
+        "symmetry and geometry set. It is linear theory at zero lift: see the README for the Mach range it holds over. "
+        "Not exposed (out of scope): inflow and outflow faces.", specs, "text", g, out)
 
 
 WAVE_RESULTS = ("CD_wave", "Mach", "Num_Slices", "Num_Rotation_Sections", "Sref")
@@ -213,14 +228,16 @@ WAVE_RESULTS = ("CD_wave", "Mach", "Num_Slices", "Num_Rotation_Sections", "Sref"
 
 def wave_result_block():
     return _reader("wave_result", "Wave Drag Result (VSP)",
-                   "CD_wave of a Wave Drag run (or the Mach number, slice and section counts and Sref it used; Sref in "
-                   "square metres).", ".ntvsp.wave.csv", WAVE_RESULTS, "real",
-                   "**Wave Drag result.** One row in `<Case Name>.ntvsp.wave.csv`; the chosen column becomes a real.")
+                   "CD_wave of a Wave Drag run, one value per Mach number of the sweep (or the Mach numbers, slice and "
+                   "section counts and Sref it used; Sref in square metres).", ".ntvsp.wave.csv", WAVE_RESULTS,
+                   "list<real>", "**Wave Drag result.** One row per Mach number in `<Case Name>.ntvsp.wave.csv`; the "
+                   "chosen column becomes a list.")
 
 
 def wave_areas_block():
     specs = (
         InputSpec("Results", "text", "Output of Wave Drag (VSP)."),
+        InputSpec("Mach Number", "integer", "Which Mach number of the sweep, counted from 1.", default=d_int(1)),
         InputSpec("Rotation Section", "integer", "Which roll angle, counted from 1.", default=d_int(1)),
         InputSpec("Value", "choice", "x/L station of each slice, or its equivalent area (square metres).",
                   default=d_choice(("X_Norm", "Area"))),
@@ -228,72 +245,83 @@ def wave_areas_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**Area distribution.** The driver writes each rotation section's equivalent area distribution to "
-              "`<Case Name>.ntvsp.wave_areas.<n>.csv` (x/L, area). The chosen column comes out as a list, one value "
-              "per slice.")
-    path = k.cat([inp("Results"), ".ntvsp.wave_areas.", k.num(inp("Rotation Section")), ".csv"])
+    g.comment("**Area distribution.** The driver writes each Mach number's and rotation section's equivalent area "
+              "distribution to `<Case Name>.ntvsp.wave_areas.<m>.<n>.csv` (roll angle, x/L, area). The chosen column "
+              "comes out as a list, one value per slice.")
+    path = k.cat([inp("Results"), ".ntvsp.wave_areas.", k.num(inp("Mach Number")), ".", k.num(inp("Rotation Section")),
+                  ".csv"])
     table = g.block("import_table<file_path,bool>", "table", [path, g.boolean(True)], "Import Area Table")
     col = g.block("extract_column<table,text>", "list<text>", [table, k.pick(inp("Value"), ("X_Norm", "Area"))], top=False)
     out = g.block("scalar_from_text<text>", "real", [col], "Values")
     return make_block("wave_areas", "Wave Drag Area Distribution (VSP)",
-                      "The equivalent area distribution of one rotation section of a Wave Drag run: x/L stations or "
-                      "slice areas, as a list.", specs, "list<real>", g, out)
+                      "The equivalent area distribution of one rotation section at one Mach number of a Wave Drag run: "
+                      "x/L stations or slice areas, as a list.", specs, "list<real>", g, out)
 
 
-# --- Drag buildup ----------------------------------------------------------------------------------------------------
+# --- Aero database -------------------------------------------------------------------------------------------------
 
 def _viscous(name, key, what):
     return Field(InputSpec(name, "list<real>",
-                           f"{what} of the viscous correction, one value per VSPAERO case in case order (or one value "
-                           "for every case). Leave at 0 for none.",
+                           f"{what} of a viscous correction, one value per VSPAERO case in case order (or one value "
+                           "for every case). Leave at 0 for none (Parasite Drag gives the skin friction).",
                            None, lambda g: g.block("core.list<real>", "list<real>", [g.real(0.0)], top=False)),
                  key, "reals", default=(0.0,))
 
 
-BUILDUP_VISCOUS = [
+DATABASE_VISCOUS = [
     _viscous("Viscous CD", "viscous_cd", "Drag coefficient"),
     _viscous("Viscous CL", "viscous_cl", "Lift coefficient"),
-    _viscous("Viscous CMy", "viscous_cmy", "Pitching moment coefficient (about VSPAERO's moment reference point, "
-             "over Sref and cref)"),
+    _viscous("Viscous Cm", "viscous_cmy", "Pitching moment coefficient (about VSPAERO's moment reference point, over "
+             "Sref and cref)"),
 ]
-BUILDUP_COLUMNS = ("Case", "Mach", "AoA", "Beta", "CL_inviscid", "CL_viscous", "CL", "CD_inviscid", "CD_wave",
-                   "CD_viscous", "CD", "CMy_inviscid", "CMy_viscous", "CMy", "L_over_D", "CS", "CMx", "CMz")
+DATABASE_COLUMNS = ("Mach", "AoA", "Beta", "Re_cref", "CL", "CD", "CY", "Cl", "Cm", "Cn", "L_over_D", "CL_inviscid",
+                    "CD_induced", "CD_wave", "CD_parasite", "CD_viscous", "CL_viscous", "Cm_viscous")
 
 
-def buildup_block():
+def database_block():
     own = (
-        InputSpec("VSPAERO Results", "text", "Output of VSPAERO Analysis (VSP)."),
-        InputSpec("Wave Drag Results", "text", "Output of Wave Drag (VSP), run at the same Mach number and Sref. "
-                  "Leave empty for no wave drag (subsonic).", default=d_text("")),
-    ) + tuple(f.spec for f in BUILDUP_VISCOUS)
-    specs = own + run_inputs("buildup")
+        InputSpec("VSPAERO Results", "text", "Output of VSPAERO Analysis (VSP): the Mach x alpha x beta x Re_cref cases "
+                  "of the database."),
+        InputSpec("Wave Drag Results", "text", "Output of Wave Drag (VSP) over the supersonic part of VSPAERO's Mach range, "
+                  "with VSPAERO's Sref. Empty: no wave drag.", default=d_text("")),
+        InputSpec("Parasite Drag Results", "text", "Output of Parasite Drag (VSP) over VSPAERO's Mach range (Speed Unit "
+                  "Mach), with VSPAERO's Sref. Empty: no parasite drag.", default=d_text("")),
+    ) + tuple(f.spec for f in DATABASE_VISCOUS) + (
+        InputSpec("Variable Names", "list<text>", "Names of design variables to record with every row (e.g. geometry "
+                  "inputs of a design of experiments). Empty list item: none.",
+                  default=lambda g: g.block("core.list<text>", "list<text>", [g.text("")], top=False)),
+        InputSpec("Variable Values", "list<real>", "Their values, in the same order (as plain numbers: convert lengths "
+                  "to one unit first).", default=lambda g: g.block("core.list<real>", "list<real>", [g.real(0.0)], top=False)),
+        InputSpec("Append To", "text", "A CSV file that collects the rows of every run (created with a header when "
+                  "new): a design-of-experiments table. Empty: none.", default=d_text("")),
+    )
+    specs = own + run_inputs("database")
     g = Graph()
     k = Kit(g)
-    model = model_inputs(specs)
+    inp = model_inputs(specs)
 
-    def inp(name):  # the buildup runs no OpenVSP program; its helper commands run in the driver folder
-        return model("Driver Directory" if name == "OpenVSP Directory" else name)
-
-    g.comment("**Drag buildup.** OpenVSP has no tool that adds these together, so a Python driver does: per VSPAERO "
-              "case, CL = CLi + CL_viscous, CD = CDi + CD_wave + CD_viscous, CMy = CMiy + CMy_viscous. CLi, CDi and "
-              "CMiy are VSPAERO's inviscid parts; its own viscous estimate (CDo) is left out because the viscous "
-              "correction replaces it.")
-    g.comment("**Shared conditions.** The driver stops if Wave Drag's Mach number differs from any VSPAERO case's or "
-              "its Sref from VSPAERO's, and if a viscous list has neither one value per case nor a single value. It "
-              "cannot see the viscous correction's inputs: wire its Mach, angles, Sref, reference length (cref) and "
-              "moment center from the same values as VSPAERO's.")
-    lines = [k.line("vspaero_results", inp("VSPAERO Results")), k.line("wave_results", inp("Wave Drag Results"))]
-    lines += k.field_lines(BUILDUP_VISCOUS, lambda f: inp(f.spec.name))
-    base = analysis(g, k, inp, "run_buildup.py", lambda ready: [], lines, "Drag Buildup")
-    g.comment("**Table.** The driver writes `<Case Name>.ntvsp.buildup.csv` (one row per case: " +
-              ", ".join(BUILDUP_COLUMNS) + "); Import Table brings it back as the block's output. Extract Column "
-              "and Scalar from Text turn a column into numbers.")
-    out = g.block("import_table<file_path,bool>", "table", [k.cat([base, ".ntvsp.buildup.csv"]), g.boolean(True)],
-                  "Buildup Table")
+    g.comment("**Aero database.** OpenVSP has no tool that combines its analyses, so a Python driver does, per VSPAERO "
+              "case: CL = CLi, CD = CDi + CD_wave(M) + CD_parasite(M), CY = CSi, Cl = -CMix, Cm = CMiy, Cn = -CMiz "
+              "(plus the optional viscous lists). Moments are in aircraft body-axis signs (Cl right wing down, Cm nose "
+              "up, Cn nose right); VSPAERO's own axes (x aft, z up) give rolling and yawing moments the opposite sign. "
+              "Wave and parasite drag are interpolated linearly in Mach between the Mach numbers they were run at; wave "
+              "drag is 0 below Mach 1. VSPAERO's own viscous estimate (CDo) is left out, since Parasite Drag replaces "
+              "it.")
+    g.comment("**Shared conditions.** The driver stops if the wave or parasite drag runs used another Sref, or do not "
+              "cover VSPAERO's Mach numbers. Rows go to `<Case Name>.ntvsp.database.csv` and, with Append To, are added "
+              "to that file with the design variables as the first columns.")
+    lines = [k.line("vspaero_results", inp("VSPAERO Results")), k.line("wave_results", inp("Wave Drag Results")),
+             k.line("parasite_results", inp("Parasite Drag Results")), k.line("append_to", inp("Append To")),
+             k.line("variables", k.join(inp("Variable Names"))), k.line("values", k.join(k.num(inp("Variable Values"))))]
+    lines += k.field_lines(DATABASE_VISCOUS, lambda f: inp(f.spec.name))
+    base = analysis(g, k, inp, "run_database", lambda ready: [], lines, "Aero Database", needs_openvsp=False)
+    g.comment("**Table.** `<Case Name>.ntvsp.database.csv`, one row per VSPAERO case: the design variables, then " +
+              ", ".join(DATABASE_COLUMNS) + ". Import Table brings it back as the block's output.")
+    out = g.block("import_table<file_path,bool>", "table", [k.cat([base, ".ntvsp.database.csv"]), g.boolean(True)],
+                  "Database Table")
     return make_block(
-        "drag_buildup", "Drag Buildup (VSP)",
-        "Adds VSPAERO's inviscid coefficients, Wave Drag's CD_wave and a viscous correction (lists of CD, CL and CMy, "
-        "e.g. from the Viscous Correction Coefficient (nTop) block) and exports the table of coefficients to "
-        "`<Case Name>.ntvsp.buildup.csv` in the Working Directory. The output is that table. All three must use "
-        "the same flight condition and reference: the driver checks what it can (Mach number and Sref of the wave "
-        "drag run, number of viscous values).", specs, "table", g, out)
+        "aero_database", "Aero Database (VSP)",
+        "A six-degree-of-freedom aero database from VSPAERO, Wave Drag and Parasite Drag (VSP): CL, CD, CY, Cl, Cm and "
+        "Cn for every Mach x alpha x beta case of the VSPAERO run, with the drag split into induced, wave, parasite and "
+        "(optional) viscous parts. Writes `<Case Name>.ntvsp.database.csv` and outputs it as a table; Append To "
+        "collects runs with different design variables into one design-of-experiments file.", specs, "table", g, out)

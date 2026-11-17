@@ -1,8 +1,9 @@
 """Building pieces shared by the nTop -> OpenVSP custom blocks.
 
 Every block here turns its inputs into lines of ``key = value`` text (SI units: metres, square metres, degrees,
-m/s, kg/m^3, seconds), and the analysis blocks write those lines to a settings file, export the geometry, and
-call a Python driver in ``vsp_ntop`` with Run Command. Readers bring the driver's CSV files back with Import
+m/s, kg/m^3, seconds), and the analysis blocks write those lines to a settings file and run a driver of the
+``vsp_ntop`` package (``python -m vsp_ntop.<module>``) with Run Command, using the Python named by the
+NTOP_PYTHON_PATH environment variable and the OpenVSP folder named by VSP_PATH. Readers bring the driver's CSV files back with Import
 Table and Import Scalar Point Map.
 """
 from __future__ import annotations
@@ -14,10 +15,10 @@ from dataclasses import dataclass
 from ntopfile import CustomBlock, Graph, InputSpec, ModelInput, Ref
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
-DEFAULT_VSP_DIR = ROOT + "/OpenVSP-3.56.0-win64"
-DEFAULT_DRIVER_DIR = ROOT + "/vsp_ntop"
 DEFAULT_WORK_DIR = ROOT + "/runs"
-DEFAULT_PYTHON = "C:/Users/Benji/anaconda3/python.exe"
+ENV_BLOCK = "get_environment_variable<text,bool,list_interface>[5.20.0]"
+PYTHON_VARIABLE = "NTOP_PYTHON_PATH"  # a Python with this package installed (pip install -e .)
+VSP_VARIABLE = "VSP_PATH"  # the OpenVSP folder (vspscript.exe, vspaero.exe)
 
 LENGTH = {"length": 1}
 AREA = {"length": 2}
@@ -231,49 +232,53 @@ def run_inputs(default_case):
                   "load them from it.", default=d_path(DEFAULT_WORK_DIR)),
         InputSpec("Case Name", "text", "Base name of the run's files. Give each concurrent run its own name.",
                   default=d_text(default_case)),
-        InputSpec("OpenVSP Directory", "file_path", "Folder holding vsp.exe, vspscript.exe and vspaero.exe "
-                  "(OpenVSP 3.56).", default=d_path(DEFAULT_VSP_DIR)),
-        InputSpec("Python", "file_path", "Any Python 3.8+ interpreter; the driver scripts need only its standard library.",
-                  default=d_path(DEFAULT_PYTHON)),
-        InputSpec("Driver Directory", "file_path", "Folder holding the nTop-VSP driver scripts (vsp_ntop).",
-                  default=d_path(DEFAULT_DRIVER_DIR)),
         InputSpec("Timeout", "real", "Longest time each external program may run.", TIME, d_real(7200.0, TIME)),
     )
 
 
-RUN_INPUT_NAMES = ("Working Directory", "Case Name", "OpenVSP Directory", "Python", "Driver Directory", "Timeout")
+RUN_INPUT_NAMES = ("Working Directory", "Case Name", "Timeout")
 
 
-def analysis(g: Graph, k: Kit, inp, script, exports, settings_lines, what):
+def environment(g: Graph, name, label):
+    """The value of an environment variable (an error stops the notebook when it is not set)."""
+    rerun = g.block("core.group<any>", "group", [g.integer(0)], top=False)
+    return g.block(ENV_BLOCK, "text", [g.text(name), g.boolean(True), rerun], label)
+
+
+def analysis(g: Graph, k: Kit, inp, module, exports, settings_lines, what, needs_openvsp=True):
     """The shared tail of every analysis block.
 
-    ``exports(after_mkdir_base)`` adds the geometry export blocks and returns the instances to wait for; the
-    settings file gets ``settings_lines`` plus the run's own keys. Returns the results base path (text),
-    available once the driver has finished without error.
+    The Python is the one named by the NTOP_PYTHON_PATH environment variable (with this package installed), and
+    OpenVSP the folder named by VSP_PATH. ``exports(after_mkdir_base)`` adds the geometry export blocks and returns
+    the instances to wait for; the settings file gets ``settings_lines`` plus the run's own keys. Returns the results
+    base path (text), available once the driver ``vsp_ntop.<module>`` has finished without error.
     """
+    g.comment(f"**Programs.** Python is the one named by the `{PYTHON_VARIABLE}` environment variable (it must have "
+              f"the nTop_vsp package installed: `pip install -e .` in the nTop_vsp folder)"
+              + (f"; OpenVSP is the folder named by `{VSP_VARIABLE}`." if needs_openvsp else "."))
+    python = environment(g, PYTHON_VARIABLE, "Python")
+    temp = environment(g, "TEMP", "Temporary Folder Path")
     g.comment("**Run folder.** The Working Directory is created if it does not exist; every file of this run "
               "is named after the Case Name inside it.")
     work = k.cat([inp("Working Directory")], name="Working Directory Text")
     base = k.cat([work, "/", inp("Case Name")], name="Results Base")
-    mkdir = k.run_command(k.cat(['"', inp("Python"), '" -c "import os,sys; os.makedirs(sys.argv[1], exist_ok=True)" "',
-                                 work, '"']), inp("OpenVSP Directory"), inp("Timeout"), name="Create Working Directory")
+    mkdir = k.run_command(k.cat(['"', python, '" -c "import os,sys; os.makedirs(sys.argv[1], exist_ok=True)" "',
+                                 work, '"']), temp, inp("Timeout"), name="Create Working Directory")
     ready = k.wait(mkdir, base, name="Base After Folder Exists")
     waits = exports(ready)
     g.comment("**Settings file.** Every input becomes one `key = value` line in SI units (lengths in metres, angles "
-              "in degrees). The driver script reads this file; it is kept in the Working Directory as a record of "
-              "the run.")
-    own = [
-        k.line("work_dir", work), k.line("case", inp("Case Name")), k.line("vsp_dir", k.cat([inp("OpenVSP Directory")])),
-        k.line("timeout_s", k.num(inp("Timeout"), 1.0, TIME)),
-    ]
+              "in degrees). The driver reads this file; it is kept in the Working Directory as a record of the run.")
+    own = [k.line("work_dir", work), k.line("case", inp("Case Name")), k.line("timeout_s", k.num(inp("Timeout"), 1.0, TIME))]
+    if needs_openvsp:
+        own.append(k.line("vsp_dir", environment(g, VSP_VARIABLE, "OpenVSP Folder")))
     text = g.block("core.list<text>", "list<text>", own + list(settings_lines), top=False)
     settings = g.block("concatenate<list<text>,text>", "text", [text, k.t("")], "Settings")
     settings_path = k.cat([ready, ".ntvsp.settings.txt"])
     written = g.block("export_text<file_path,text>", "file_path", [settings_path, settings], "Write Settings File")
-    g.comment(f"**Run.** Run Command calls the Python driver `{script}` on the settings file once the geometry and "
+    g.comment(f"**Run.** Run Command runs `python -m vsp_ntop.{module}` on the settings file once the geometry and "
               "settings are written (Await enforces the order). Its progress appears in nTop's log and in "
               "`<Case Name>.ntvsp.log`. A non-zero exit code stops the notebook with the driver's error message.")
-    command = k.cat(['"', inp("Python"), '" "', inp("Driver Directory"), "/" + script + '" "', settings_path, '"'])
+    command = k.cat(['"', python, f'" -m vsp_ntop.{module} "', settings_path, '"'])
     after = command
     for w in [written] + list(waits):
         after = k.wait(w, after)

@@ -1,34 +1,30 @@
-"""VSPAERO analysis of a tessellated surface (panel method or vortex lattice), driven from nTop.
+"""VSPAERO analysis of an OpenVSP model, driven from nTop.
 
-    python run_vspaero.py SETTINGS_FILE
+    python -m vsp_ntop.run_vspaero SETTINGS_FILE
 
 Steps (each logged to ``<case>.ntvsp.log``):
 
-1. OpenVSP imports the surface mesh (``<case>.stl``, metres) as a MeshGeom and writes VSPAERO's panel file
-   (``VSPAEROComputeGeometry``: ``<case>.vspgeom``, ``<case>.vkey``). With ``method = vlm`` the surface is then
-   marked thin in the ``.vkey`` file, so VSPAERO solves it as a vortex lattice (a camber sheet) instead of panels.
-2. Trailing-edge wakes are added to the panel file (``vspgeom.py``) along the mesh edges joining the trailing-edge
-   vertices the user lists: VSP marks none on a tessellation. A thin surface's file is then rewritten in VSPAERO's
-   polygon layout (``vspgeom.polygon_layout``), so VSPAERO solves on the triangles as given.
-3. ``<case>.vspaero`` is written with every setting, in the form OpenVSP itself writes it.
-4. ``vspaero.exe`` solves all Mach x alpha x beta x Re_cref combinations in one run.
-5. Results for nTop: ``<case>.ntvsp.polar.csv`` (one row per case), per-case surface pressure point maps (the
-   pressure jump across the sheet on a thin surface), the panels behind them, and the wake lines.
+1. OpenVSP reads the model (``model`` = a ``.vsp3`` made by OpenVSP Model) and writes VSPAERO's panel file
+   (``VSPAEROComputeGeometry``: ``<case>.vspgeom``, ``<case>.vkey``). Components in the model's "Thick" set become
+   panel-method surfaces, those in the "Thin" set vortex-lattice camber surfaces. OpenVSP marks the trailing edges
+   of its wings as wakes itself; with ``find_body_wakes`` it also marks wakes behind fuselage bases.
+2. ``<case>.vspaero`` is written with every setting, in the form OpenVSP itself writes it.
+3. ``vspaero.exe`` solves all Mach x alpha x beta x Re_cref combinations in one run.
+4. Results for nTop: ``<case>.ntvsp.polar.csv`` (one row per case), the centre of pressure of each case and the
+   aerodynamic centre of each alpha sweep (``pressure_centers``), per-case surface pressure point maps (on thin
+   components, the pressure jump across the sheet) and the panels' points and areas (``.ntvsp.faces.{1,4}.csv``).
 
-Settings (``key = value``; lengths in metres, angles in degrees, SI elsewhere) are listed in ``KEYS`` below.
+Settings (``key = value``; lengths in metres, angles in degrees, SI elsewhere) are listed in the blocks.
 """
 from __future__ import annotations
 
 import math
 import os
-import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
 
-import adb  # noqa: E402
-import vspgeom  # noqa: E402
-from common import (DriverError, Log, Settings, fmt, linspace, main_wrapper, run, run_vspscript,  # noqa: E402
+from . import adb
+from . import vspgeom
+from .common import (openvsp_dir, DriverError, Log, Settings, fmt, linspace, main_wrapper, run, run_vspscript,
                     vsp_path, write_csv, write_point_map)
 
 # Solver settings written to <case>.vspaero, in OpenVSP's order: (file key, settings key, kind).
@@ -51,30 +47,26 @@ SOLVER_KEYS_2 = [
 ]
 
 
-def geometry_script(stl, vsp3, find_body_wakes):
+def geometry_script(model, vsp3, find_body_wakes):
     return f"""void main()
 {{
-    string gid = ImportFile("{vsp_path(stl)}", IMPORT_STL, "");
-    if (gid == "") {{ Print("ERR could not import the surface mesh"); return; }}
+    ReadVSPFile( "{vsp_path(model)}" );
+    if ( FindGeoms().size() == 0 ) {{ Print( "ERR the model has no components" ); return; }}
+    SetVSP3FileName( "{vsp_path(vsp3)}" );
     Update();
-    SetVSP3FileName("{vsp_path(vsp3)}");
-    SetIntAnalysisInput("VSPAEROComputeGeometry", "GeomSet", array<int> = {{0}});
-    SetIntAnalysisInput("VSPAEROComputeGeometry", "ThinGeomSet", array<int> = {{-1}});
-    SetIntAnalysisInput("VSPAEROComputeGeometry", "Symmetry", array<int> = {{0}});
-    SetIntAnalysisInput("VSPAEROComputeGeometry", "FindBodyWakesFlag", array<int> = {{{1 if find_body_wakes else 0}}});
-    string rid = ExecAnalysis("VSPAEROComputeGeometry");
-    PrintResults(rid);
-    Print("NTVSP_OK");
+    int thick = GetGeomSet( "Thick" ).size() > 0 ? 3 : -1;
+    int thin = GetGeomSet( "Thin" ).size() > 0 ? 4 : -1;
+    if ( thick < 0 && thin < 0 ) {{ Print( "ERR no component is in the Thick or Thin set" ); return; }}
+    Print( "NTVSP_SETS " + thick + " " + thin );
+    SetIntAnalysisInput( "VSPAEROComputeGeometry", "GeomSet", array<int> = {{thick}} );
+    SetIntAnalysisInput( "VSPAEROComputeGeometry", "ThinGeomSet", array<int> = {{thin}} );
+    SetIntAnalysisInput( "VSPAEROComputeGeometry", "Symmetry", array<int> = {{0}} );
+    SetIntAnalysisInput( "VSPAEROComputeGeometry", "FindBodyWakesFlag", array<int> = {{{1 if find_body_wakes else 0}}} );
+    string rid = ExecAnalysis( "VSPAEROComputeGeometry" );
+    PrintResults( rid );
+    Print( "NTVSP_OK" );
 }}
 """
-
-
-def read_te_points(s: Settings):
-    """Trailing-edge vertices (m): the mesh vertices that lie on trailing edges, in any order."""
-    xs, ys, zs = s.reals("te_x"), s.reals("te_y"), s.reals("te_z")
-    if not (len(xs) == len(ys) == len(zs)):
-        raise DriverError("trailing-edge vertex coordinates have different lengths")
-    return list(zip(xs, ys, zs))
 
 
 def vspaero_file(s: Settings, machs, alphas, betas, recrefs):
@@ -142,26 +134,24 @@ def clean(name):
     return name.replace("/", "_over_").replace("Re_over_1e6", "Re_1e6")
 
 
-def surface_outputs(work, case, g: vspgeom.VSPGeom, order, method, s: Settings, header, data, log):
-    """Per-case Cp and pressure difference point maps at triangle centroids and nodes.
+def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, log):
+    """Per-case Cp and pressure difference point maps at the panel triangles' centroids and nodes, and the panels'
+    points and areas (``<case>.ntvsp.faces.{1,4}.csv``, thick components only) for the viscous correction.
 
-    ``order``: the face of ``g`` behind each of VSPAERO's level-0 triangles. On a thin surface (``method`` vlm) the
-    values are the pressure jump across the sheet, Cp on the side the face normals point to minus Cp on
-    the other side. Also writes ``<case>.ntvsp.panels.txt``
-    (the triangles in that order) for VSPAERO Thin Surface Projection (VSP), and on panel runs
-    ``<case>.ntvsp.faces.{1,4}.csv`` (surface points with their areas) for VSPAERO Mesh Faces (VSP).
-    """
+    On thin (vortex lattice) components the values are the pressure jump across the sheet: Cp on the side the
+    panel normals point to minus Cp on the other side."""
+    tris = vspgeom.level0(g)
     cases = adb.read_cases(os.path.join(work, case + ".adb.cases"))
     try:
-        blocks, n_tri = adb.read_cp(os.path.join(work, case + ".adb"), cases, len(order))
+        blocks, n_tri = adb.read_cp(os.path.join(work, case + ".adb"), cases, len(tris))
         err = adb.check_against_tecplot(blocks, os.path.join(work, case + ".tec.dat"))
     except ValueError as e:
         raise DriverError(f"surface pressures: {e}")
     log(f"surface pressures: {len(cases)} conditions, {n_tri} loops with the wakes (check against Tecplot output: "
         f"{err:.1e})")
-    faces = [g.faces[i] for i in order]
-    if any(len(f) != 3 for f in faces):
-        raise DriverError("the panel file has non-triangular faces")
+    thin = vspgeom.thin_parts(os.path.join(work, case + ".vkey"))
+    faces = [t for t, _ in tris]
+    is_thin = [g.parts[i] in thin for _, i in tris]
     nf = len(faces)
     centroids = [tuple(sum(g.nodes[i][c] for i in f) / 3.0 for c in range(3)) for f in faces]
     areas = []
@@ -170,25 +160,22 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, order, method, s: Settings, 
         u, v = [b[k] - a[k] for k in range(3)], [c[k] - a[k] for k in range(3)]
         cx = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
         areas.append(0.5 * math.sqrt(cx[0] ** 2 + cx[1] ** 2 + cx[2] ** 2))
-    if method == "panel":
-        # Surface points with the area each stands for, for the Viscous Correction on Mesh blocks: the face
-        # centroids, and the centroids of each face split in four at its edge midpoints.
-        write_point_map(os.path.join(work, case + ".ntvsp.faces.1.csv"), centroids, areas)
-        four_pts, four_areas = [], []
-        for f, a in zip(faces, areas):
-            p, q_, r = (g.nodes[i] for i in f)
-            pq, qr, rp = ([(u[k] + v[k]) / 2 for k in range(3)] for u, v in ((p, q_), (q_, r), (r, p)))
-            for t in ((p, pq, rp), (pq, q_, qr), (rp, qr, r), (pq, qr, rp)):
-                four_pts.append(tuple(sum(v[k] for v in t) / 3.0 for k in range(3)))
-                four_areas.append(a / 4.0)
+    one_pts, one_areas, four_pts, four_areas = [], [], [], []
+    for f, a, c, t in zip(faces, areas, centroids, is_thin):
+        if t:
+            continue
+        one_pts.append(c)
+        one_areas.append(a)
+        p, q_, r = (g.nodes[i] for i in f)
+        pq, qr, rp = ([(u[k] + v[k]) / 2 for k in range(3)] for u, v in ((p, q_), (q_, r), (r, p)))
+        for tri in ((p, pq, rp), (pq, q_, qr), (rp, qr, r), (pq, qr, rp)):
+            four_pts.append(tuple(sum(v[k] for v in tri) / 3.0 for k in range(3)))
+            four_areas.append(a / 4.0)
+    if one_pts:
+        write_point_map(os.path.join(work, case + ".ntvsp.faces.1.csv"), one_pts, one_areas)
         write_point_map(os.path.join(work, case + ".ntvsp.faces.4.csv"), four_pts, four_areas)
     q = 0.5 * s.real("rho") * s.real("vinf") ** 2
     used = sorted({i for f in faces for i in f})
-    index = {v: k for k, v in enumerate(used)}
-    with open(os.path.join(work, case + ".ntvsp.panels.txt"), "w", newline="\n") as f:
-        f.write(f"{method} {len(used)} {nf}\n")
-        f.writelines(f"{g.nodes[i][0]!r} {g.nodes[i][1]!r} {g.nodes[i][2]!r}\n" for i in used)
-        f.writelines(" ".join(str(index[i]) for i in t) + "\n" for t in faces)
     i_mach, i_aoa, i_beta = header.index("Mach"), header.index("AoA"), header.index("Beta")
     for row_number, row in enumerate(data, start=1):
         # VSPAERO solves Mach 0 as Mach 0.001 and lists it so in .adb.cases; the case list has 7 decimals.
@@ -209,71 +196,82 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, order, method, s: Settings, 
                             [v * scale for v in cp])
             write_point_map(os.path.join(work, f"{case}.ntvsp.{quantity}.nodes.{row_number}.csv"), node_pts,
                             [v * scale for v in node_cp])
-            both_pts = centroids + node_pts
-            both = [v * scale for v in cp] + [v * scale for v in node_cp]
-            write_point_map(os.path.join(work, f"{case}.ntvsp.{quantity}.both.{row_number}.csv"), both_pts, both)
+            write_point_map(os.path.join(work, f"{case}.ntvsp.{quantity}.both.{row_number}.csv"), centroids + node_pts,
+                            [v * scale for v in cp] + [v * scale for v in node_cp])
+
+
+def pressure_centers(work, case, header, data, s: Settings, log):
+    """Centre of pressure of every case and aerodynamic centre of every (Mach, beta, Re_cref) alpha sweep.
+
+    VSPAERO's axes are x aft, z up, and CMy (nose up) is about the moment reference point over Sref cref. The
+    resultant of the normal force CFz and the moment crosses the line through the reference point along x at
+    x_cp = x_ref - CMy cref / CFz (inviscid coefficients, CFiz and CMiy). The aerodynamic centre is where the moment
+    does not change with lift: x_ac = x_ref - (dCMy/dCFz) cref, the slope fitted over the alpha sweep. Both are
+    given as points (x, y_ref, z_ref) in metres. A case with no normal force (|CFz| < 1e-6) has no centre of
+    pressure: its point is the reference point and Defined is 0.
+    """
+    i = {h: header.index(h) for h in ("Mach", "AoA", "Beta", "Re/1e6", "CFiz", "CMiy")}
+    xr, yr, zr, cref = s.real("xcg"), s.real("ycg"), s.real("zcg"), s.real("cref")
+    rows = []
+    for k, row in enumerate(data, start=1):
+        cfz, cm = row[i["CFiz"]], row[i["CMiy"]]
+        ok = abs(cfz) >= 1e-6
+        rows.append([k, row[i["Mach"]], row[i["AoA"]], row[i["Beta"]], xr - cm * cref / cfz if ok else xr, yr, zr,
+                     int(ok), cfz, cm])
+    write_csv(os.path.join(work, case + ".ntvsp.center_of_pressure.csv"),
+              ["Case", "Mach", "AoA", "Beta", "X", "Y", "Z", "Defined", "CFiz", "CMiy"], rows)
+    groups = {}
+    for row in data:
+        groups.setdefault((row[i["Mach"]], row[i["Beta"]], row[i["Re/1e6"]]), []).append(row)
+    ac = []
+    for (m, b, re), rows_g in groups.items():
+        f = [r[i["CFiz"]] for r in rows_g]
+        c = [r[i["CMiy"]] for r in rows_g]
+        n = len(f)
+        mf, mc = sum(f) / n, sum(c) / n
+        sff = sum((x - mf) ** 2 for x in f)
+        if n < 2 or sff < 1e-12:
+            continue
+        slope = sum((x - mf) * (y - mc) for x, y in zip(f, c)) / sff
+        ac.append([m, b, re * 1e6, xr - slope * cref, yr, zr, slope])
+    write_csv(os.path.join(work, case + ".ntvsp.aerodynamic_center.csv"),
+              ["Mach", "Beta", "Re_cref", "X", "Y", "Z", "dCMy_dCFz"], ac)
+    if ac:
+        log("aerodynamic centre x: " + ", ".join(f"Mach {r[0]:g} beta {r[1]:g}: {r[3]:.3f} m" for r in ac))
 
 
 def main(settings_path):
     s = Settings(settings_path)
     work = os.path.abspath(s.text("work_dir"))
     case = s.text("case")
-    vsp_dir = os.path.abspath(s.text("vsp_dir"))
+    vsp_dir = openvsp_dir(s)
     timeout = s.real("timeout_s", 7200)
     os.makedirs(work, exist_ok=True)
     log = Log(os.path.join(work, case + ".ntvsp.log"))
     for stale in os.listdir(work):
         if stale.startswith(case + ".ntvsp.") and stale.endswith(".csv"):
             os.remove(os.path.join(work, stale))
-    stl = os.path.join(work, s.text("mesh_file", case + ".stl"))
-    if not os.path.isfile(stl):
-        raise DriverError(f"surface mesh {stl} not found")
+    model = s.text("model")
+    if not model.lower().endswith(".vsp3"):
+        model += ".vsp3"
+    if not os.path.isfile(model):
+        raise DriverError(f"OpenVSP model {model} not found")
 
-    # 1. Panel geometry from the tessellation.
-    log("OpenVSP: import the surface mesh and write the VSPAERO panel file")
-    run_vspscript(vsp_dir, geometry_script(stl, os.path.join(work, case + ".vsp3"), s.flag("find_body_wakes")),
-                  work, case + ".geometry", log, timeout)
+    # 1. Panel geometry from the model's Thick and Thin sets.
+    log("OpenVSP: read the model and write the VSPAERO panel file")
+    text = run_vspscript(vsp_dir, geometry_script(model, os.path.join(work, case + ".vsp3"), s.flag("find_body_wakes")),
+                         work, case + ".geometry", log, timeout)
+    sets = next((l.split()[1:] for l in text.splitlines() if l.strip().startswith("NTVSP_SETS")), ["?", "?"])
+    log(f"Thick set {'used' if sets[0] == '3' else 'empty'}, Thin set {'used' if sets[1] == '4' else 'empty'}")
     geom = os.path.join(work, case + ".vspgeom")
     if not os.path.isfile(geom):
         raise DriverError("OpenVSP wrote no .vspgeom file")
-    method = s.text("method", "panel")
-    if method not in ("panel", "vlm"):
-        raise DriverError(f"method = {method}: expected panel or vlm")
-    n_free = vspgeom.free_edges(vspgeom.read(geom))
-    if method == "vlm":
-        vspgeom.set_thick(os.path.join(work, case + ".vkey"), False)
-        log(f"method: vortex lattice (the mesh is a thin camber surface; {n_free} free edges)")
-    else:
-        log("method: panel (the mesh is a thick, closed surface)")
-        if n_free:
-            log(f"warning: the mesh has {n_free} free edges, so it is not closed; the panel method needs a closed "
-                "surface (use the vortex lattice method for a thin sheet)")
+    g = vspgeom.read(geom)
+    log(f"panels: {len(g.faces)} faces, {len(g.nodes)} nodes, {len(g.wakes)} trailing-edge wakes")
+    if not g.wakes:
+        log("warning: no trailing-edge wakes (no Wing component); VSPAERO sheds no vorticity and lift will be small")
 
-    # 2. Trailing-edge wakes.
-    try:
-        n_wakes, n_edges, polylines = vspgeom.add_wakes(geom, geom, read_te_points(s), s.real("te_tolerance"))
-    except ValueError as e:
-        raise DriverError(f"trailing edges: {e}")
-    log(f"wakes: {n_wakes} trailing edges, {n_edges} edges")
-    if n_wakes == 0:
-        log("warning: no trailing-edge wakes; VSPAERO will shed no vorticity and the surface carries almost no lift")
-    tri_geom = vspgeom.read(geom)
-    order = list(range(len(tri_geom.faces)))
-    if method == "vlm":
-        # VSPAERO's own pairing of triangles can drop trailing-wake edges behind swept trailing edges (see
-        # vspgeom.polygon_layout); hand it the triangles as its solution grid instead, as OpenVSP does for wings.
-        try:
-            order = vspgeom.polygon_layout(geom, geom)
-        except ValueError as e:
-            raise DriverError(f"thin surface: {e}")
-        log("panel file in VSPAERO's polygon layout: VSPAERO solves on the mesh triangles as given")
-    wake_pts, wake_ids = [], []
-    for k, line in enumerate(polylines, start=1):
-        wake_pts += line
-        wake_ids += [float(k)] * len(line)
-    write_point_map(os.path.join(work, case + ".ntvsp.wakes.csv"), wake_pts or [(0.0, 0.0, 0.0)], wake_ids or [0.0])
-
-    # 3. Solver input.
+    # 2. Solver input.
     machs = linspace(s.real("mach_start"), s.real("mach_end"), s.integer("mach_npts"))
     alphas = linspace(s.real("alpha_start"), s.real("alpha_end"), s.integer("alpha_npts"))
     betas = linspace(s.real("beta_start"), s.real("beta_end"), s.integer("beta_npts"))
@@ -283,7 +281,7 @@ def main(settings_path):
     n_cases = len(machs) * len(alphas) * len(betas) * len(recrefs)
     log(f"VSPAERO: {len(machs)} Mach x {len(alphas)} alpha x {len(betas)} beta x {len(recrefs)} Re_cref = {n_cases} cases")
 
-    # 4. Solve.
+    # 3. Solve.
     for old in (".polar", ".adb", ".adb.cases", ".tec.dat", ".history", ".lod"):
         p = os.path.join(work, case + old)
         if os.path.exists(p):
@@ -300,7 +298,7 @@ def main(settings_path):
     cmd += [case]
     run(cmd, log, work, os.path.join(work, case + ".vspaero.log"), timeout)
 
-    # 5. Results.
+    # 4. Results.
     polar = os.path.join(work, case + ".polar")
     if not os.path.isfile(polar):
         raise DriverError(f"VSPAERO wrote no .polar file; see {case}.vspaero.log")
@@ -309,7 +307,8 @@ def main(settings_path):
         raise DriverError(f"VSPAERO's polar has {len(data)} rows for {n_cases} cases; see {case}.vspaero.log")
     write_csv(os.path.join(work, case + ".ntvsp.polar.csv"), ["Case"] + [clean(h) for h in header],
               [[i] + row for i, row in enumerate(data, start=1)])
-    surface_outputs(work, case, tri_geom, order, method, s, header, data, log)
+    pressure_centers(work, case, header, data, s, log)
+    surface_outputs(work, case, g, s, header, data, log)
     log("done")
     log.close()
 

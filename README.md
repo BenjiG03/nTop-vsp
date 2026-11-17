@@ -1,305 +1,327 @@
 # nTop_vsp
 
-nTop custom blocks for three OpenVSP 3.56 analyses: **VSPAERO** (panel method or vortex lattice), **Parasite
-Drag** and **Wave Drag**, plus separate blocks that bring the results back into nTop, including surface pressure
-contours as Scalar Point Maps, and a drag buildup that combines them. The test case is the HL-20 lifting body (`hl20.vsp3`, `h20_vsp_mesh.stl`, `h20_ntop_mesh.stl`).
+nTop custom blocks that turn **nTop implicit bodies into an OpenVSP model** and run three OpenVSP 3.56 analyses on
+it: **VSPAERO**, **Wave Drag** and **Parasite Drag**. A last block combines them into a **six-degree-of-freedom aero
+database** (CL, CD, CY, Cl, Cm, Cn against Mach, alpha and beta). Because the geometry stays parametric in nTop, its
+inputs can be independent variables of the database too: `examples/x59_doe.py` runs a design of experiments over
+the wing span and sweep of an X-59-style aircraft.
+
+Test geometry: the X-59 hackathon starter in `../x59-hackathon-starter` (MIT License, Copyright (c) 2026
+matthewmuellernTop; notice in `examples/X-59_STARTER_LICENSE.txt`), a parametric nTop model whose fuselage, wing,
+canards and tails are separate implicit bodies. `build/x59_example.py` reads it from there.
 
 ## How it works
 
-Each analysis block writes its inputs to a settings file (`key = value`, SI units), exports the geometry, and
-calls a Python driver with nTop's **Run Command**. The driver runs OpenVSP (`vspscript.exe`) and VSPAERO
-(`vspaero.exe`) and writes plain CSV files. The block's output is the path of those results (text); reader
-blocks load them with Import Table and Import Scalar Point Map. A failed run stops the notebook with the
-driver's error (Validate block), and every run leaves `<Case Name>.ntvsp.log` in the Working Directory.
+```
+implicit body ──► OpenVSP Fuselage / Wing (VSP) ──► component line ─┐
+   (nTop Slice Body → section contours, CLI)                         ├─► OpenVSP Model (VSP) ──► <case>.vsp3
+implicit body ──► ...                                               ─┘     (vsp_ntop/run_model.py: fit + build)
+                                                                                      │
+             ┌────────────────────────────┬───────────────────────────┬───────────────┘
+   VSPAERO Analysis (VSP)          Wave Drag (VSP)            Parasite Drag (VSP)
+   (Thin set: vortex lattice;      (area rule, Mach sweep)    (component buildup, Mach sweep)
+    Thick set: panel method)
+             └────────────────────────────┴───────────────────────────┴──► Aero Database (VSP) ──► table / DOE CSV
+```
 
-```
-nTop inputs ──► settings.txt + <case>.stl ──► vsp_ntop/run_*.py ──► OpenVSP / VSPAERO ──► *.ntvsp.*.csv ──► reader blocks
-```
+Each analysis block writes its inputs to a settings file (`key = value`, SI units) and runs a driver of the
+`vsp_ntop` Python package (`python -m vsp_ntop.<module> <settings file>`) with nTop's **Run Command**; the driver runs OpenVSP (`vspscript.exe`) and VSPAERO and writes plain CSV
+files, which reader blocks load with Import Table and Import Scalar Point Map. A failed run stops the notebook with
+the driver's error, and every run leaves `<Case Name>.ntvsp.log` in the Working Directory.
 
 * `blocks/` — the custom blocks, one `.ntop` file each (File > Import, or drag into a notebook).
-* `examples/` — HL-20 notebooks with floating comments: `HL-20 VSPAERO.ntop`, `HL-20 VSPAERO VLM.ntop`,
-  `HL-20 Parasite Drag.ntop`, `HL-20 Wave Drag.ntop`, `HL-20 Drag Buildup.ntop`. They embed the blocks they use.
-* `vsp_ntop/` — the drivers (standard-library Python 3.8+, no packages): `run_vspaero.py`, `run_parasite.py`,
-  `run_wave.py`, `run_buildup.py`, `run_project.py` (thin solution onto a thick mesh), `vspgeom.py` (VSPAERO
-  panel file, trailing-edge wakes, thin surfaces), `adb.py` (VSPAERO's binary results).
-* `build/` — writes the blocks and examples (`build_blocks.py`, `build_examples.py`; `ntopfile.py` is the
-  `.ntop` writer from `ntop_newtonian`). `dev/inventory.txt` lists OpenVSP's analysis inputs and parameter
-  containers, as dumped by `dev/inventory.vspscript`.
+* `examples/X-59 Aero Database.ntop` — the X-59 starter's geometry with the whole chain appended, floating comments
+  throughout; `examples/x59_doe.py` — the design of experiments over it.
+* `vsp_ntop/` — the drivers, an installable package (`pyproject.toml`; standard-library Python 3.8+, no
+  dependencies): `run_model.py` with `slices.py` (contour reader),
+  `fit.py` (section fitting) and `vspmodel.py` (OpenVSP script and `.vsp3` writing); `run_vspaero.py`,
+  `run_wave.py`, `run_parasite.py`, `run_database.py`; `vspgeom.py` and `adb.py` read VSPAERO's panel file and
+  binary results.
+* `build/` — writes the blocks and the example (`build_blocks.py`, `x59_example.py`; `x59.py` derives notebooks from
+  the starter; `ntopfile.py` is the `.ntop` writer from `ntop_newtonian`).
+* `validation/wave_drag_mach.py` — the wave drag study below (results in `validation/results/`).
 
-nTop asks once to trust Run Command blocks. The defaults of every block point at this folder (OpenVSP in
-`OpenVSP-3.56.0-win64`, drivers in `vsp_ntop`, runs in `runs`) and at `C:/Users/Benji/anaconda3/python.exe`;
-change the **OpenVSP Directory**, **Python**, **Driver Directory** and **Working Directory** inputs if those move.
-OpenVSP is not in the repository: unpack the Windows 64-bit OpenVSP 3.56.0 build from openvsp.org into
-`OpenVSP-3.56.0-win64/`, or point **OpenVSP Directory** at an existing install.
+## Setup
+
+1. Install OpenVSP 3.56: unpack the Windows 64-bit build (for example into `OpenVSP-3.56.0-win64/` here; it is not
+   in the repository).
+2. Install the drivers into a Python 3.8 or newer: `pip install -e .` in this folder (or `pip install .`).
+3. Set two environment variables (Windows: System Properties > Environment Variables), then restart nTop so it
+   sees them:
+   * `NTOP_PYTHON_PATH`: that Python's executable, e.g. `C:/Users/me/anaconda3/python.exe`;
+   * `VSP_PATH`: the OpenVSP folder, the one holding `vspscript.exe` and `vspaero.exe`.
+
+The blocks read both with nTop's **Get Environment Variable** block, so they have no Python, driver or OpenVSP path
+inputs; a missing variable stops the notebook with nTop's "Environment variable ... is not set". The only path
+input left is each analysis block's **Working Directory** (default: `runs/` here). nTop asks once to trust Run
+Command blocks.
 
 ## Blocks
 
 | Block | Output | Purpose |
 |---|---|---|
-| VSPAERO Flow Condition (VSP) | text | alpha, beta, Mach, Re_cref sweeps (start, end, points); Vinf, Rho; reference velocity |
-| VSPAERO Solver Settings (VSP) | text | threads, wake model, far field, ground effect, freezing, implicit wake, convergence factors, preconditioners, quad tree, restart file |
-| VSPAERO Wake Settings (VSP) | text | which mesh edges shed wakes (see below) |
-| VSPAERO Analysis (VSP) | results path | surface mesh, method (panel or vortex lattice), Sref, bref, cref, moment point, the three settings, run folder |
+| OpenVSP Fuselage (VSP) | text | an implicit body as an OpenVSP Fuselage: slicing, sections, clustering, tessellation, set |
+| OpenVSP Wing (VSP) | text | an implicit lifting surface as an OpenVSP Wing: span axis, symmetry, sections, airfoils, tessellation, clustering, set |
+| OpenVSP Model (VSP) | model path | builds `<case>.vsp3` from a list of component lines |
+| OpenVSP Model Check (VSP) | list of reals | per component: largest and mean distance from the OpenVSP surface to the nTop contours, sections, slices |
+| OpenVSP Model Mesh (VSP) | mesh | OpenVSP's tessellation of the model, to view against the bodies |
+| VSPAERO Flow Condition (VSP) | text | alpha, beta, Mach, Re_cref sweeps; Vinf, Rho; reference velocity |
+| VSPAERO Solver Settings (VSP) | text | threads, wake model and nodes, far field, ground effect, freezing, implicit wake, convergence factors, preconditioners, quad tree, restart file |
+| VSPAERO Analysis (VSP) | results path | model, Sref, bref, cref, moment point, body wakes, the two settings |
 | VSPAERO Coefficient (VSP) | list of reals | any column of VSPAERO's polar, one value per case |
-| VSPAERO Surface Pressure (VSP) | Scalar Point Map | Cp or p - p_inf of one case at panel centroids, nodes or both — the contour plot (vortex lattice: the jump across the sheet) |
-| VSPAERO Wake Lines (VSP) | Scalar Point Map | the trailing-edge nodes wakes were shed from (value = wake number) |
-| VSPAERO Thin Surface Projection (VSP) | Scalar Point Map | a vortex lattice solution shown on a thick mesh: half the pressure jump, signed by side, at the thick mesh's points |
-| VSPAERO Mesh Faces (VSP) | Scalar Point Map | a panel run's mesh as surface points weighted by area (m^2), 1 or 4 per face, for ntop_newtonian's Viscous Correction on Mesh blocks |
+| VSPAERO Center of Pressure (VSP) | list of points | each case's center of pressure, or each alpha sweep's aerodynamic center (neutral point) |
+| VSPAERO Surface Pressure (VSP) | Scalar Point Map | Cp or p - p_inf of one case at panel centroids, nodes or both (thin surfaces: the jump across the sheet) |
+| VSPAERO Mesh Faces (VSP) | Scalar Point Map | the Thick-set panels as points weighted by area, for ntop_newtonian's Viscous Correction on Mesh blocks |
+| Wave Drag (VSP) | results path | model, Mach sweep, slices, rotation sections, Sref, symmetry, geometry set |
+| Wave Drag Result (VSP) | list of reals | CD_wave (or Mach, counts, Sref), one value per Mach number |
+| Wave Drag Area Distribution (VSP) | list of reals | x/L or slice areas of one rotation section at one Mach number |
 | Parasite Drag Component (VSP) | text | one component's form factor equations, % laminar, Q, roughness, temperature ratios |
-| Parasite Drag (VSP) | results path | OpenVSP model, units, Sref, Cf equations, speed, altitude, dT, gamma, components |
-| Parasite Drag Result (VSP) | real | total CD, f, Re/L and the flight condition |
-| Parasite Drag Component Values (VSP) | list of reals | one column of the buildup table, per component |
-| Wave Drag (VSP) | results path | surface mesh, Mach, slices, rotation sections, Sref, symmetry |
-| Wave Drag Result (VSP) | real | CD_wave |
-| Wave Drag Area Distribution (VSP) | list of reals | x/L stations or slice areas of one rotation section |
-| Drag Buildup (VSP) | table | VSPAERO's inviscid coefficients + CD_wave + viscous CD, CL, CMy per case; also written to `<Case Name>.ntvsp.buildup.csv` |
+| Parasite Drag (VSP) | results path | model, units, Sref, Cf equations, speed sweep and unit, altitude, dT, gamma, components |
+| Parasite Drag Result (VSP) | list of reals | total CD, f, Re/L and the flight condition, one value per speed |
+| Parasite Drag Component Values (VSP) | list of reals | one column of the buildup table at one speed, per component |
+| Aero Database (VSP) | table | CL, CD, CY, Cl, Cm, Cn per VSPAERO case, drag split into induced, wave, parasite (and optional viscous); design variables; appends to a DOE file |
 
-All geometry and lengths are sent to OpenVSP in metres, so reference areas and lengths are nTop quantities with
-units and the panels match them.
+Every length is sent to OpenVSP in metres, so reference areas and lengths are nTop quantities with units.
+
+## From implicit to OpenVSP
+
+![OpenVSP model of the X-59 starter](examples/x59_openvsp_model.png)
+
+**Slicing in nTop.** A component block cuts its body with nTop's **Slice Body** (planes normal to x for a fuselage,
+normal to the span axis for a wing) and exports the contours with **Export Slices to CLI** into a temporary folder.
+The cuts start just outside the body's bounding box; **Slice Spacing** (a fraction of the body's length, or of its
+extent along the span axis) and **Contour Tolerance** (a fraction of its bounding-box diagonal) set the resolution.
+On the X-59 the six bodies slice in about a minute. Meshing the bodies instead was not workable: the fuselage alone
+became a 1.4 GB mesh after 6 minutes at 6 mm tolerance.
+
+**Fuselage fit** (`fit.fit_fuselage`). Stations are placed with OpenVSP's clustering function between the nose and
+tail (**Sections**, **Nose/Tail Clustering**); each takes the largest closed contour at its slice. A pointed end
+(section area tending to zero) becomes an OpenVSP point section placed by extrapolating the square root of the area;
+a blunt end keeps its last contour and gets a flat cap. Each section is the contour itself (an OpenVSP file
+cross-section, normalised by its width and height, positioned at its bounding-box centre), with free skinning
+between sections. Building 30 such sections through OpenVSP's API takes 51 s, because every change rebuilds the
+whole surface; the driver therefore makes the fuselage with the right number of sections by script and writes each
+section's points, size and position straight into the `.vsp3` XML (2 s).
+
+**Wing fit** (`fit.fit_wing`). At every slice the chord line runs from the leading edge (the point farthest from
+the trailing edge) to the trailing edge (the mid-point of the base for a blunt one); that gives the leading-edge
+position, chord, twist, thickness and the airfoil's upper and lower surfaces (cosine-spaced **Airfoil Points**).
+Stations become OpenVSP wing sections where leading edge, chord, twist or thickness stop varying linearly (**Section
+Tolerance**, 1% of the root chord), at most **Sections**, none narrower than 4% of the span, so measurement noise of
+a few millimetres does not create sliver sections. Each section's span, sweep and dihedral come from its end
+stations; the surface is rotated about x for a canted or vertical span axis. **Symmetric** mirrors it about the x-z
+plane and uses only the +span side of the body. **Trailing Edge: Sharp** shears a blunt base onto the chord line so
+that VSPAERO's wake leaves one edge. OpenVSP marks every wing trailing edge as a wake: no wake input.
+
+**Tessellation.** Wings: **Tess U** spanwise points (shared between sections by span), **Tess W** around the
+airfoil, OpenVSP's leading- and trailing-edge clustering, root and tip clustering. Fuselages: **Tess W** around each
+section and a **Panel Aspect Ratio** (panel length along the body over its width around it, default 1.5) that sets
+the points along the body section by section (see below), plus nose and tail clustering.
+
+**Fit check.** The driver samples each OpenVSP surface on a grid and measures its distance to the nTop contours
+(interpolated between slices): `<case>.ntvsp.model.csv`, **OpenVSP Model Check (VSP)**. X-59 baseline:
+
+| Component | Sections | Mean | Largest | Largest / size |
+|---|---|---|---|---|
+| Fuselage (fuselage + nacelle, 30.3 m) | 24 | 10.2 mm | 435 mm | 1.4% (the nacelle inlet's step) |
+| Wing (13.2 m root chord) | 2 | 10.0 mm | 65 mm | 0.5% |
+| Canard | 1 | 2.8 mm | 13 mm | 0.6% |
+| Horizontal tail | 1 | 0.2 mm | 12 mm | 0.2% |
+| T-tail | 1 | 0.1 mm | 4 mm | 0.2% |
+| Fin | 1 | 0.6 mm | 16 mm | 0.3% |
+
+The whole X-59 model (slicing, fitting, building and checking) takes about 70 s in nTop.
+
+**Slicer conventions found by testing nTop 6.3.3**: Slice Body cuts only from the frame's origin in the +z direction
+of the frame; contours come in the frame's x and y relative to its origin, except when slicing along exactly +x, +y
+or +z, where they come in the world's cyclic axes (y-z, z-x, x-y). The driver handles both; the blocks place the
+frame origin outside the body.
+
+## VSPAERO defaults, and why
+
+OpenVSP puts components in VSPAERO's **Thick** set (panel method on the closed surface) or **Thin** set (vortex
+lattice on the camber surface); each component block has a **Set** input with a third choice, **None**, which leaves
+the component out of VSPAERO but keeps it in Wave Drag and Parasite Drag. Defaults: **Wing: Thin, Fuselage: None.**
+They come from these tests on the X-59 (Mach 0.3 to 2.0, alpha 0 to 8 degrees, beta 0 and 4 degrees) and on
+OpenVSP's own default fuselage and wing:
+
+| Configuration | Subsonic | Supersonic |
+|---|---|---|
+| Thick fuselage, thin wing (OpenVSP's own model) | CL 0.035 at 2 deg, fine | CDi 0.075 at Mach 1.6, wrong |
+| Thick fuselage, thick nacelle and wings (X-59) | VSPAERO refuses the mesh: "edge has 3 tris" where the overlapping bodies intersect | — |
+| Thick fuselage, thin lifting surfaces (X-59) | wing alone fine; full aircraft CDi 0.014 at CL 0.09, wrong | wrong |
+| Thin fuselage (camber plates), thin lifting surfaces | NaN | NaN |
+| **Thin lifting surfaces, fuselage in no set** | CL_alpha 1.7/rad, span efficiency 0.9 | fine to Mach 2 |
+
+* VSPAERO's panel method (Thick set) gave wrong drag above Mach 1 in every test, on OpenVSP's own models as well,
+  so it is a subsonic option. Its body also needs care: union touching bodies in nTop into one component instead of
+  letting OpenVSP intersect overlapping ones, close blunt ends (the driver adds flat caps), and keep body panels
+  about as long as they are wide. Panels four times longer than wide (the first tessellation tried) gave CL -0.007
+  and CDi -0.024 for the fuselage with a T-tail; at aspect ratio 1.5 the same pair gives sensible values. Hence
+  **Panel Aspect Ratio**.
+* Thin surfaces that cross each other near a tip make VSPAERO return NaN above Mach 1: the X-59's fin rises 55 mm
+  through its T-tail. Cut such a surface in nTop (the example cuts the fin 65 mm below the T-tail).
+* **Wake Nodes** default 16 (OpenVSP's GUI writes 64): on the X-59 at Mach 1.6 the coefficients agree within 0.2% and
+  the run is 20 times faster. A fixed wake changed CL by under 0.1% there and is about four times faster than a
+  relaxed one; the example uses it.
+* VSPAERO's own axes are x aft, y right, z up, so its rolling and yawing moments have the opposite sign to aircraft
+  body axes; the Aero Database reports body-axis signs (Cl right wing down, Cm nose up, Cn nose right).
+* Leaving the fuselage out of VSPAERO loses its lift and moment contributions; give it the Thick set for subsonic
+  work where its panel mesh behaves.
+
+## Wave drag: the Mach range it holds over
+
+OpenVSP's Wave Drag is the supersonic area rule: Mach-plane cuts at several roll angles, each turned into an
+equivalent body of revolution whose von Kármán wave drag is averaged. That is zero-lift linear theory.
+`validation/wave_drag_mach.py` measures its error in two parts (results in `validation/results/wave_drag_mach.json`
+and `.png`).
+
+![Wave drag study](validation/results/wave_drag_mach.png)
+
+**1. OpenVSP against linear theory, which it implements.**
+
+* Sears-Haack body, fineness 10 (linear theory: D/q = 9π A_max² / 2L², the same at every Mach): OpenVSP is within
+  1.4% from Mach 1.05 to 2.5, then over-predicts as the Mach cone opens: +5% at Mach 3, +18% at 4, +29 to 30% at
+  5 and 6. More slices drift upward too (+4% at 100 slices, Mach 2), because the area distribution of a tessellated
+  surface gets noisy: 20 to 40 slices are best.
+* Rectangular wings of 4% biconvex sections at Mach 2 (Ackeret: CD = (16/3)(t/c)²/√(M²−1); a fine roll-angle
+  integration of the area rule reproduces it): OpenVSP's result depends on the number of **rotation sections**,
+  because a wing's area-rule integrand peaks sharply at the roll angles where the cuts lie along the span. Aspect
+  ratio 3: 3.7x Ackeret at 10 sections, 1.6x at 30, 1.08x at 120. Aspect ratio 12: 14x at 10, 1.6x at 120. On the
+  X-59 (aspect ratio 1.3), 30 and 120 sections agree within 0.3%: slender configurations converge by 30, the
+  default; straight or high-aspect-ratio wings need far more.
+* A step in the area distribution (a blunt base, an inlet face) makes the result grow with the number of slices
+  instead of converging: on the X-59, 0.0018, 0.0021, 0.0026 and 0.0028 at 20, 30, 60 and 100 slices (Mach 1.2).
+  OpenVSP's inflow and outflow faces, out of scope here, are its answer to that.
+
+**2. Linear theory against exact inviscid flow.** Biconvex airfoils against shock-expansion theory and cones
+against the Taylor-Maccoll solution:
+
+* Wings: Ackeret is within 2% of exact at t/c ≤ 4% from Mach 1.4 to 6, and within 10% up to Mach × t/c ≈ 0.6 (10%
+  thick at Mach 6: -9%). Below about Mach 1.2 (t/c 2%), 1.4 (4%) or 1.6 (10%) the leading-edge shock detaches and
+  linear theory does not apply.
+* Bodies: slender-body theory under-predicts cone pressure drag by 10% at Mach × half-angle ≈ 0.2 (5° at Mach 2.5,
+  7.5° at Mach 1.6, 10° at Mach 1.4) and by 25 to 40% at Mach × half-angle 0.4 to 0.5.
+
+**So:** OpenVSP's Wave Drag is a good estimate from about Mach 1.2 (above shock detachment; linear theory is
+singular at Mach 1) up to where Mach × nose or forebody angle reaches about 0.2 and Mach × wing thickness ratio about
+0.5 to 0.6; for a slender supersonic aircraft (forebody half-angles of 5 to 7°, 3 to 4% wings) that is roughly Mach
+1.2 to 2.5. Above about Mach 2.5 to 3 its own Mach-plane cutting adds a further over-prediction on bodies, and the
+answer is also zero-lift only (drag due to lift comes from VSPAERO). Within that range, use enough rotation sections
+for the wing aspect ratio and check the slice count when the configuration has blunt bases or inlets.
+
+## Aero database and design of experiments
+
+**Aero Database (VSP)** takes the three analyses' results and, per VSPAERO case, writes CL = CLi, CD = CDi +
+CD_wave(M) + CD_parasite(M), CY = CSi, Cl = -CMix, Cm = CMiy, Cn = -CMiz (plus optional viscous lists, e.g. from
+`ntop_newtonian`'s viscous correction). Wave and parasite drag are interpolated linearly in Mach between the Mach
+numbers they ran at; wave drag is 0 below Mach 1. VSPAERO's own viscous estimate (CDo) is left out, Parasite Drag
+replacing it. The driver checks that the three used the same Sref and that the wave and parasite runs cover
+VSPAERO's Mach numbers. **Variable Names** and **Variable Values** become the first columns, and **Append To**
+collects the rows of repeated runs into one design-of-experiments table.
+
+**`examples/X-59 Aero Database.ntop`**: the starter's geometry (unchanged), six component blocks (fuselage assembly
+in no VSPAERO set; wing, canards, horizontal tail, T-tail and the fin cut below the T-tail, all thin), the model, and
+a shared envelope: VSPAERO at Mach 0.6 to 1.8 (5 values) x alpha -2 to 8 degrees (6) x beta 0 and 4 degrees (60
+cases, fixed wake), Wave Drag at Mach 1.2, 1.5, 1.8 (30 slices, 30 rotation sections), Parasite Drag at the five
+Mach numbers at 16,764 m (55,000 ft), Sref 61.5 m², bref 9.04 m, cref 8.72 m (the fitted baseline wing), moments
+about the starter's CG station (x = 18.27 m). **Wing Span** and **Wing Inner Sweep** are notebook inputs, recorded
+in every row. One run takes about 23 minutes on 16 threads, nearly all of it VSPAERO's subsonic cases.
+
+Baseline results at beta 0 (derivatives per degree):
+
+| Mach | CL_alpha | Cm_alpha | CD at alpha 0 = induced + wave + parasite | CY_beta | Cl_beta | Cn_beta | best L/D |
+|---|---|---|---|---|---|---|---|
+| 0.6 | 0.0294 | -0.0091 | 0.0117 = 0.0013 + 0 + 0.0104 | -0.0030 | -0.0020 | +0.0030 | 9.2 |
+| 0.9 | 0.0306 | -0.0096 | 0.0112 = 0.0014 + 0 + 0.0098 | -0.0030 | -0.0020 | +0.0030 | 9.6 |
+| 1.2 | 0.0331 | -0.0129 | 0.0279 = 0.0044 + 0.0142 + 0.0094 | -0.0039 | -0.0023 | +0.0039 | 4.4 |
+| 1.5 | 0.0322 | -0.0135 | 0.0240 = 0.0040 + 0.0109 + 0.0091 | -0.0038 | -0.0022 | +0.0038 | 4.6 |
+| 1.8 | 0.0308 | -0.0133 | 0.0216 = 0.0038 + 0.0089 + 0.0089 | -0.0039 | -0.0021 | +0.0038 | 4.8 |
+
+**VSPAERO Center of Pressure (VSP)** gives the aerodynamic center (neutral point) of each alpha sweep, x_ac =
+x_ref - (dCMy/dCFz) cref: 20.95 m at Mach 0.6 and 0.9, moving aft to 21.62, 21.88 and 21.98 m at Mach 1.2, 1.5 and
+1.8. The starter's own AeroSandbox estimate is 20.90 m; with the CG at 18.27 m both give a static margin of about
+30% of the mean aerodynamic chord subsonic. The block also gives each case's center of pressure, x_cp = x_ref -
+CMy cref / CFz, which runs away as the normal force goes to zero.
+
+Sideslip derivatives are from beta 0 and 4 degrees at alpha 2. The aircraft is statically stable in pitch, yaw and
+roll throughout, more so in pitch above Mach 1 as the aerodynamic centre moves aft. The parasite drag (0.009 to
+0.010) is OpenVSP's component buildup on the fitted components (wing t/c 3.0%, tails 4.0%, fuselage fineness 20,
+as the starter's NACA 0003 and 0004 sections and fuselage give). The fuselage's lift is not in these numbers (see
+above), and the wave drag carries the uncertainty of the nacelle's inlet and base steps.
+
+**`examples/x59_doe.py`** runs the notebook headlessly once per design with `ntopcl --trustnotebook -j inputs.json`
+(the JSON sets Wing Span and Wing Inner Sweep) and collects every run's rows in `runs/x59_doe.csv`: one table with
+Wing_Span_m, Wing_Inner_Sweep_deg, Mach, AoA, Beta, Re_cref, CL, CD, CY, Cl, Cm, Cn and the drag parts. Designs: the
+baseline (9 m, 68.3°), span 8 and 10 m, inner sweep 65 and 71°. `--keep` adds designs to an existing table and
+`--summary` prints the slopes per design.
+
+Result (`examples/x59_doe_results.csv`, 300 rows: 5 designs x 60 cases; about 23 minutes per design on 16 threads,
+nearly all of it VSPAERO). Derivatives per degree at beta 0, all on the same Sref 61.5 m²:
+
+| Wing span | Inner sweep | CL_alpha, Mach 0.6 | Cm_alpha, Mach 0.6 | CL_alpha, Mach 1.5 | Cm_alpha, Mach 1.5 | CD at alpha 0, Mach 1.5 |
+|---|---|---|---|---|---|---|
+| 8 m | 68.3° | 0.0255 | -0.0067 | 0.0276 | -0.0102 | 0.0229 |
+| 9 m | 68.3° (baseline) | 0.0294 | -0.0091 | 0.0322 | -0.0135 | 0.0240 |
+| 10 m | 68.3° | 0.0348 | -0.0132 | 0.0377 | -0.0183 | 0.0256 |
+| 9 m | 65° | 0.0306 | -0.0068 | 0.0342 | -0.0116 | 0.0245 |
+| 9 m | 71° | 0.0281 | -0.0110 | 0.0303 | -0.0150 | 0.0235 |
+
+More span adds wing area behind the (fixed) CG: more lift per degree, more pitch stability and more zero-lift drag
+(wetted area and volume). More inner-panel sweep moves area aft and makes the wing more slender: less lift per
+degree, more stability, less wave drag. These are the trends to expect, from a database whose geometry columns came
+straight from nTop's parametric model.
 
 ## Coverage of OpenVSP's options
 
 Every option of OpenVSP 3.56's VSPAERO, Parasite Drag and Wave Drag analyses was listed from OpenVSP itself
-(`dev/inventory.txt`: parameter containers and analysis inputs) and is either a block input, out of scope as you
-listed, or not applicable to a tessellation (with the reason). Plot-axis and plot-selection parameters of the
-GUI's result windows (`m_*XMin`, `ThetaIndex`, `AreaPlotType`...) are display state, not analysis options.
+(`dev/inventory.txt`) and is a block input, out of scope as you listed, or not applicable (with the reason).
 
 **VSPAERO**
 
 | OpenVSP option | Here |
 |---|---|
-| Alpha, Beta, Mach, Re_cref start / end / points | Flow Condition |
-| Vinf, Rho, Vref (manual flag), Machref | Flow Condition |
-| Sref, bref, cref; Xcg, Ycg, Zcg | Analysis (Reference Area, Span, Chord, Moment Reference Point) |
-| NCPU (`-omp`) | Solver: Processors |
-| Fixed wake, wake iterations, wake nodes | Solver |
-| Far field distance (toggle and value) | Solver |
-| Ground effect (toggle and height, `-groundheight`) | Solver |
-| Freeze multipole / wake at iteration, freeze root vortices, implicit wake and its start iteration, wake relaxation | Solver |
-| Forward / adjoint GMRES and nonlinear convergence factors, core size factor, multipole far-away factor | Solver |
-| Update matrix preconditioner, wake node matrix preconditioner, quad tree buffer levels | Solver |
-| `-save`, `-restart` | Solver: Restart File |
-| Find body wakes (experimental mode) | Wake Settings; marks wakes behind the blunt bases of OpenVSP's own bodies, and found none on either HL-20 mesh |
-| Thick geometry set | the Surface Mesh, Method = Panel |
-| Thin geometry set (VLM surfaces) | the Surface Mesh, Method = Vortex lattice (see "Vortex lattice" below) |
-| X-Z symmetry; 2D FEM and Tecplot files; Sref/cref from the model (RefFlag, MAC, S curve); CG calculation (mass sets, slices); stall model (Clo2D, CLMax2D); propellers, rotor blade mode, actuator disks, hover ramp, RPM, noise (PSU-WOPWOP); stability type and its time stepping (`-stab`, `-pstab`, `-qstab`, `-rstab`, `-unsteady`, time step, averaging); Cp slicer; control surfaces | out of scope (your list). Noise and the unsteady time-step settings only apply to rotors and unsteady stability runs |
-| NRef (mesh refinement levels) | not applicable: for an imported mesh OpenVSP writes identical copies of the mesh (checked) |
-| Cull fraction, merge degenerate tri regions, clean intersections | not applicable: OpenVSP's processing of the thin surfaces it builds from its own wings (DegenGeom); a thin mesh is used as given |
-| Modes / geometry sets | not applicable: the mesh is the geometry |
-| `-fem` (FEM deformation file), `-interrogate` with survey points | **flagged**, not implemented (see below) |
-| `-fs`, `-geom` | not needed: the flow condition is in the input file; geometry-only runs have no use here |
+| Alpha, Beta, Mach, Re_cref start / end / points; Vinf, Rho, Vref (manual flag), Machref | Flow Condition |
+| Sref, bref, cref; Xcg, Ycg, Zcg | Analysis |
+| NCPU, fixed wake, wake iterations, wake nodes, far field, ground effect, freezing, implicit wake, wake relaxation, convergence factors, core size, multipole, preconditioners, quad tree, `-save`/`-restart` | Solver Settings |
+| Thick and thin geometry sets | each component's Set (Thick, Thin or None) |
+| Find body wakes | Analysis: Body Wakes |
+| Wing trailing-edge wakes | automatic: OpenVSP marks every wing trailing edge |
+| X-Z symmetry; 2D FEM and Tecplot files; Sref/cref from the model; CG calculation; stall model; propellers, rotors, actuator disks, noise; stability types and unsteady time stepping; Cp slicer; control surfaces | out of scope (your list) |
+| NRef (refinement levels), cull fraction, degenerate-region merging, intersection cleaning | OpenVSP's defaults |
+| `-fem`, `-interrogate` with survey points | not implemented (say if you want them) |
 
-**Parasite Drag**: geometry set, model length unit, Sref, laminar and turbulent Cf equations, speed and its unit
-(ft/s, m/s, mph, km/hr, KEAS, KTAS, Mach), altitude, temperature offset, specific heat ratio and sub-component
-export are inputs of Parasite Drag (VSP); each component's body and wing form factor equations, manual form
-factor, % laminar, Q, roughness, Te/Tw, Taw/Tw and incorporated generation are inputs of Parasite Drag
-Component (VSP). Out of scope: atmospheres other than US Standard 1976 (and with them the manual pressure,
-density, temperature, Re/L and viscosity inputs), excrescences, Sref from a wing. Pressure and temperature
-units only change how OpenVSP labels its own report; the CSVs here use pascals and kelvin.
+**Parasite Drag**: geometry set, model length unit, Sref, laminar and turbulent Cf equations, speed sweep and unit,
+altitude, temperature offset, specific heat ratio and sub-component export are inputs; each component's form factor
+equations, manual form factor, % laminar, Q, roughness, Te/Tw, Taw/Tw and incorporated generation are inputs of
+Parasite Drag Component (VSP). Out of scope: atmospheres other than US Standard 1976, excrescences, Sref from a wing.
 
-**Wave Drag**: Mach, number of slices, number of rotation sections, Sref and symmetry are inputs. Out of scope:
-inflow and outflow faces. The geometry set is the Surface Mesh.
-
-## Flagged (implementation cliffs, not built)
-
-1. **Parasite Drag cannot take a tessellation.** OpenVSP excludes mesh components from the buildup (it reports
-   "Geom ... not included in Parasite Drag calculation" for an imported STL), because it needs each component's
-   reference length and thickness or fineness ratio from its parametric definition. Parasite Drag (VSP) therefore
-   takes an OpenVSP model (`.vsp3`). Using an nTop mesh would mean computing Swet, Lref and t/c or l/d per
-   component in nTop and re-implementing OpenVSP's equations outside OpenVSP.
-2. **Wakes on a tessellation.** OpenVSP marks no trailing edges on an imported mesh (its body-wake finder found
-   none on either HL-20 mesh), and without wakes VSPAERO gives almost no lift. Choosing the
-   trailing edges is the user's job: **VSPAERO Wake Settings (VSP)** takes a list of the mesh vertices on the
-   trailing edges, and every mesh edge joining two listed vertices becomes a wake edge (connected edges form one
-   wake). The run stops with an error when a point is not a mesh vertex (within Vertex Tolerance), a listed vertex
-   has no listed neighbour, three wake edges meet at a vertex, or all the vertices of one face are listed. See the
-   blunt trailing-edge result below: the mesh must provide a good edge for the wake.
-3. **`-fem` and survey points (`-interrogate`)** were not implemented: `-fem` needs a structural deformation file
-   whose format was not available to test, and survey points need an output reader for VSPAERO's survey file.
-   Both look moderate; say if you want them.
-
-## Vortex lattice (thin surfaces)
-
-**VSPAERO Analysis (VSP)** has a **Method** input. Panel solves a closed, thick surface; Vortex lattice solves a
-thin sheet (a camber surface or planform: one open mesh) and returns the pressure jump across it. VSPAERO picks the
-method per component from the `thick` column of OpenVSP's `.vkey` file. OpenVSP's own thin geometry set builds thin
-surfaces only from its parametric wings and writes nothing for an imported mesh (checked), so the driver passes the
-mesh through the thick set and marks it thin in the `.vkey` file. Wakes are listed as for the panel method: the
-sheet's trailing-edge vertices.
-
-**A VSPAERO bug, and the way around it.** VSPAERO solves on its grid level 1. For a panel file of triangles it
-builds that level itself by pairing triangles, wake triangles included, into quads. Behind a swept or curved
-trailing edge the wake cells are skewed, and a wake triangle can be paired across a trailing vortex line; that line
-then loses an edge and VSPAERO stops with "Could not find global edge for trailing wake!" (found in VSPAERO's
-source, `VSP_AGGLOM::CreateMixedMesh_` and `VSP_GEOM::StoreWakeKuttaEdges`). It failed on the thin HL-20 for both
-swept wing trailing edges whatever the wake settings, and on OpenVSP's own default wing once its quads were split
-into triangles; only the straight body trailing edge worked. OpenVSP's own wing files avoid it with a "polygon"
-layout: polygons as level 1, plus a triangulation of each polygon as level 0, and the wake built as quads. The
-driver writes thin meshes in that layout: level 0 is every triangle exactly as given, and level 1 is the same
-triangles, except that two neighbouring, coplanar triangles away from the edges form one quad (VSPAERO recognises
-the layout only when a face has more than three nodes). VSPAERO then solves on the mesh's triangles. VSPAERO also
-crashes on this layout with Unix line ends, so every panel file is written with Windows line ends, as OpenVSP
-writes them. Checked on OpenVSP's default wing (Mach 0.3, 10 degrees): rewritten in this layout with its own
-quads it gives OpenVSP's result exactly (CL = 0.3570); with every quad but one split into triangles, as the driver
-does for a mesh, it gives 0.3654 (+2.3%, the finer solution grid). The panel method is unchanged: its example gives
-identical results.
-
-**Pressure jump.** For a thin surface VSPAERO stores, per triangle, Cp on the side the triangle's normal points to
-minus Cp on the other side (found by integrating it on OpenVSP's own wing and on the HL-20 sheet: negative where
-the sheet lifts toward its normals). VSPAERO Surface Pressure (VSP) shows that jump.
-
-**VSPAERO Thin Surface Projection (VSP)** shows a vortex lattice solution on the vehicle's thick mesh. For every
-node and centroid of the thick mesh the driver finds the closest point of the sheet, interpolates the jump there
-(linear over the sheet triangle, from area-weighted node values), and gives the point Cp = +jump/2 where its outward
-normal points the way the sheet's normals do and -jump/2 where it points the other way: the lifting part of the
-pressure. A thin solution has no thickness effect, so this is not the thick body's pressure field. Points farther
-than Maximum Distance from the sheet are left out (for parts the sheet does not model). The two meshes need not
-match. Output quantities: Cp, p - p_inf, or the jump itself.
-
-**HL-20.** `h20_vlm_mesh_from ntop.stl` is a planform sheet at z = 0 (2,569 triangles, 20.5 m x 8.5 m, 116 m^2),
-not the same model as the thick mesh: it has no fins or tail. `examples/HL-20 VSPAERO VLM.ntop` runs it at the
-panel example's conditions (Mach 0, alpha 1, 5.5, 10, Sref 100, cref = bref = 1) with wakes from the two wing
-trailing edges and the body's base edge (33 vertices), and projects case 2 onto the thick nTop mesh with Maximum
-Distance 3 m (the body lies within about 2.5 m of the sheet, the fins and tail reach 8 m). CL = 0.016 / 0.108 /
-0.208, CMy = -0.085 / -0.821 / -1.759; 54 s in nTop, of which the projection takes 16 s.
-`examples/hl20_vlm_projection_preview.png` plots the jump and the projected upper and lower Cp at 5.5 degrees.
-
-* Slender-wing theory (CL_alpha = pi AR / 2, AR = 0.63, on the planform area, scaled to Sref 100) gives CL = 0.20
-  at 10 degrees; the vortex lattice gives 0.208.
-* **Wake choice at the wing-body junction.** The wing trailing edges start at |y| = 0.94 m, inboard of the body's
-  side edge (which runs aft to |y| = 1.46 m), so the wakes of their two inboard vertices trail across the body part
-  of the sheet, in its plane: the jump shows streaks there. Starting the wing wakes outboard of the body instead
-  (|y| >= 1.53 m, 29 vertices) gives CL = 0.012 / 0.065 / 0.120 and CMy = -0.025 / -0.123 / -0.295 at Mach 0.3
-  (against 0.017 / 0.102 / 0.207 and -0.088 / -0.684 / -1.692 with all 33). As for the blunt bases of the thick
-  mesh, where the wakes leave decides much of the answer, and the planform needs a trailing edge that is the aft
-  edge of the sheet for a clean result.
-* **Surface pressures are not VSPAERO's forces.** VSPAERO computes forces from its vortex edges, not by
-  integrating these pressures: integrated over the surface, the stored Cp gives 50 to 60% of CLi on the thick
-  HL-20, 67% on the thin one and 85% on OpenVSP's default wing. Use the pressure maps to look at the flow and as
-  edge conditions (as the viscous correction does); take coefficients from VSPAERO Coefficient (VSP).
-
-## Drag buildup
-
-OpenVSP has no tool that adds these analyses together: VSPAERO, Wave Drag and Parasite Drag each report on their
-own, and VSPAERO's polar carries only its own rough viscous estimate (the `o` columns, CDo, driven by Re_cref).
-**Drag Buildup (VSP)** is therefore a small Python driver (`vsp_ntop/run_buildup.py`). Per VSPAERO case:
-
-    CL  = CLi  + CL_viscous
-    CD  = CDi  + CD_wave + CD_viscous
-    CMy = CMiy + CMy_viscous
-
-CLi, CDi and CMiy are VSPAERO's inviscid parts; its CDo is left out because the viscous correction replaces it.
-CS, CMx and CMz are VSPAERO's inviscid values. The table goes to `<Case Name>.ntvsp.buildup.csv` and is the
-block's output.
-
-**Shared conditions.** In the notebook the flight condition and reference (Mach, alpha start/end/points, Sref,
-cref, moment reference point, freestream pressure and temperature) are notebook variables wired into every
-analysis (`examples/HL-20 Drag Buildup.ntop`). The driver also checks what it can see: Wave Drag's Mach number
-must equal every VSPAERO case's and its Sref VSPAERO's, and each viscous list must have one value per case (or
-one value for all). It cannot see the viscous correction's inputs.
-
-**Viscous correction (ntop_newtonian).** The Viscous Correction Coefficient (nTop) blocks from `ntop_newtonian`
-fit VSPAERO's output:
-
-* VSPAERO Surface Pressure gives each case's Cp as a point map; Field from Point Map turns it into the Cp field
-  the viscous block takes. The body is an implicit of the same geometry (nTop's own, or Implicit Body from Mesh).
-* **On-mesh blocks.** Viscous Correction on Mesh and Viscous Correction Subsonic on Mesh sum friction over
-  surface points with their areas instead of integrating over the body: seconds instead of minutes per call.
-  **VSPAERO Mesh Faces (VSP)** supplies the points: on panel runs the driver writes the analysed mesh's faces as
-  `<Case Name>.ntvsp.faces.{1,4}.csv` (face centroids, or each face split in four at its edge midpoints, with
-  the area each point stands for). On the HL-20 the six friction coefficients take about 3 s against about 140 s
-  for the integrals, CD within 0.4%; Cm, a small difference of large opposite moments, needs the 4-point rule.
-* Axes and coefficients agree: x aft, z up, y = z x x in both; CD and CL in wind axes; Cm nose-up about the
-  moment center, so with Reference Length = cref its Cm is VSPAERO's CMy.
-* **Two blocks, by Mach number.** Viscous Correction Coefficient (nTop) takes the edge state from the Rayleigh
-  pitot pressure (a normal shock), so it holds above Mach 1. **Viscous Correction Subsonic Coefficient (nTop)**,
-  added for this buildup, takes it from the freestream's isentropic total pressure for 0 < Mach < 1, and is
-  otherwise the same method (within 0.5% of hypanel's formulas on a flat plate at Mach 0.3 and 0.8; see
-  `ntop_newtonian/validation/REPORT.md`). Both normalize by q from the Mach number, so Mach must be above 0: for
-  VSPAERO's incompressible Mach 0 runs, give the viscous block the flight Mach number.
-* It has one reference length for all moments; VSPAERO uses bref for CMx and CMz, so only CMy gets a viscous part.
-* Its method comes from hypersonic practice: friction fades out on surfaces inclined 30 to 60 degrees leeward,
-  and the running length is measured along the freestream from the most upstream point.
-
-**No supersonic buildup on the HL-20.** Wave drag exists only above Mach 1, but VSPAERO's panel method gave no
-usable supersonic solution on the HL-20: on the nTop mesh, Mach 1.2 gave NaN and Mach 2 gave zero inviscid forces
-with a diverging residual; on OpenVSP's own HL-20 panels (`hl20.vspgeom`), Mach 1.2 gave CL = -617 and Mach 2 did
-not finish in 500 s. Mach 0.8 works (CLi = 0.103 at 5 degrees). The VSPAERO driver stops with an error on NaN
-results instead of returning an empty polar.
-
-**Subsonic buildup on the HL-20** (`examples/HL-20 Drag Buildup.ntop`): Mach 0.5 at 6096 m (US Standard
-Atmosphere 1976: 46,563 Pa, 248.5 K), alpha 1, 5.5, 10, Sref 100, cref 1, moments about the origin; VSPAERO's panel
-method on the nTop mesh (wakes as in the VSPAERO example), no wave drag, and the subsonic viscous correction
-(on-mesh block, fully turbulent, adiabatic wall) summed over the analysed mesh's faces (4 points per face), with
-normals from nTop's implicit HL-20 (`h20.implicit`) and each case's Cp at the mesh nodes.
-
-| alpha | CL inviscid | CL viscous | CL | CD inviscid | CD viscous | CD | CMy inviscid | CMy viscous | CMy |
-|---|---|---|---|---|---|---|---|---|---|
-| 1 | 0.1042 | 0.0001 | 0.1043 | 0.0289 | 0.0086 | 0.0376 | -2.0716 | 0.0037 | -2.0679 |
-| 5.5 | 0.1341 | -0.0002 | 0.1339 | 0.0355 | 0.0086 | 0.0442 | -1.5690 | 0.0002 | -1.5688 |
-| 10 | 0.1639 | -0.0006 | 0.1634 | 0.0410 | 0.0087 | 0.0497 | -1.0893 | -0.0032 | -1.0926 |
-
-* 216 s in nTop, 184 s of it VSPAERO; the three viscous calls take seconds. With the integral block (Viscous
-  Correction Subsonic Coefficients) the same notebook took 999 s, each call being six surface integrals over the
-  HL-20 at 24 to 36 s each. At 5.5 degrees the on-mesh block gives friction CD 0.008649 against the integral's
-  0.008686 (-0.4%) and Cm within 1% (4 points per face; 1 point per face is 0.4% on CD but 10% on Cm).
-* The friction CD (0.0086) is below OpenVSP's own Parasite Drag CD0 for the same flight condition (0.0137, on the
-  OpenVSP model with form factors and interference), as flat-plate friction without form factors should be.
-* The inviscid CD comes from VSPAERO's panels on triangles, which disagreed with OpenVSP's own panels at Mach 0 (see
-  the HL-20 test case below); treat it with care.
-
-
-## HL-20 test case
-
-**Wave Drag**, Mach 2, 20 slices, 10 rotation sections, Sref 100: CD_wave = 0.2176 on the nTop mesh,
-0.2204 on OpenVSP's own STL of the model (1.3% apart). About 8 s in nTop.
-
-**Parasite Drag** on `hl20.vsp3` (metres, Sref 100 m², Mach 0.5 at 6096 m, wings at 10% laminar and Q = 1.1):
-CD0 = 0.01371 over five components. This is OpenVSP's own tool, so the numbers are OpenVSP's.
-
-**VSPAERO** at the conditions of the run that came with the model (`hl20.vspaero`: Mach 0, alpha 1, 5.5, 10,
-Sref 100, cref = bref = 1, moments about the origin). OpenVSP's own run reproduces `hl20.polar` exactly.
-
-| Panels and wakes | CL at 1 / 5.5 / 10 deg | CMy at 1 / 5.5 / 10 deg |
-|---|---|---|
-| OpenVSP's own model (`hl20.polar`) | -0.108 / -0.088 / -0.065 | 1.762 / 2.364 / 2.904 |
-| OpenVSP's STL through this pipeline, wakes on OpenVSP's trailing-edge edges | -0.123 / -0.097 / -0.067 | 1.736 / 2.278 / 2.741 |
-| nTop mesh, wakes on one corner of each blunt base | -0.260 / -0.210 / -0.162 | 4.676 / 4.576 / 4.626 |
-| nTop mesh, wakes on the other corner | +0.100 / +0.113 / +0.129 | -2.076 / -1.371 / -0.729 |
-
-* The pipeline reproduces OpenVSP when it gets the same surface and the same wake edges: lift within 0.015 and
-  pitching moment within 2-6%. Induced drag does not agree (CDi -0.007 against 0.075 from OpenVSP's
-  quadrilateral panels); this was not resolved and VSPAERO's surface-integrated CDi on triangles should not be
-  trusted for this body.
-* **Blunt trailing edges decide the answer.** The HL-20's fins and tail end in a flat base about 0.37 m thick.
-  OpenVSP sheds the wake from the middle of that base; the nTop mesh has no edge there, so the wake has to leave
-  the upper or the lower corner, and the two choices bracket OpenVSP's result by a factor of two or more in CL.
-  For VSPAERO the mesh needs either sharp trailing edges or a line of mesh edges along the middle of each blunt
-  base (then list that line's vertices). The driver uses the mesh as it is and does not insert one.
-* `examples/HL-20 VSPAERO.ntop` lists 53 vertices of the nTop mesh along the fins' and tail's trailing edges, on
-  the lower-corner side of each base. The notebook gives CL = 0.116 / 0.142 /
-  0.167 and CMy = -2.24 / -1.76 / -1.28 (186 s in nTop, 20,358 panels). `examples/hl20_cp_alpha5.5_preview.png`
-  is a plot of its Cp point map at 5.5 degrees. A few panels reach Cp = -21 (minimum); clip the colour range in
-  the point map's HUD.
+**Wave Drag**: Mach sweep, number of slices, number of rotation sections, Sref, symmetry and geometry set are
+inputs. Out of scope: inflow and outflow faces.
 
 ## Rebuilding and running headlessly
 
 ```bash
 sh build/py.sh build/build_blocks.py
-sh build/py.sh build/build_examples.py --run
+sh build/py.sh build/x59_example.py --run
+sh build/py.sh examples/x59_doe.py
+sh build/py.sh validation/wave_drag_mach.py
 ```
 
-`build/py.sh` runs the `nTop_pkgs` environment (it has `implicit_io`). `--run` runs the examples with `ntopcl
---trustnotebook` and prints their outputs. ntopcl writes the outputs and then may not exit after notebooks with
-Run Command inside custom blocks; the runner stops it once the output file is written. A signed-in nTop is
-needed.
+`build/py.sh` runs the `nTop_pkgs` environment (it has `implicit_io`, which writes the `.ntop` files); the drivers
+run in the Python of `NTOP_PYTHON_PATH`, and the example, DOE and study need `NTOP_PYTHON_PATH` and `VSP_PATH`
+set. ntopcl may write its output and then not exit after notebooks with Run Command inside custom blocks; the
+runners stop it once the output file is written. A signed-in nTop is needed.
 
 ## Known limits
 
-* Runs with the same Working Directory and Case Name overwrite each other. nTop's list processing over an
-  analysis block (for example a list of meshes) needs a list of Case Names too.
-* The surface pressures are read from VSPAERO's binary `.adb` (layout from VSPAERO's source,
-  `WriteOutAerothermalDatabaseSolution`; each case is found by its Mach, alpha and beta); every run checks the last
-  case against VSPAERO's Tecplot output and stops if they differ.
-* Reynolds-number variants of a case share one surface solution (VSPAERO's potential solution does not depend
-  on Re_cref); only the skin-friction coefficients differ.
+* Runs with the same Working Directory and Case Name overwrite each other (the DOE runs one design at a time).
+* A component block's body must have one closed contour per cut (the largest is used when there are several, with
+  a note in the log); a fuselage is sliced along +x and a wing's span axis must be normal to x.
+* The fuselage fit follows the body between sections with OpenVSP's own skinning, so abrupt steps (an inlet face)
+  are smoothed: 0.43 m at the X-59's nacelle inlet.
+* Surface pressures are read from VSPAERO's binary `.adb`; every run checks the last case against VSPAERO's Tecplot
+  output. Integrated over the surface, these pressures do not give VSPAERO's forces (it computes those from its
+  vortex edges): use them for viewing and as viscous-correction edge conditions.
+* The HL-20 files in this folder (`h20*`, `hl20.*`) belong to the earlier mesh-based workflow, which these blocks
+  replace.

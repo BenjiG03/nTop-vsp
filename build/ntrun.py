@@ -54,3 +54,30 @@ def values(out):
             return [conv(c) for c in v]
         return v
     return conv(out[0] if isinstance(out, list) and len(out) == 1 else out)
+
+
+def run_notebook(path, timeout=3600):
+    res = os.path.splitext(path)[0] + ".json"
+    if os.path.exists(res):
+        os.remove(res)
+    t0 = time.time()
+    log_path = os.path.splitext(path)[0] + ".log"
+    # ntopcl writes its output file and then may never exit after notebooks that use Run Command inside custom
+    # blocks, so wait for the output file to settle and stop it.
+    with open(log_path, "w", encoding="utf-8", errors="replace") as logf:
+        p = subprocess.Popen([NTOPCL, "--trustnotebook", "-v", "2", "-o", res, path], stdout=logf,
+                             stderr=subprocess.STDOUT)
+        last = -1
+        while p.poll() is None and time.time() - t0 < timeout:
+            time.sleep(2)
+            if os.path.exists(res):
+                size = os.path.getsize(res)
+                if size == last and size > 0:
+                    break
+                last = size
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+    log = open(log_path, encoding="utf-8", errors="replace").read()
+    out = json.load(open(res)) if os.path.exists(res) else None
+    return out, log, time.time() - t0

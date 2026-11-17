@@ -1,24 +1,25 @@
-"""OpenVSP Parasite Drag (component drag buildup) of an OpenVSP model, driven from nTop.
+"""OpenVSP Parasite Drag (component drag buildup) of an OpenVSP model over a sweep of speeds, driven from nTop.
 
-    python run_parasite.py SETTINGS_FILE
+    python -m vsp_ntop.run_parasite SETTINGS_FILE
 
 OpenVSP's Parasite Drag tool needs OpenVSP's own components: it takes each component's wetted area from CompGeom
 and its reference length, thickness ratio or fineness ratio from DegenGeom, and it leaves out mesh components
 (an imported tessellation is reported as "not included in Parasite Drag calculation"). So this driver works on a
 ``.vsp3`` model, with the flow condition and the per-component settings from nTop.
 
-Writes ``<case>.ntvsp.parasite.csv`` (one row of totals and flight condition), ``<case>.ntvsp.parasite_components.csv``
-(one row per component) and OpenVSP's own buildup table ``<case>.ParasiteDragBuildUp.csv``.
+The model is ``model`` (a ``.vsp3``, e.g. made by OpenVSP Model). The flow condition is swept over ``speed_start``
+to ``speed_end`` (``speed_npts`` points, in ``speed_unit``) at one altitude.
+
+Writes ``<case>.ntvsp.parasite.csv`` (one row of totals and flight condition per speed),
+``<case>.ntvsp.parasite_components.<k>.csv`` (one row per component, for speed k) and OpenVSP's own buildup table
+``<case>.ParasiteDragBuildUp.<k>.csv``.
 """
 from __future__ import annotations
 
 import os
-import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
 
-from common import (LENGTH_UNITS, DriverError, Log, Settings, main_wrapper, read_vsp_results_csv,  # noqa: E402
+from .common import (openvsp_dir, LENGTH_UNITS, DriverError, Log, Settings, linspace, main_wrapper, read_vsp_results_csv,
                     run_vspscript, vsp_path, write_csv)
 
 COMPONENT_FIELDS = ("name", "ff_body", "ff_wing", "ff_user", "percent_laminar", "q", "roughness_m", "te_tw", "taw_tw",
@@ -53,11 +54,11 @@ def parse_components(s: Settings):
     return out
 
 
-def script(s: Settings, components, csv_out, results_out, model_out):
+def script(s: Settings, model, components, speeds, csv_out, results_out, model_out):
     unit = s.integer("length_unit")
     to_model = 1.0 / LENGTH_UNITS[unit][1]  # metres -> model length units
     # Renaming the model keeps OpenVSP's side files (CompGeom tables) in the working directory, not beside the model.
-    lines = [f'    ReadVSPFile("{vsp_path(s.text("model"))}");', f'    SetVSP3FileName("{vsp_path(model_out)}");',
+    lines = [f'    ReadVSPFile("{vsp_path(model)}");', f'    SetVSP3FileName("{vsp_path(model_out)}");',
              "    Update();",
              '    if (FindGeoms().size() == 0) { Print("ERR the model has no components"); return; }']
     for c in components:
@@ -78,19 +79,21 @@ def script(s: Settings, components, csv_out, results_out, model_out):
             "LamCfEqnChoice": s.integer("lam_cf"), "TurbCfEqnChoice": s.integer("turb_cf"),
             "VelocityUnit": s.integer("speed_unit"), "AltLengthUnit": 1, "TempUnit": 0, "PresUnit": 3,
             "ExportSubCompFlag": s.integer("export_subcomp"), "RecomputeGeom": 1}
-    doubles = {"Sref": sref, "Vinf": s.real("speed"), "Altitude": s.real("altitude"), "DeltaTemp": s.real("delta_temp"),
+    doubles = {"Sref": sref, "Altitude": s.real("altitude"), "DeltaTemp": s.real("delta_temp"),
                "SpecificHeatRatio": s.real("gamma")}
     for k, v in ints.items():
         lines.append(f'    SetIntAnalysisInput("ParasiteDrag", "{k}", array<int> = {{{int(v)}}});')
     for k, v in doubles.items():
         lines.append(f'    SetDoubleAnalysisInput("ParasiteDrag", "{k}", array<double> = {{{float(v)!r}}});')
-    lines += [
-        f'    SetStringAnalysisInput("ParasiteDrag", "FileName", array<string> = {{"{vsp_path(csv_out)}"}});',
-        '    string rid = ExecAnalysis("ParasiteDrag");',
-        '    if (rid == "") { Print("ERR Parasite Drag returned no results"); return; }',
-        f'    WriteResultsCSVFile(rid, "{vsp_path(results_out)}");',
-        '    Print("NTVSP_OK");',
-    ]
+    for k, v in enumerate(speeds, start=1):
+        lines += [
+            f'    SetDoubleAnalysisInput("ParasiteDrag", "Vinf", array<double> = {{{float(v)!r}}});',
+            f'    SetStringAnalysisInput("ParasiteDrag", "FileName", array<string> = {{"{vsp_path(csv_out)}.{k}.csv"}});',
+            '    { string rid = ExecAnalysis("ParasiteDrag");',
+            '      if (rid == "") { Print("ERR Parasite Drag returned no results"); return; }',
+            f'      WriteResultsCSVFile(rid, "{vsp_path(results_out)}.{k}.csv"); }}',
+        ]
+    lines.append('    Print("NTVSP_OK");')
     return "void main()\n{\n" + "\n".join(lines) + "\n}\n"
 
 
@@ -98,35 +101,41 @@ def main(settings_path):
     s = Settings(settings_path)
     work = os.path.abspath(s.text("work_dir"))
     case = s.text("case")
-    vsp_dir = os.path.abspath(s.text("vsp_dir"))
+    vsp_dir = openvsp_dir(s)
     os.makedirs(work, exist_ok=True)
     log = Log(os.path.join(work, case + ".ntvsp.log"))
     model = s.text("model")
+    if not model.lower().endswith(".vsp3"):
+        model += ".vsp3"
     if not os.path.isfile(model):
         raise DriverError(f"OpenVSP model {model} not found")
     components = parse_components(s)
-    log(f"Parasite Drag of {model}: {len(components)} component settings")
-    csv_out = os.path.join(work, case + ".ParasiteDragBuildUp.csv")
-    results_out = os.path.join(work, case + ".ntvsp.parasite_results.csv")
-    for p in (csv_out, results_out):
-        if os.path.exists(p):
-            os.remove(p)
-    text = run_vspscript(vsp_dir, script(s, components, csv_out, results_out, os.path.join(work, case + ".vsp3")), work, case + ".parasite", log,
+    speeds = linspace(s.real("speed_start"), s.real("speed_end"), s.integer("speed_npts"))
+    log(f"Parasite Drag of {model}: {len(components)} component settings, {len(speeds)} speeds")
+    for stale in os.listdir(work):
+        if stale.startswith(case + ".ntvsp.parasite") or stale.startswith(case + ".ParasiteDragBuildUp"):
+            os.remove(os.path.join(work, stale))
+    csv_out = os.path.join(work, case + ".ParasiteDragBuildUp")
+    results_out = os.path.join(work, case + ".ntvsp.parasite_results")
+    text = run_vspscript(vsp_dir, script(s, model, components, speeds, csv_out, results_out,
+                                         os.path.join(work, case + ".vsp3")), work, case + ".parasite", log,
                          s.real("timeout_s", 7200))
     for line in text.splitlines():
         if "not included in Parasite Drag" in line:
             log("note: " + line.strip())
-    res = read_vsp_results_csv(results_out).get("Parasite_Drag")
-    if not res:
-        raise DriverError("no Parasite_Drag results in OpenVSP's output")
-    write_csv(os.path.join(work, case + ".ntvsp.parasite.csv"), [k for k, _ in SUMMARY],
-              [[res.get(src, [""])[0][0] if res.get(src) and res[src][0] else "" for _, src in SUMMARY]])
-    n = int(float(res["Num_Comp"][0][0]))
-    rows = []
-    for i in range(n):
-        rows.append([res[src][0][i] if src in res and i < len(res[src][0]) else "" for _, src in COMPONENTS])
-    write_csv(os.path.join(work, case + ".ntvsp.parasite_components.csv"), [k for k, _ in COMPONENTS], rows)
-    log(f"Total CD = {res['Total_CD_Total'][0][0]} over {n} components")
+    summary = []
+    for k, v in enumerate(speeds, start=1):
+        path = f"{results_out}.{k}.csv"
+        res = read_vsp_results_csv(path).get("Parasite_Drag")
+        if not res:
+            raise DriverError(f"no Parasite_Drag results for speed {v}")
+        summary.append([res.get(src, [""])[0][0] if res.get(src) and res[src][0] else "" for _, src in SUMMARY])
+        n = int(float(res["Num_Comp"][0][0]))
+        rows = [[res[src][0][i] if src in res and i < len(res[src][0]) else "" for _, src in COMPONENTS] for i in range(n)]
+        write_csv(os.path.join(work, f"{case}.ntvsp.parasite_components.{k}.csv"), [c for c, _ in COMPONENTS], rows)
+        os.remove(path)
+        log(f"speed {v:g}: Mach {res['FC_Mach'][0][0]}, total CD = {res['Total_CD_Total'][0][0]} over {n} components")
+    write_csv(os.path.join(work, case + ".ntvsp.parasite.csv"), [c for c, _ in SUMMARY], summary)
     log("done")
     log.close()
 

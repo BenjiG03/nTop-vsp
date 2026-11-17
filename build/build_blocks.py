@@ -1,4 +1,5 @@
-"""Write the nTop custom blocks for OpenVSP's VSPAERO, Parasite Drag and Wave Drag.
+"""Write the nTop custom blocks: nTop implicit bodies to an OpenVSP model, and OpenVSP's VSPAERO, Wave Drag and
+Parasite Drag on it.
 
     sh build/py.sh build/build_blocks.py [--out DIR]
 
@@ -16,30 +17,34 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import drag_blocks as d  # noqa: E402
+import model_blocks as m  # noqa: E402
 import vspaero_blocks as v  # noqa: E402
 from ntopfile import save_block  # noqa: E402
 
 
 def blocks():
-    """(file stem, block), settings blocks first."""
+    """(file stem, block): the model blocks first, then each analysis with its settings and readers."""
     return [
+        ("OpenVSP Fuselage (VSP)", m.fuselage_block()),
+        ("OpenVSP Wing (VSP)", m.wing_block()),
+        ("OpenVSP Model (VSP)", m.model_block()),
+        ("OpenVSP Model Check (VSP)", m.model_check_block()),
+        ("OpenVSP Model Mesh (VSP)", m.model_mesh_block()),
         ("VSPAERO Flow Condition (VSP)", v.flow_block()),
         ("VSPAERO Solver Settings (VSP)", v.solver_block()),
-        ("VSPAERO Wake Settings (VSP)", v.wake_block()),
         ("VSPAERO Analysis (VSP)", v.analysis_block()),
         ("VSPAERO Coefficient (VSP)", v.coefficient_block()),
+        ("VSPAERO Center of Pressure (VSP)", v.center_block()),
         ("VSPAERO Surface Pressure (VSP)", v.surface_block()),
-        ("VSPAERO Wake Lines (VSP)", v.wake_lines_block()),
-        ("VSPAERO Thin Surface Projection (VSP)", v.projection_block()),
         ("VSPAERO Mesh Faces (VSP)", v.mesh_faces_block()),
+        ("Wave Drag (VSP)", d.wave_block()),
+        ("Wave Drag Result (VSP)", d.wave_result_block()),
+        ("Wave Drag Area Distribution (VSP)", d.wave_areas_block()),
         ("Parasite Drag Component (VSP)", d.component_block()),
         ("Parasite Drag (VSP)", d.parasite_block()),
         ("Parasite Drag Result (VSP)", d.parasite_result_block()),
         ("Parasite Drag Component Values (VSP)", d.parasite_components_block()),
-        ("Wave Drag (VSP)", d.wave_block()),
-        ("Wave Drag Result (VSP)", d.wave_result_block()),
-        ("Wave Drag Area Distribution (VSP)", d.wave_areas_block()),
-        ("Drag Buildup (VSP)", d.buildup_block()),
+        ("Aero Database (VSP)", d.database_block()),
     ]
 
 

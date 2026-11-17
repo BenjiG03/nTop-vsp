@@ -1,8 +1,9 @@
 """Shared helpers for the nTop -> OpenVSP drivers.
 
 The nTop custom blocks write a settings file of ``key = value`` lines (every value in SI units: metres,
-square metres, m/s, kg/m^3, degrees for angles) and then call one of the ``run_*.py`` scripts with
-its path. The scripts drive OpenVSP (``vspscript.exe``) and VSPAERO (``vspaero.exe``) and write plain
+square metres, m/s, kg/m^3, degrees for angles) and then run one of the ``run_*`` modules on it
+(``python -m vsp_ntop.run_vspaero SETTINGS_FILE``) with the Python named by the NTOP_PYTHON_PATH environment
+variable, in which this package is installed (``pip install -e .``). OpenVSP is found through VSP_PATH. The scripts drive OpenVSP (``vspscript.exe``) and VSPAERO (``vspaero.exe``) and write plain
 CSV files that nTop's Import Table and Import Scalar Point Map blocks read back.
 
 Standard library only, so any Python 3.8+ runs these scripts.
@@ -103,6 +104,21 @@ def fmt(x):
     return repr(float(x))
 
 
+def openvsp_dir(s: "Settings"):
+    """OpenVSP's folder: the settings' ``vsp_dir`` (the blocks fill it from the VSP_PATH environment variable), or
+    VSP_PATH itself. A path to one of OpenVSP's programs is taken as its folder."""
+    path = s.raw.get("vsp_dir", "").strip() or os.environ.get("VSP_PATH", "").strip()
+    if not path:
+        raise DriverError("OpenVSP not found: set the VSP_PATH environment variable to the OpenVSP folder "
+                          "(the one holding vspscript.exe and vspaero.exe)")
+    path = os.path.abspath(path.strip('"'))
+    if os.path.isfile(path):
+        path = os.path.dirname(path)
+    if not os.path.isfile(os.path.join(path, "vspscript.exe")):
+        raise DriverError(f"VSP_PATH = {path}: no vspscript.exe there (point it at the OpenVSP folder)")
+    return path
+
+
 def vsp_path(p):
     return os.path.abspath(p).replace("\\", "/")
 
@@ -183,7 +199,7 @@ def read_vsp_results_csv(path):
 def main_wrapper(fn):
     """Run ``fn(settings_path)``; print a one-line error and exit 1 on failure (nTop shows stderr)."""
     if len(sys.argv) != 2:
-        sys.stderr.write(f"usage: {os.path.basename(sys.argv[0])} SETTINGS_FILE\n")
+        sys.stderr.write(f"usage: python -m vsp_ntop.{os.path.splitext(os.path.basename(sys.argv[0]))[0]} SETTINGS_FILE\n")
         sys.exit(2)
     try:
         fn(sys.argv[1])

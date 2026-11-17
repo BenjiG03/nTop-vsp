@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ntop-vsp"
+version = "0.2.0"
+description = "Drivers for the nTop_vsp custom blocks: nTop implicit bodies to OpenVSP models, VSPAERO, Wave Drag, Parasite Drag and aero databases"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+dependencies = []
+
+[tool.setuptools]
+packages = ["vsp_ntop"]

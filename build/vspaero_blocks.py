@@ -275,12 +275,13 @@ def mesh_faces_block():
                       specs, "real_point_map", g, out)
 
 
-CENTERS = ("Center of pressure (one point per case)", "Aerodynamic center (one point per Mach, beta, Re_cref)")
+CENTERS = ("Center of pressure (one point per case)", "Aerodynamic center (one point per alpha sweep)")
 
 
 def center_block():
     specs = (
-        InputSpec("Results", "text", "Output of VSPAERO Analysis (VSP)."),
+        InputSpec("Results", "text", "Output of VSPAERO Analysis (VSP) or of Aero Database (VSP). From a database the "
+                  "centers come from its totals (every contribution, about the database's moment point)."),
         InputSpec("Quantity", "choice", "Center of pressure: where the resultant of each case's normal force and "
                   "pitching moment crosses the line through the moment reference point along x (it runs away as the "
                   "normal force goes to zero). Aerodynamic center: the point about which the pitching moment does not "
@@ -290,11 +291,12 @@ def center_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**Center of pressure.** The driver computes, from VSPAERO's inviscid normal force CFz and pitching "
-              "moment CMy about the moment reference point (over Sref and cref, x aft): x_cp = x_ref - CMy cref / CFz "
-              "for every case, and x_ac = x_ref - (dCMy/dCFz) cref for every alpha sweep (a straight-line fit). The "
-              "points lie on the line through the reference point along x; a case with no normal force gets the "
-              "reference point (column Defined = 0 in the file).")
+    g.comment("**Center of pressure.** The VSPAERO and Aero Database drivers compute, from the normal force CN (z up) "
+              "and pitching moment Cm about the moment reference point (over Sref and cref, x aft): x_cp = x_ref - "
+              "Cm cref / CN for every case, and x_ac = x_ref - (dCm/dCN) cref for every alpha sweep at one Mach number "
+              "and sideslip (a straight-line fit). VSPAERO's are from its inviscid coefficients; a database's from its "
+              "totals. The points are positions in metres on the line through the reference point along x; a case "
+              "with no normal force gets the reference point (column Defined = 0 in the file).")
     path = k.cat([inp("Results"), k.pick(inp("Quantity"), (".ntvsp.center_of_pressure.csv",
                                                             ".ntvsp.aerodynamic_center.csv"))], name="Table File")
     table = g.block("import_table<file_path,bool>", "table", [path, g.boolean(True)], "Import Table")
@@ -306,8 +308,9 @@ def center_block():
         xyz.append(g.block("multiply<real,real>", "real", [val, metre], top=False))
     out = g.block("point<real,real,real>", "list<point>", xyz, "Centers")
     return make_block(
-        "vspaero_center_of_pressure", "VSPAERO Center of Pressure (VSP)",
-        "Center of pressure of every VSPAERO case, or the aerodynamic center (neutral point) of every alpha sweep, as "
+        "center_of_pressure", "Center of Pressure (VSP)",
+        "Center of pressure of every case of a VSPAERO run or an Aero Database, or the aerodynamic center (neutral "
+        "point) of every alpha sweep, as "
         "a list of points: absolute positions in the model's frame with length units (not fractions of the "
         "reference chord), on the line through the moment reference point along x. Compare the aerodynamic center "
         "with the CG for the static margin.", specs, "list<point>", g, out)

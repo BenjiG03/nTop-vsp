@@ -6,7 +6,7 @@ square metres, m/s, kg/m^3, degrees for angles) and then run one of the ``run_*`
 variable, in which this package is installed (``pip install -e .``). OpenVSP is found through VSP_PATH. The scripts drive OpenVSP (``vspscript.exe``) and VSPAERO (``vspaero.exe``) and write plain
 CSV files that nTop's Import Table and Import Scalar Point Map blocks read back.
 
-Standard library only, so any Python 3.8+ runs these scripts.
+Standard library only, so any Python 3.8+ runs these scripts; the polar plots (``run_plot``) also need matplotlib.
 """
 from __future__ import annotations
 

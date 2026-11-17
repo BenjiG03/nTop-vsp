@@ -18,6 +18,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import buildup_blocks as bb  # noqa: E402
 import drag_blocks as d  # noqa: E402
 import model_blocks as mb  # noqa: E402
 import vspaero_blocks as v  # noqa: E402
@@ -58,8 +59,12 @@ def build(path=NOTEBOOK):
                                      mb.model_mesh_block())
     flow, solver, ana, coef, center = (v.flow_block(), v.solver_block(), v.analysis_block(), v.coefficient_block(),
                                        v.center_block())
-    wave, parasite, database = d.wave_block(), d.parasite_block(), d.database_block()
-    blocks = [fus, wing, model, check, mesh, flow, solver, ana, coef, center, wave, parasite, database]
+    wave, parasite = d.wave_block(), d.parasite_block()
+    c_vspaero, c_wave, c_parasite = (bb.vspaero_contribution_block(), bb.drag_contribution_block("wave"),
+                                     bb.drag_contribution_block("parasite"))
+    database, db_table, plot = bb.database_block(), bb.database_table_block(), bb.plot_block()
+    blocks = [fus, wing, model, check, mesh, flow, solver, ana, coef, center, wave, parasite, c_vspaero, c_wave,
+              c_parasite, database, db_table, plot]
     bodies = ["Fuselage Assembly", "Main Wing Installed", "Canards Installed", "Main HStab", "Top T Stab", "VStab",
               "Wing Span", "Wing Inner Sweep"]
     dv = x59.Derived()
@@ -136,23 +141,36 @@ def build(path=NOTEBOOK):
                             "Speed End": mach1, "Speed Points": nmach,
                             "Altitude": lambda g: g.real(ALTITUDE, LENGTH), **run,
                             "Case Name": lambda g: g.text("x59_parasite")}, "Parasite Drag")
-    g.comment("**7. Aero database.** CL, CD (induced + wave + parasite), CY, Cl, Cm, Cn for every case, with the two "
-              "design variables in the first columns; each run's rows are also appended to `runs/x59_doe.csv`.")
+    g.comment("**7. Aero database.** Each analysis becomes a contribution: VSPAERO's inviscid forces and moments, wave "
+              "drag (from Mach 1) and parasite drag. Aero Database sums them at VSPAERO's cases into CL, CD, CY, Cl, Cm, "
+              "Cn, with the two design variables in the first columns; each run's rows are also appended to "
+              "`runs/x59_doe.csv`. Other sources (Modified Newtonian above some Mach number, a viscous correction in "
+              "place of Parasite Drag) go into the same list through Coefficient Rows Contribution (VSP).")
     span_m = g.block("divide<real,real>", "real", [dv.id_of("Wing Span"), g.real(1.0, LENGTH)], top=False)
     sweep_deg = g.block("divide<real,real>", "real", [dv.id_of("Wing Inner Sweep"), g.real(math.radians(1.0), ANGLE)],
                         top=False)
     names = g.block("core.list<text>", "list<text>", [g.text("Wing_Span_m"), g.text("Wing_Inner_Sweep_deg")], top=False)
     vals = g.block("core.list<real>", "list<real>", [span_m, sweep_deg], top=False)
-    table = call(g, database, {"VSPAERO Results": aero, "Wave Drag Results": wv, "Parasite Drag Results": pd,
-                               "Variable Names": names, "Variable Values": vals,
+    contributions = g.block("core.list<text>", "list<text>", [
+        call(g, c_vspaero, {"Results": aero}, "VSPAERO Contribution"),
+        call(g, c_wave, {"Results": wv}, "Wave Drag Contribution"),
+        call(g, c_parasite, {"Results": pd}, "Parasite Drag Contribution")], "Contributions")
+    db = call(g, database, {"Contributions": contributions, "Variable Names": names, "Variable Values": vals,
                                "Append To": lambda g: g.text(DOE_TABLE), **run,
                                "Case Name": lambda g: g.text("x59_database")}, "Aero Database")
+    table = call(g, db_table, {"Results": db}, "Database Table")
     cl = call(g, coef, {"Results": aero, "Coefficient": lambda g: g.choice(list(v.POLAR_COLUMNS), v.POLAR_COLUMNS.index("CLi"))},
               "CLi")
-    g.comment("**8. Aerodynamic center** (neutral point) at each Mach number and beta, from VSPAERO's pitching moment "
-              "against normal force; compare its x with the CG station (18.27 m) for the static margin.")
-    ac = call(g, center, {"Results": aero, "Quantity": lambda g: g.choice(list(v.CENTERS), 1)}, "Aerodynamic Center")
-    out = g.block("core.group<any>", "group", [table, cl, ac], "Outputs")
+    g.comment("**8. Aerodynamic center** (neutral point) at each Mach number and beta, from the database's pitching "
+              "moment against normal force; positions in metres, to compare with the CG station (18.27 m) for the "
+              "static margin.")
+    ac = call(g, center, {"Results": db, "Quantity": lambda g: g.choice(list(v.CENTERS), 1)}, "Aerodynamic Center")
+    g.comment("**9. Drag polar**, CL against CD at zero sideslip, one curve per Mach number. It opens in a window and is "
+              "saved as `runs/x59_polar.png`.")
+    img = call(g, plot, {"Results": lambda g: g.block("core.list<text>", "list<text>", [db], top=False),
+                         "Filter": lambda g: g.choice(list(bb.FILTERS), 1), **run,
+                         "Case Name": lambda g: g.text("x59_polar")}, "Drag Polar")
+    out = g.block("core.group<any>", "group", [table, cl, ac, img], "Outputs")
     os.makedirs(EXAMPLES, exist_ok=True)
     dv.save(path, g, blocks=blocks, output=out, output_type="group", display="X-59 Aero Database",
             description="X-59 starter geometry to an OpenVSP model and a six-degree-of-freedom aero database.")

@@ -16,6 +16,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import buildup_blocks as b  # noqa: E402
 import drag_blocks as d  # noqa: E402
 import model_blocks as m  # noqa: E402
 import vspaero_blocks as v  # noqa: E402
@@ -34,7 +35,7 @@ def blocks():
         ("VSPAERO Solver Settings (VSP)", v.solver_block()),
         ("VSPAERO Analysis (VSP)", v.analysis_block()),
         ("VSPAERO Coefficient (VSP)", v.coefficient_block()),
-        ("VSPAERO Center of Pressure (VSP)", v.center_block()),
+        ("Center of Pressure (VSP)", v.center_block()),
         ("VSPAERO Surface Pressure (VSP)", v.surface_block()),
         ("VSPAERO Mesh Faces (VSP)", v.mesh_faces_block()),
         ("Wave Drag (VSP)", d.wave_block()),
@@ -44,7 +45,15 @@ def blocks():
         ("Parasite Drag (VSP)", d.parasite_block()),
         ("Parasite Drag Result (VSP)", d.parasite_result_block()),
         ("Parasite Drag Component Values (VSP)", d.parasite_components_block()),
-        ("Aero Database (VSP)", d.database_block()),
+        ("VSPAERO Contribution (VSP)", b.vspaero_contribution_block()),
+        ("Wave Drag Contribution (VSP)", b.drag_contribution_block("wave")),
+        ("Parasite Drag Contribution (VSP)", b.drag_contribution_block("parasite")),
+        ("Aero Coefficient Row (VSP)", b.row_block()),
+        ("Coefficient Rows Contribution (VSP)", b.rows_contribution_block()),
+        ("Aero Database (VSP)", b.database_block()),
+        ("Aero Database Coefficient (VSP)", b.database_coefficient_block()),
+        ("Aero Database Table (VSP)", b.database_table_block()),
+        ("Polar Plot (VSP)", b.plot_block()),
     ]
 
 

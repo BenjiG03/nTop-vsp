@@ -69,7 +69,7 @@ Command blocks.
 | VSPAERO Solver Settings (VSP) | text | threads, wake model and nodes, far field, ground effect, freezing, implicit wake, convergence factors, preconditioners, quad tree, restart file |
 | VSPAERO Analysis (VSP) | results path | model, Sref, bref, cref, moment point, body wakes, the two settings |
 | VSPAERO Coefficient (VSP) | list of reals | any column of VSPAERO's polar, one value per case |
-| VSPAERO Center of Pressure (VSP) | list of points | each case's center of pressure, or each alpha sweep's aerodynamic center (neutral point) |
+| VSPAERO Center of Pressure (VSP) | list of points | each case's center of pressure, or each alpha sweep's aerodynamic center (neutral point), as absolute positions with length units |
 | VSPAERO Surface Pressure (VSP) | Scalar Point Map | Cp or p - p_inf of one case at panel centroids, nodes or both (thin surfaces: the jump across the sheet) |
 | VSPAERO Mesh Faces (VSP) | Scalar Point Map | the Thick-set panels as points weighted by area, for ntop_newtonian's Viscous Correction on Mesh blocks |
 | Wave Drag (VSP) | results path | model, Mach sweep, slices, rotation sections, Sref, symmetry, geometry set |
@@ -168,6 +168,17 @@ OpenVSP's own default fuselage and wing:
   body axes; the Aero Database reports body-axis signs (Cl right wing down, Cm nose up, Cn nose right).
 * Leaving the fuselage out of VSPAERO loses its lift and moment contributions; give it the Thick set for subsonic
   work where its panel mesh behaves.
+* **Convergence check.** After every run the driver checks each case: VSPAERO's linear solve (GMRES) of the last
+  wake iteration must reach both of its targets (residual reduction and max residual; VSPAERO otherwise stops it
+  at 1500 iterations), every force and moment coefficient must be finite, and with a relaxed wake CLtot, CDtot and
+  CMytot must change by less than the **Wake Change Tolerance** (10%) over the last wake iteration. By default an
+  unconverged case stops the notebook with the reason (**Convergence Check** in Solver Settings can make it a
+  warning). `<case>.ntvsp.convergence.csv` lists every case, and the polar has a `Converged` column. Tried on the
+  53 earlier runs of this project: every run of a converted model whose numbers were sound passes (the X-59 baseline: 60
+  of 60); the failures it reports are the NaN cases above (T-tail crossing, thin fuselage) and relaxed wakes that
+  were still moving 15 to 290% per iteration (thick fuselage with fins, the old mesh-route vortex lattice). Sound
+  relaxed-wake runs moved under 6%. VSPAERO's wake span efficiency `Ew` is infinite in every supersonic case (it
+  computes no wake forces there) and is not checked.
 
 ## Wave drag: the Mach range it holds over
 

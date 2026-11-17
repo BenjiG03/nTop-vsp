@@ -70,6 +70,16 @@ SOLVER_FIELDS = [
           "more cells)."),
     F_choice("Restart File", "restart_mode", ("None", "Save (-save)", "Restart from saved (-restart)"), (0, 1, 2), 0,
              "VSPAERO's restart file: write one, or start from the one saved under this Case Name."),
+    F_choice("Convergence Check", "convergence_check", ("Stop on unconverged cases", "Warn in the log only"), (1, 0), 0,
+             "After the run every case is checked: VSPAERO's linear solve (GMRES) of the last wake iteration reached "
+             "both its residual targets, every force and moment coefficient is finite, and with a relaxed wake the "
+             "forces changed less than the Wake Change Tolerance over the last wake iteration. Stop: an unconverged "
+             "case stops the notebook with the reason. Either way `<Case Name>.ntvsp.convergence.csv` lists every "
+             "case, and the polar's Converged column flags them."),
+    F_real("Wake Change Tolerance", "wake_tolerance", 0.1, description="Largest change of CLtot, CDtot and CMytot "
+           "over the last wake iteration, relative to their values (at least 0.05, 0.005 and 0.01), for a relaxed-wake "
+           "case to count as converged. 0.1 is 10%: converged runs stay within about 6%, diverging ones change by "
+           "tens of percent or more."),
 ]
 
 def settings_block(key, display, description, fields, comments):
@@ -132,7 +142,8 @@ def analysis_block(flow=FLOW_FIELDS, solver=SOLVER_FIELDS):
               "read the model and write VSPAERO's panel file: components in the Thick set become panel-method surfaces, "
               "those in the Thin set vortex-lattice camber surfaces, and OpenVSP marks every wing trailing edge as a "
               "wake. 3. It writes the `.vspaero` input and runs `vspaero.exe` for every Mach x alpha x beta x Re_cref "
-              "case. 4. The output is the path of the results, for the VSPAERO reader blocks.")
+              "case. 4. It checks that every case converged (Solver Settings' Convergence Check) and stops with the "
+              "reason if one did not. 5. The output is the path of the results, for the VSPAERO reader blocks.")
     lines = [
         k.line("model", inp("OpenVSP Model")),
         k.line("sref", k.num(inp("Reference Area"), 1.0, AREA)),
@@ -149,8 +160,10 @@ def analysis_block(flow=FLOW_FIELDS, solver=SOLVER_FIELDS):
         "results (connect it to the VSPAERO reader blocks). Thick-set components are solved with the panel method, "
         "Thin-set components with the vortex lattice method; wakes leave every wing trailing edge. Settings come from "
         "**VSPAERO Flow Condition** and **VSPAERO Solver Settings** (VSP). Reference area, span, chord and moment "
-        "point are inputs. Files are written to the Working Directory under the Case Name; the run's log is "
-        "`<Case Name>.ntvsp.log`.\n\nNot exposed (out of scope): X-Z symmetry, 2D FEM and Tecplot output, reference "
+        "point are inputs. Every case is checked for convergence (linear-solve residuals, finite coefficients, wake "
+        "settled); by default an unconverged case stops the notebook with the reason, and "
+        "`<Case Name>.ntvsp.convergence.csv` lists every case. Files are written to the Working Directory under the "
+        "Case Name; the run's log is `<Case Name>.ntvsp.log`.\n\nNot exposed (out of scope): X-Z symmetry, 2D FEM and Tecplot output, reference "
         "quantities and CG from the model, stall model, propellers and actuator disks, stability analyses, slicer, "
         "control surfaces.", specs, "text", g, out)
 
@@ -168,7 +181,7 @@ POLAR_COLUMNS = ("CLtot", "CDtot", "CStot", "CMxtot", "CMytot", "CMztot", "CFxto
                  "CLo", "CLi", "CDo", "CDi", "CSo", "CSi", "CMox", "CMoy", "CMoz", "CMix", "CMiy", "CMiz",
                  "CFox", "CFoy", "CFoz", "CFix", "CFiy", "CFiz", "CLwtot", "CDwtot", "CSwtot", "CLiw", "CDiw", "CSiw",
                  "CFwxtot", "CFwytot", "CFwztot", "CFiwx", "CFiwy", "CFiwz", "LoDw", "Ew", "Mach", "AoA", "Beta",
-                 "Re_1e6", "Case")
+                 "Re_1e6", "Case", "Converged")
 
 
 def table_column(g, k, path, header):
@@ -182,7 +195,8 @@ def coefficient_block():
         InputSpec("Results", "text", "Output of VSPAERO Analysis (VSP)."),
         InputSpec("Coefficient", "choice", "Column of VSPAERO's polar. tot: total; o: skin friction (CDo...); i: "
                   "inviscid surface pressure; w: from the wake (Trefftz plane). Mach, AoA, Beta, Re_1e6 and Case give "
-                  "each case's conditions.", default=d_choice(POLAR_COLUMNS)),
+                  "each case's conditions; Converged is 1 for a case that passed the convergence check, 0 otherwise.",
+                  default=d_choice(POLAR_COLUMNS)),
     )
     g = Graph()
     k = Kit(g)
@@ -294,5 +308,6 @@ def center_block():
     return make_block(
         "vspaero_center_of_pressure", "VSPAERO Center of Pressure (VSP)",
         "Center of pressure of every VSPAERO case, or the aerodynamic center (neutral point) of every alpha sweep, as "
-        "a list of points (metres) on the line through the moment reference point along x. Compare the aerodynamic "
-        "center with the CG for the static margin.", specs, "list<point>", g, out)
+        "a list of points: absolute positions in the model's frame with length units (not fractions of the "
+        "reference chord), on the line through the moment reference point along x. Compare the aerodynamic center "
+        "with the CG for the static margin.", specs, "list<point>", g, out)

@@ -10,7 +10,9 @@ Steps (each logged to ``<case>.ntvsp.log``):
    of its wings as wakes itself; with ``find_body_wakes`` it also marks wakes behind fuselage bases.
 2. ``<case>.vspaero`` is written with every setting, in the form OpenVSP itself writes it.
 3. ``vspaero.exe`` solves all Mach x alpha x beta x Re_cref combinations in one run.
-4. Results for nTop: ``<case>.ntvsp.polar.csv`` (one row per case), the centre of pressure of each case and the
+4. Convergence check of every case (``convergence``; ``<case>.ntvsp.convergence.csv``): an unconverged case stops
+   the run with an error unless ``convergence_check`` is 0 (warn only).
+5. Results for nTop: ``<case>.ntvsp.polar.csv`` (one row per case, with a Converged column), the centre of pressure of each case and the
    aerodynamic centre of each alpha sweep (``pressure_centers``), per-case surface pressure point maps (on thin
    components, the pressure jump across the sheet) and the panels' points and areas (``.ntvsp.faces.{1,4}.csv``).
 
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 
 
 from . import adb
@@ -117,17 +120,128 @@ def read_polar(path):
             continue
         if r[0] == "Beta" and header is None:
             header = r
-        elif header is not None:
-            if any("nan" in v.lower() for v in r[:len(header)]):
-                raise DriverError(f"VSPAERO did not converge (NaN results) for Mach {r[1]}, alpha {r[2]}, beta "
-                                  f"{r[0]}; see the .vspaero.log")
-            try:
-                data.append([float(v) for v in r[:len(header)]])
-            except ValueError:
-                pass
+        elif header is not None and len(r) >= len(header):
+            # NaN rows are kept (as nan) for the convergence check.
+            values = [_float(v) for v in r[:len(header)]]
+            if not all(math.isnan(v) for v in values[:3]):
+                data.append(values)
     if header is None:
         raise DriverError(f"{path}: no header line")
     return header, data
+
+
+GMRES_RECORD = re.compile(r"Wake Iter:\s*(\d+)\s*/\s*(\d+)\s*\.\.\.\s*GMRES Iter:\s*(\d+)\s*\.\.\.\s*Red:\s*(\S+)\s*/\s*(\S+)"
+                          r"\s*\.\.\.\s*Max:\s*(\S+)\s*/\s*(\S+)")
+SOLVING = re.compile(r"Solving\.\.\.\s*Mach:\s*(\S+)\s*\.\.\.\s*Alpha:\s*(\S+)\s*\.\.\.\s*Beta:\s*(\S+)")
+# Floors of the wake-change measure, so coefficients near zero do not count as large relative changes.
+WAKE_FLOORS = (("CLtot", 0.05), ("CDtot", 0.005), ("CMytot", 0.01))
+
+
+def _float(x):
+    try:
+        return float(x)
+    except ValueError:
+        return math.nan
+
+
+def _same(a, b):
+    # VSPAERO solves Mach 0 as 0.001.
+    return all(abs(max(x, 0.001) - max(y, 0.001)) < 1e-4 if i == 0 else abs(x - y) < 1e-4
+               for i, (x, y) in enumerate(zip(a, b)))
+
+
+def solver_records(log_path):
+    """Per solve (Mach, alpha, beta) in VSPAERO's log: the last GMRES record of each wake iteration, as
+    (wake iteration, GMRES iterations, residual reduction, its target, max residual, its target), logs base 10."""
+    text = open(log_path, encoding="utf-8", errors="replace").read()
+    marks = list(SOLVING.finditer(text))
+    out = []
+    for k, m in enumerate(marks):
+        seg = text[m.end():marks[k + 1].start() if k + 1 < len(marks) else len(text)]
+        last = {}
+        for r in GMRES_RECORD.findall(seg):
+            last[int(r[0])] = (int(r[0]), int(r[2])) + tuple(_float(v) for v in r[3:7])
+        out.append((tuple(_float(v) for v in m.groups()), [last[w] for w in sorted(last)]))
+    return out
+
+
+def wake_changes(history_path):
+    """Per solver case of VSPAERO's .history: ((Mach, alpha, beta), number of wake iterations, change of the forces
+    over the last wake iteration: max over CLtot, CDtot, CMytot of |change| / max(|value|, floor))."""
+    cases, header = [], None
+    if not os.path.isfile(history_path):
+        return cases
+    for line in open(history_path, encoding="utf-8", errors="replace"):
+        w = line.split()
+        if not w:
+            continue
+        if w[0] == "Iter":
+            header = w
+            cases.append([])
+        elif header and cases and w[0].isdigit() and len(w) >= len(header) - 2:
+            cases[-1].append(dict(zip(header, (_float(v) for v in w))))
+    out = []
+    for rows in cases:
+        if not rows:
+            continue
+        cond = (rows[-1]["Mach"], rows[-1]["AoA"], rows[-1]["Beta"])
+        change = 0.0
+        if len(rows) > 1:
+            a, b = rows[-2], rows[-1]
+            change = max(abs(b[k] - a[k]) / max(abs(b[k]), floor) for k, floor in WAKE_FLOORS)
+        out.append((cond, len(rows), change))
+    return out
+
+
+def convergence(work, case, header, data, s: Settings, log):
+    """Checks every case: VSPAERO's linear solve (GMRES) of the last wake iteration reached both its residual
+    targets (VSPAERO stops it after 1500 iterations otherwise), every value is finite, and with a relaxed wake the
+    forces changed by less than ``wake_tolerance`` over the last wake iteration. Writes
+    ``<case>.ntvsp.convergence.csv`` and returns one flag per polar row."""
+    solves = solver_records(os.path.join(work, case + ".vspaero.log"))
+    wakes = wake_changes(os.path.join(work, case + ".history"))
+    tol = s.real("wake_tolerance", 0.1)
+    i_m, i_a, i_b = header.index("Mach"), header.index("AoA"), header.index("Beta")
+    # Force and moment coefficients only: ratios such as the wake span efficiency Ew are 0/0 supersonic, where
+    # VSPAERO computes no wake (Trefftz plane) forces.
+    coefs = [i for i, h in enumerate(header) if h.startswith("C")]
+    rows, flags, failures = [], [], []
+    for n, row in enumerate(data, start=1):
+        cond = (row[i_m], row[i_a], row[i_b])
+        rec = next((r for c, r in solves if r and _same(c, cond)), None)
+        wake = next(((it, ch) for c, it, ch in wakes if _same(c, cond)), (0, math.nan))
+        why = []
+        if any(math.isnan(row[i]) or math.isinf(row[i]) for i in coefs):
+            why.append("non-finite results")
+        if rec is None:
+            why.append("no solver record in the log")
+            final = (0, 0) + (math.nan,) * 4
+        else:
+            final = rec[-1]
+            _, its, red, red_t, mx, mx_t = final
+            if not (red <= red_t and mx <= mx_t):
+                why.append(f"linear solve stopped at {its} iterations with residual reduction {red:.2f} (target "
+                           f"{red_t:.2f}) and max residual {mx:.2f} (target {mx_t:.2f}), logs base 10")
+        if wake[0] > 1 and not wake[1] <= tol:
+            why.append(f"forces changed {100 * wake[1]:.1f}% over the last wake iteration (tolerance {100 * tol:g}%)")
+        ok = not why
+        flags.append(int(ok))
+        rows.append([n, *cond, final[1], final[2], final[3], final[4], final[5], wake[0], wake[1], int(ok),
+                     "; ".join(why)])
+        if not ok:
+            failures.append(f"case {n} (Mach {cond[0]:g}, alpha {cond[1]:g}, beta {cond[2]:g}): {why[0]}")
+    write_csv(os.path.join(work, case + ".ntvsp.convergence.csv"),
+              ["Case", "Mach", "AoA", "Beta", "GMRES_Iterations", "Residual_Reduction", "Reduction_Target",
+               "Max_Residual", "Max_Residual_Target", "Wake_Iterations", "Wake_Change", "Converged", "Reason"], rows)
+    log(f"convergence: {sum(flags)} of {len(flags)} cases converged")
+    msg = None
+    if failures:
+        msg = (f"VSPAERO did not converge in {len(failures)} of {len(flags)} cases: " + "; ".join(failures[:3])
+               + ("; ..." if len(failures) > 3 else "") + f". See {case}.ntvsp.convergence.csv and {case}.vspaero.log.")
+        log(("error: " if s.integer("convergence_check", 1) == 1 else "warning: ") + msg)
+        if s.integer("convergence_check", 1) != 1:
+            msg = None
+    return flags, msg
 
 
 def clean(name):
@@ -305,8 +419,11 @@ def main(settings_path):
     header, data = read_polar(polar)
     if len(data) != n_cases:
         raise DriverError(f"VSPAERO's polar has {len(data)} rows for {n_cases} cases; see {case}.vspaero.log")
-    write_csv(os.path.join(work, case + ".ntvsp.polar.csv"), ["Case"] + [clean(h) for h in header],
-              [[i] + row for i, row in enumerate(data, start=1)])
+    flags, failed = convergence(work, case, header, data, s, log)
+    write_csv(os.path.join(work, case + ".ntvsp.polar.csv"), ["Case"] + [clean(h) for h in header] + ["Converged"],
+              [[i] + row + [f] for i, (row, f) in enumerate(zip(data, flags), start=1)])
+    if failed:
+        raise DriverError(failed)
     pressure_centers(work, case, header, data, s, log)
     surface_outputs(work, case, g, s, header, data, log)
     log("done")

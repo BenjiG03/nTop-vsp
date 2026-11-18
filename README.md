@@ -117,6 +117,7 @@ blocks.
 | RASAero II (VSP) | results path | RASAero II run on a rocket's OpenVSP model (design fitted to its surfaces) at every condition, as a coefficient table |
 | Modified Newtonian (VSP) | results path | an implicit body's Modified Newtonian forces and moments at every condition of a flight condition in a Mach range, computed in nTop |
 | Modified Newtonian on Mesh (VSP) | results path | the same Modified Newtonian pressure on the implicit body, with the force and moment integrals summed over nTop's mesh of it (much faster) |
+| Tangent Wedge on Mesh (VSP) | results path | local-inclination pressure on the same mesh pipeline: exact oblique shock (tangent wedge) windward, Prandtl-Meyer or Newtonian shadow leeward; for thin surfaces (fins, wings) at supersonic speed |
 | Modified Newtonian Pressure (VSP) | scalar field | the Modified Newtonian Cp of one condition, to view on the body |
 | Viscous Correction (VSP) | results path | an implicit body's skin-friction forces and moments at every condition (standard-atmosphere edge state), computed in nTop |
 | Aero Coefficients (VSP) | results path | six lists of coefficients from anywhere, one value per flight condition, as a coefficient table |
@@ -495,6 +496,45 @@ evaluated once per flight condition through nTop's list processing.
   Max Field there and exports them as point maps (Evaluate Field Gradient, Point Map, Export Point Map), and the driver
   sums -Cp S_f and -Cp (r_f - c) x S_f over the faces (S_f the face's outward vector area) at every condition (numpy).
   It writes the same coefficient table. See the run time and accuracy below.
+* **Tangent Wedge on Mesh (VSP)**: the same mesh pipeline with a local-inclination pressure law
+  (`vsp_ntop/local_methods.py`, after hypanel's `methods.py`). Each face's impact angle is $\delta$, with
+  $\sin\delta=-\hat n\cdot\hat V$ (positive windward). Supersonic only (Mach Min defaults above 1); $\gamma=1.4$.
+  - *Windward:* the exact two-dimensional oblique shock that turns the flow through $\delta$ (the weak solution, from
+    Thompson's closed form of the cubic in $\tan\beta$):
+    $$C_p=\frac{2}{\gamma M^2}\left(\frac{p_2}{p_1}-1\right),\qquad
+    \frac{p_2}{p_1}=1+\frac{2\gamma}{\gamma+1}\left(M^2\sin^2\beta-1\right)$$
+    Above the detachment angle $\delta_{max}(M)$, where no attached shock exists, $C_p$ rises with $\sin^2\delta$
+    from its detachment value to $C_{p,max}$ at 90° (hypanel's bridge). That is the one use of **Stagnation Pressure**
+    and the **Cp Max Field** here.
+  - *Leeward*, **Expansion**: **Prandtl-Meyer**, the isentropic expansion from the freestream with
+    $\nu(M_2)=\nu(M)+|\delta|$, limited at vacuum; or **Newtonian Shadow**, Cp 0.
+  - *Separated faces:* with Prandtl-Meyer, faces turned more than 30° away blend (smoothstep, complete at 60°) to
+    **Separated Faces**: Freestream (Cp 0, the default, so a flat base adds no base drag) or Gabeaud's base pressure
+    $-1/M^2$.
+
+  Checks:
+  - against oblique-shock tables, $p_2/p_1$ to four digits at Mach 2 and 3, and the detachment angles to 0.01°;
+  - $\nu(2)=26.380°$;
+  - in the linear limit, windward plus leeward faces of a thin plate give its $4\alpha/\beta$ to 0.5%.
+
+  Faces are independent: no shock-expansion marching, no interference between parts.
+
+  **Use it for thin surfaces, not bodies.** On a slender body each face of a constant section sees $\pm\alpha\cos\phi$,
+  and a local two-dimensional law turns that into linear normal force all along the tube. Real crossflow round a
+  constant section carries almost none. On the hobby rocket's body it gave CN 1.3 to 2.7 where SU2 has 0.09 to 1.0.
+
+  Results on the fins of `validation/rasaero`, against SU2's fin loads:
+  - within 3% at Mach 3 to 5 and alpha 4, 10% high at Mach 5 and alpha 8, 18% high at Mach 2 and alpha 2;
+  - VSPAERO's exposed strips are 4 to 10% low at the same conditions.
+
+  With Body Lift (slender + crossflow) and no carry-over (tangent-wedge fins already carry about SU2's fin load):
+  - CN within −5% to +1% of SU2;
+  - centre of pressure −2 to +44 mm.
+
+  The fins' pressure drag is physical: about 0.22 in CA at Mach 2 from the 11° bevels, the fins' share of what Wave
+  Drag gives the whole rocket. At Mach 1.5 the fins' leading edges are subsonic ($\beta m<1$), and the local law is
+  poor (CN 50 to 60% off against RASAero II). 330 conditions on 540,000 faces take about 40 s of driver time, plus
+  nTop's mesh.
 * **Viscous Correction (VSP)**: skin friction at the inviscid edge state, hypanel's `viscous.correct`: edge pressure
   from the Modified Newtonian Cp of each condition (or the freestream, Cp = 0, for flat-plate friction), edge total
   pressure behind a normal shock above Mach 1 and isentropic below it, total temperature conserved; Blasius with

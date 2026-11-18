@@ -50,6 +50,7 @@ def blocks():
         ("RASAero II (VSP)", d.rasaero_block()),
         ("Modified Newtonian (VSP)", a.newtonian_block()),
         ("Modified Newtonian on Mesh (VSP)", a.newtonian_mesh_block()),
+        ("Tangent Wedge on Mesh (VSP)", a.tangent_wedge_mesh_block()),
         ("Modified Newtonian Pressure (VSP)", a.newtonian_pressure_block()),
         ("Viscous Correction (VSP)", a.viscous_block()),
         ("Aero Coefficients (VSP)", a.coefficients_block()),

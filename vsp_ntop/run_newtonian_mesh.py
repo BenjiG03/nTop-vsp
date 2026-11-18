@@ -1,4 +1,4 @@
-"""Modified Newtonian forces and moments of an implicit body, integrated over nTop's mesh of it.
+"""Modified Newtonian or tangent-wedge forces and moments of an implicit body, integrated over nTop's mesh of it.
 
     python -m vsp_ntop.run_newtonian_mesh faces STL_FILE FACES_CSV      (step 1, from the block)
     python -m vsp_ntop.run_newtonian_mesh SETTINGS_FILE                  (step 2)
@@ -15,6 +15,10 @@ face, as point maps ``<case>.ntvsp.mesh_gradient.csv`` and ``<case>.ntvsp.mesh_c
 with S_f the face's vector area (outward, from the mesh) and r_f its centroid: the pressure is the implicit body's,
 the integral the mesh's. Cp_max: Modified (behind a normal shock above Mach 1, Rayleigh pitot; isentropic below),
 Classical (2) or User Defined (the Cp Max Field at each face).
+
+With ``method = tangent_wedge`` (the Tangent Wedge on Mesh (VSP) block) the face pressure is the tangent wedge's,
+with Prandtl-Meyer or Newtonian-shadow leeward faces (``local_methods.py``); Cp_max then sets the pressure above shock
+detachment.
 
 Writes ``<case>.ntvsp.coefficients.csv`` with the Modified Newtonian (VSP) block's layout (Mach, AoA, Beta, CA, CY,
 CN, Cl, Cm, Cn about x = Aft Axis, z = Up Axis made normal to it, y = z x x, every moment over Sref cref, and the
@@ -109,8 +113,11 @@ def frame(aft, up):
     return x, np.cross(z, x), z
 
 
-def coefficients(centroids, vector_areas, normals, cp_max_field, conditions, mode, axes, ref, gamma=1.4):
-    """Rows of HEADER for each condition (dict with Mach, AoA, Beta). Lengths in metres, areas in m^2."""
+def coefficients(centroids, vector_areas, normals, cp_max_field, conditions, mode, axes, ref, gamma=1.4,
+                 method="newtonian", expansion="prandtl_meyer", separated="freestream"):
+    """Rows of HEADER for each condition (dict with Mach, AoA, Beta). Lengths in metres, areas in m^2. ``method``:
+    newtonian (Cp_max sin^2 windward, 0 leeward) or tangent_wedge (``local_methods``, with ``expansion`` and
+    ``separated`` for the leeward faces; Cp_max sets its pressure above shock detachment)."""
     np = _np()
     x, y, z = axes
     sref, _, cref, centre = ref
@@ -120,12 +127,17 @@ def coefficients(centroids, vector_areas, normals, cp_max_field, conditions, mod
     for c in conditions:
         a, b = math.radians(c["AoA"]), math.radians(c["Beta"])
         v = x * math.cos(a) * math.cos(b) - y * math.sin(b) + z * math.sin(a) * math.cos(b)
-        sine = np.maximum(-(normals @ v), 0.0)
         if mode == "user":
             cpm = cp_max_field
         else:
             cpm = cp_max_stagnation(c["Mach"], gamma) if mode == "modified" else 2.0
-        cp = cpm * sine * sine
+        if method == "tangent_wedge":
+            from . import local_methods as lm
+            delta = np.arcsin(np.clip(-(normals @ v), -1.0, 1.0))
+            cp = lm.tangent_wedge_cp(delta, c["Mach"], cpm, gamma, expansion, separated)
+        else:
+            sine = np.maximum(-(normals @ v), 0.0)
+            cp = cpm * sine * sine
         force = -(cp[:, None] * vector_areas).sum(axis=0) / sref
         moment = -(cp[:, None] * moment_area).sum(axis=0) / (sref * cref)
         rows.append([c["Mach"], c["AoA"], c["Beta"], force @ x, force @ y, force @ z, moment @ x, moment @ y,
@@ -185,17 +197,34 @@ def main(settings_path):
     mode = s.text("stagnation").strip().lower()
     if mode not in CP_MAX_MODES:
         raise DriverError(f"stagnation = {mode}: expected one of {', '.join(CP_MAX_MODES)}")
+    method = s.text("method", "newtonian").strip().lower()
+    expansion = s.text("expansion", "prandtl_meyer").strip().lower()
+    separated = s.text("separated", "freestream").strip().lower()
+    if method not in ("newtonian", "tangent_wedge"):
+        raise DriverError(f"method = {method}: expected newtonian or tangent_wedge")
+    if expansion not in ("prandtl_meyer", "shadow") or separated not in ("freestream", "gabeaud"):
+        raise DriverError(f"expansion = {expansion}, separated = {separated}: expected prandtl_meyer or shadow, and "
+                          "freestream or gabeaud")
+    if method == "tangent_wedge":
+        sub = sorted({r["Mach"] for r in conds if r["Mach"] <= 1.0})
+        if sub:
+            raise DriverError(f"the tangent wedge needs a supersonic freestream: the flight condition has Mach "
+                              f"{', '.join(f'{m:g}' for m in sub)} in [Mach Min, Mach Max); set Mach Min above 1")
     c_mm, s_mm2 = faces(base + ".ntvsp.mesh.stl")
     cp_max_field, gradient = read_values(base, c_mm)
     centroids, vector_areas = c_mm * MM, s_mm2 * MM * MM
     normals = unit_normals(gradient, vector_areas, log)
     closure = np.linalg.norm(vector_areas.sum(axis=0)) / np.linalg.norm(vector_areas, axis=1).sum()
-    log(f"Modified Newtonian on mesh: {len(c_mm)} faces, wetted area {np.linalg.norm(vector_areas, axis=1).sum():.6g} "
+    law = ("Modified Newtonian" if method == "newtonian" else
+           f"tangent wedge + {'Prandtl-Meyer' if expansion == 'prandtl_meyer' else 'Newtonian shadow'}"
+           + (f" (separated faces: {separated})" if expansion == "prandtl_meyer" else ""))
+    log(f"{law} on mesh: {len(c_mm)} faces, wetted area {np.linalg.norm(vector_areas, axis=1).sum():.6g} "
         f"m^2, closure {closure:.1e}; {len(conds)} of {len(rows)} conditions in Mach [{lo:g}, {hi:g}); Cp_max {mode}")
     if closure > 1e-3:
         log("note: the mesh is not closed (its vector areas do not sum to zero)")
     axes = frame([s.real(f"aft_{c}") for c in "xyz"], [s.real(f"up_{c}") for c in "xyz"])
-    out = coefficients(centroids, vector_areas, normals, cp_max_field, conds, mode, axes, fl.ref)
+    out = coefficients(centroids, vector_areas, normals, cp_max_field, conds, mode, axes, fl.ref, method=method,
+                       expansion=expansion, separated=separated)
     write_csv(base + ".ntvsp.coefficients.csv", HEADER, out)
     log("done")
     log.close()

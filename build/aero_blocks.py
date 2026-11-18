@@ -237,9 +237,25 @@ def newtonian_pressure_block():
 MESH_CP_MAX_KEYS = ("modified", "classical", "user")
 
 
+TW_EXPANSION = ("Prandtl-Meyer", "Newtonian Shadow")
+TW_EXPANSION_KEYS = ("prandtl_meyer", "shadow")
+TW_SEPARATED = ("Freestream (Cp 0)", "Gabeaud Base Pressure (-1/M^2)")
+TW_SEPARATED_KEYS = ("freestream", "gabeaud")
+
+
 def newtonian_mesh_block():
     """Modified Newtonian of an implicit body with the force integrals done over nTop's mesh of it (a Python driver
     sums them), instead of nTop's Surface Integral: the same pressure, much faster."""
+    return _mesh_block("newtonian")
+
+
+def tangent_wedge_mesh_block():
+    """Tangent wedge (with Prandtl-Meyer or Newtonian-shadow leeward faces) on nTop's mesh of an implicit body."""
+    return _mesh_block("tangent_wedge")
+
+
+def _mesh_block(method):
+    wedge = method == "tangent_wedge"
     from kit import PYTHON_VARIABLE, environment
     from ops import Ops
     from ntopfile import NONE, Ref
@@ -249,7 +265,16 @@ def newtonian_mesh_block():
              InputSpec("Mesh Tolerance", "real", "Largest distance between nTop's mesh of the Body (Mesh from Implicit "
                        "Body, sharp edges kept) and the body. Smaller is more accurate and slower; a few thousandths of "
                        "the body's length is a good start.", LENGTH, d_real(0.0005, LENGTH))) + _axes_inputs() + (
-        STAGNATION_INPUT, CP_MAX_FIELD_INPUT) + _range_inputs(1.0) + run_inputs("newtonian_mesh")
+        STAGNATION_INPUT, CP_MAX_FIELD_INPUT)
+    if wedge:
+        specs += (
+            InputSpec("Expansion", "choice", "Leeward faces (turned away from the flow). Prandtl-Meyer: the isentropic "
+                      "expansion from the freestream through the face's angle, limited at vacuum. Newtonian Shadow: "
+                      "Cp 0.", default=d_choice(TW_EXPANSION, 0)),
+            InputSpec("Separated Faces", "choice", "With Prandtl-Meyer, faces turned more than 30 degrees away blend "
+                      "(by 60 degrees) to a separated-flow pressure. Freestream: Cp 0, so a flat base adds no base "
+                      "drag. Gabeaud Base Pressure: Cp = -1/M^2 (base drag).", default=d_choice(TW_SEPARATED, 0)))
+    specs += _range_inputs(1.0 if not wedge else 1.0001) + run_inputs("tangent_wedge_mesh" if wedge else "newtonian_mesh")
     g = Graph()
     k = Kit(g)
     o = Ops(g)
@@ -299,13 +324,32 @@ def newtonian_mesh_block():
     aft, up = inp("Aft Axis"), inp("Up Axis")
     lines = [k.line("flight", inp("Flight Condition")),
              k.line("mach_min", k.num(inp("Mach Min"))), k.line("mach_max", k.num(inp("Mach Max"))),
-             k.line("stagnation", k.pick(inp("Stagnation Pressure"), MESH_CP_MAX_KEYS))]
+             k.line("stagnation", k.pick(inp("Stagnation Pressure"), MESH_CP_MAX_KEYS)),
+             k.line("method", k.t(method))]
+    if wedge:
+        lines += [k.line("expansion", k.pick(inp("Expansion"), TW_EXPANSION_KEYS)),
+                  k.line("separated", k.pick(inp("Separated Faces"), TW_SEPARATED_KEYS))]
     lines += [k.line(f"aft_{c}", k.num(_prop(aft, c))) for c in "xyz"]
     lines += [k.line(f"up_{c}", k.num(_prop(up, c))) for c in "xyz"]
     g.comment("**3. Sums.** The driver `vsp_ntop.run_newtonian_mesh` computes Cp on every face at every condition and "
               "sums the forces and moments; it writes `<Case Name>.ntvsp.coefficients.csv` (Mach, AoA, Beta, CA, CY, "
               "CN, Cl, Cm, Cn and the reference), the layout of Modified Newtonian (VSP).")
-    out = analysis(g, k, inp, "run_newtonian_mesh", exports, lines, "Modified Newtonian on Mesh", needs_openvsp=False)
+    title = "Tangent Wedge on Mesh" if wedge else "Modified Newtonian on Mesh"
+    out = analysis(g, k, inp, "run_newtonian_mesh", exports, lines, title, needs_openvsp=False)
+    if wedge:
+        return make_block(
+            "tangent_wedge_mesh", "Tangent Wedge on Mesh (VSP)",
+            "Local-inclination pressure forces and moments of an implicit body at every supersonic condition of a "
+            "Flight Condition, with the integrals over nTop's mesh of it (as Modified Newtonian on Mesh (VSP)). Each "
+            "face's pressure comes from its impact angle delta (sin delta = -n.V, n the body's unit gradient): "
+            "windward, the tangent wedge, the exact two-dimensional oblique shock that turns the flow through delta "
+            "(weak solution), Cp = 2/(gamma M^2) (p2/p1 - 1); above the shock-detachment angle Cp rises with sin^2 "
+            "delta from the detachment value to Cp_max at 90 degrees (Stagnation Pressure, or the Cp Max Field). "
+            "Leeward, the Expansion choice. In the linear limit the windward and leeward faces of a thin surface give "
+            "its 4 alpha / beta; unlike Newtonian it holds at moderate hypersonic similarity K = M sin(delta) (thin "
+            "fins, wedges, flat plates), and tends to Newtonian as K grows. Faces are independent (no shock-expansion "
+            "marching, no interference); gamma 1.4. Needs Mach > 1 (Mach Min). " + RANGE_DOC + " Outputs the "
+            "results path for Coefficients Contribution (VSP).", specs, "text", g, out)
     return make_block(
         "modified_newtonian_mesh", "Modified Newtonian on Mesh (VSP)",
         "Modified Newtonian (Lees) pressure forces and moments of an implicit body at every condition of a Flight "

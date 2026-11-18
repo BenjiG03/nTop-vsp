@@ -316,6 +316,51 @@ So on thin fins VSPAERO stays the better fin source through Mach 5. Newtonian fi
 above about alpha 35 degrees). Between the two lie tangent-wedge and shock-expansion (hypanel), which nTop_vsp does not
 have.
 
+## Round 4: tangent-wedge fins
+
+New block: **Tangent Wedge on Mesh (VSP)**, hypanel's tangent wedge on the mesh pipeline (README). It is run here on
+the exposed fins and on the body, over the full grid (`tangent_wedge_sweep.py`; results `runs/rasaero/sweep/tw_fins`,
+`tw_body`), with Prandtl-Meyer leeward faces and freestream pressure on separated faces.
+
+Fins alone, CN (SU2 split as in round 2):
+
+| Mach, alpha | SU2 fins | Tangent wedge | VSPAERO exposed strips | Modified Newtonian |
+|---|---|---|---|---|
+| 2, 2 | 0.491 | 0.581 (+18%) | 0.517 (+5%) | 0.039 |
+| 3, 4 | 0.698 | 0.722 (+3%) | 0.673 (−4%) | 0.107 |
+| 4, 4 | 0.527 | 0.541 (+3%) | 0.491 (−7%) | 0.109 |
+| 5, 4 | 0.427 | 0.440 (+3%) | 0.386 (−10%) | 0.110 |
+| 5, 8 | 0.835 | 0.922 (+10%) | 0.765 (−8%) | 0.321 |
+
+Whole rocket against SU2 (CN error, centre-of-pressure error positive aft):
+
+| Mach, alpha | Tangent-wedge fins + Body Lift | VSPAERO fins + carry-over + Body Lift | Tangent-wedge fins + carry-over + Body Lift |
+|---|---|---|---|
+| 2, 2 | +1%, −1 mm | +4%, −4 mm | +15%, +15 mm |
+| 3, 4 | −3%, −2 mm | 0%, +4 mm | +6%, +15 mm |
+| 4, 4 | −3%, +24 mm | −3%, +25 mm | +4%, +39 mm |
+| 5, 4 | −5%, +44 mm | −8%, +38 mm | 0%, +58 mm |
+| 5, 8 | −2%, +20 mm | −7%, +4 mm | +2%, +32 mm |
+
+* **Tangent-wedge fins match SU2's fin load at Mach 3 to 5** (3% at alpha 4) and stand alone without a carry-over
+  term. They have no tip or root loss, which roughly offsets the lift the body carries. Adding TR 1307 on top
+  overshoots.
+* **On the body the tangent wedge is wrong** (CN 1.29 to 2.68 against SU2's 0.09 to 1.00 ahead of the fins): a local
+  two-dimensional law gives a constant section at incidence linear crossflow lift. The body takes Body Lift or
+  Newtonian.
+* **Against RASAero II, Mach 2 to 5** (each source with its own axial force; Parasite Cf 19):
+  - tangent-wedge fins + Newtonian body (Modified) score 0.116 (CA 0.070, CN 0.078, Cm 0.251);
+  - VSPAERO carry-over fins + Newtonian body (Classical) + Wave Drag score 0.076.
+
+  Two artifacts of the Use modes spoil the obvious alternatives:
+  - tangent-wedge fins with Use = No drag plus Wave Drag: No drag leaves a spurious axial force on a normal-force
+    source (−0.32 at alpha 8, Mach 2);
+  - Use = Drag Newtonian body plus Body Lift: the drag carries CN sin(alpha), 0.65 at alpha 15.
+* **The fins' pressure drag** from the tangent wedge (0.22 at Mach 2, 0.09 at Mach 5, from the 11-degree bevels) is
+  the fins' part of what Wave Drag gives the whole rocket (0.33, 0.08).
+* **Mach 1.5**: the fins' leading edges are subsonic (beta m = 0.78) and the local law is poor (CN error 0.55 to 0.60
+  against RASAero II).
+
 ## Findings outside the comparison
 
 * **OpenVSP Parasite Drag**: the block's default turbulent Cf, "Schlichting Compressible", applies no
@@ -331,4 +376,4 @@ have.
 `rocket.py` (geometry, notebook runner), `build_models.py` (OpenVSP models and the check runs whose settings files
 are the templates), `sweep.py` (flight conditions, model variants, VSPAERO/Wave/Parasite runs), `newtonian_sweep.py`
 (Modified Newtonian on Mesh, Cp_max = 1), `rasaero_ref.py`, `compare.py` (scoring; `results/scores.json`,
-`results/scores_no_base.json`), `plots.py` (`PLOT_SUFFIX=_extended` for the round-2 plots), `wake_compare.py`, `su2_compare.py` (`results/su2_compare.json`); `compare.py --machs 2,2.5,3,4,5` for round 2. Run outputs are in `runs/rasaero/`.
+`results/scores_no_base.json`), `plots.py` (`PLOT_SUFFIX=_extended` for the round-2 plots), `wake_compare.py`, `su2_compare.py` (`results/su2_compare.json`), `tangent_wedge_sweep.py` (round 4); `compare.py --machs 2,2.5,3,4,5` for round 2. Run outputs are in `runs/rasaero/`.

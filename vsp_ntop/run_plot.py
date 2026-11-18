@@ -19,9 +19,9 @@ import sys
 
 from .common import DriverError, Log, Settings
 
-AXIS_LABELS = {"AoA": "angle of attack (deg)", "Beta": "sideslip (deg)", "Mach": "Mach number",
+AXIS_LABELS = {"AoA": "angle of attack (deg)", "Beta": "sideslip (deg)", "Mach": "Mach number", "Altitude": "altitude (m)",
                "L_over_D": "L/D"}
-SYMBOLS = {"AoA": "α", "Beta": "β", "Mach": "M"}
+SYMBOLS = {"AoA": "α", "Beta": "β", "Mach": "M", "Altitude": "h (m)"}
 FILTERS = {"beta0": "Beta", "alpha0": "AoA"}  # keep only the rows where this condition is zero
 # Fixed-order categorical hues (one per result, when the results are all that differ) and, for ordered conditions,
 # one blue ramp from light to dark.
@@ -71,7 +71,7 @@ def figure(s: Settings):
     results = [r for r in s.text("results").split(";") if r.strip()]
     labels = [x for x in s.text("labels", "").split(";")]
     x, y, along = s.text("x"), s.text("y"), s.text("along", "AoA")
-    others = [c for c in ("Mach", "Beta", "AoA") if c != along]
+    others = [c for c in ("Mach", "Altitude", "Beta", "AoA") if c != along]
     curves = []
     for i, path in enumerate(results):
         rows = table(path.strip())
@@ -84,7 +84,7 @@ def figure(s: Settings):
         if keep in FILTERS:
             rows = [r for r in rows if abs(float(r[FILTERS[keep]])) < 1e-9]
         for r in rows:
-            groups.setdefault(tuple(round(float(r[c]), 9) for c in others), []).append(r)
+            groups.setdefault(tuple(round(float(r.get(c, 0.0)), 9) for c in others), []).append(r)
         for key, g in groups.items():
             g.sort(key=lambda r: float(r[along]))
             curves.append((label, key, [float(r[x]) for r in g], [float(r[y]) for r in g]))

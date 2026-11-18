@@ -142,9 +142,13 @@ def set_fuselage_sections(vsp3_in, vsp3_out, fits, tess):
     tree.write(vsp3_out, encoding="utf-8", xml_declaration=True)
 
 
-def wing_lines(k, name, f: F.WingFit, set_name, mirror, tess_u, tess_w, le_cluster=0.25, te_cluster=0.25,
+SYMMETRY_FLAGS = {"none": "0", "xz": "SYM_XZ", "xy": "SYM_XY", "xzxy": "SYM_XZ | SYM_XY"}
+
+
+def wing_lines(k, name, f: F.WingFit, set_name, symmetry, tess_u, tess_w, le_cluster=0.25, te_cluster=0.25,
                root_cluster=1.0, tip_cluster=1.0, sharp_te=True):
-    """Script lines for one Wing. ``tess_u``: spanwise points (shared between sections by span); ``tess_w``:
+    """Script lines for one Wing. ``symmetry``: none, xz, xy or xzxy (OpenVSP's planar symmetry: mirrored about the
+    x-z plane, the x-y plane, or both). ``tess_u``: spanwise points (shared between sections by span); ``tess_w``:
     points around each airfoil."""
     st = f.stations
     secs = F.wing_sections(f)
@@ -160,7 +164,7 @@ def wing_lines(k, name, f: F.WingFit, set_name, mirror, tess_u, tess_w, le_clust
          f'    SetParmVal( {gid}, "Y_Rel_Location", "XForm", {_f(root[1])} );',
          f'    SetParmVal( {gid}, "Z_Rel_Location", "XForm", {_f(root[2])} );',
          f'    SetParmVal( {gid}, "X_Rel_Rotation", "XForm", {_f(cant)} );',
-         f'    SetParmVal( {gid}, "Sym_Planar_Flag", "Sym", {"SYM_XZ" if mirror else "0"} );',
+         f'    SetParmVal( {gid}, "Sym_Planar_Flag", "Sym", {SYMMETRY_FLAGS[symmetry]} );',
          f'    SetParmVal( {gid}, "RotateAirfoilMatchDideralFlag", "WingGeom", 0 );',
          f'    SetParmVal( {gid}, "CorrectAirfoilthicknessFlag", "WingGeom", 0 );',
          f'    SetParmVal( {gid}, "RelativeDihedralFlag", "WingGeom", 0 );',

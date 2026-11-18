@@ -7,28 +7,32 @@ and its reference length, thickness ratio or fineness ratio from DegenGeom, and 
 (an imported tessellation is reported as "not included in Parasite Drag calculation"). So this driver works on a
 ``.vsp3`` model, with the flow condition and the per-component settings from nTop.
 
-The model is ``model`` (a ``.vsp3``, e.g. made by OpenVSP Model). The flow condition is swept over ``speed_start``
-to ``speed_end`` (``speed_npts`` points, in ``speed_unit``) at one altitude.
+The model is ``model`` (a ``.vsp3``, e.g. made by OpenVSP Model). OpenVSP runs once per flight point of the
+flight condition ``flight``: its Mach number at its altitude in the US Standard Atmosphere 1976 (OpenVSP's own),
+with the flight condition's Sref.
 
-Writes ``<case>.ntvsp.parasite.csv`` (one row of totals and flight condition per speed),
-``<case>.ntvsp.parasite_components.<k>.csv`` (one row per component, for speed k) and OpenVSP's own buildup table
-``<case>.ParasiteDragBuildUp.<k>.csv``.
+Writes ``<case>.ntvsp.parasite.csv`` (one row of totals and flight condition per flight point),
+``<case>.ntvsp.parasite_components.<k>.csv`` (one row per component, for flight point k) and OpenVSP's own buildup
+table ``<case>.ParasiteDragBuildUp.<k>.csv``.
 """
 from __future__ import annotations
 
 import os
 
 
-from .common import (openvsp_dir, LENGTH_UNITS, DriverError, Log, Settings, linspace, main_wrapper, read_vsp_results_csv,
-                    run_vspscript, vsp_path, write_csv)
+from .common import (openvsp_dir, LENGTH_UNITS, DriverError, Log, Settings, main_wrapper, read_vsp_results_csv,
+                     run_vspscript, vsp_path, write_csv)
+from .flight import Flight
 
 COMPONENT_FIELDS = ("name", "ff_body", "ff_wing", "ff_user", "percent_laminar", "q", "roughness_m", "te_tw", "taw_tw",
                     "incorporated_gen")
 
 SUMMARY = [("Total_CD", "Total_CD_Total"), ("Geom_CD", "Geom_CD_Total"), ("Total_f", "Total_f_Total"),
            ("Geom_f", "Geom_f_Total"), ("Re_per_length", "Re_L"), ("Mach", "FC_Mach"), ("Vinf", "FC_Vinf"),
-           ("Altitude", "FC_Alt"), ("Temperature", "FC_Temp"), ("Pressure", "FC_Pres"), ("Density", "FC_Rho"),
+           ("Temperature", "FC_Temp"), ("Pressure", "FC_Pres"), ("Density", "FC_Rho"),
            ("Sref", "FC_Sref"), ("Num_Components", "Num_Comp")]
+SUMMARY_COLUMNS = ("Total_CD", "Geom_CD", "Total_f", "Geom_f", "Re_per_length", "Mach", "Altitude_m", "Vinf",
+                   "Temperature", "Pressure", "Density", "Sref", "Num_Components", "Point")
 COMPONENTS = [("Label", "Comp_Label"), ("ID", "Comp_ID"), ("Surface", "Comp_SurfNum"), ("Swet", "Comp_Swet"),
               ("Lref", "Comp_Lref"), ("t_c_or_fineness", "Comp_FineRat"), ("FF_Equation", "Comp_FFEqnName"),
               ("FF", "Comp_FFOut"), ("Re", "Comp_Re"), ("Percent_Laminar", "Comp_PercLam"), ("Cf", "Comp_Cf"),
@@ -54,7 +58,7 @@ def parse_components(s: Settings):
     return out
 
 
-def script(s: Settings, model, components, speeds, csv_out, results_out, model_out):
+def script(s: Settings, model, components, points, csv_out, results_out, model_out):
     unit = s.integer("length_unit")
     to_model = 1.0 / LENGTH_UNITS[unit][1]  # metres -> model length units
     # Renaming the model keeps OpenVSP's side files (CompGeom tables) in the working directory, not beside the model.
@@ -77,17 +81,17 @@ def script(s: Settings, model, components, speeds, csv_out, results_out, model_o
     sref = s.real("sref") * to_model ** 2
     ints = {"GeomSet": s.integer("geom_set"), "RefFlag": 0, "FreestreamPropChoice": 0, "LengthUnit": unit,
             "LamCfEqnChoice": s.integer("lam_cf"), "TurbCfEqnChoice": s.integer("turb_cf"),
-            "VelocityUnit": s.integer("speed_unit"), "AltLengthUnit": 1, "TempUnit": 0, "PresUnit": 3,
+            "VelocityUnit": 6, "AltLengthUnit": 1, "TempUnit": 0, "PresUnit": 3,
             "ExportSubCompFlag": s.integer("export_subcomp"), "RecomputeGeom": 1}
-    doubles = {"Sref": sref, "Altitude": s.real("altitude"), "DeltaTemp": s.real("delta_temp"),
-               "SpecificHeatRatio": s.real("gamma")}
+    doubles = {"Sref": sref, "DeltaTemp": 0.0, "SpecificHeatRatio": 1.4}
     for k, v in ints.items():
         lines.append(f'    SetIntAnalysisInput("ParasiteDrag", "{k}", array<int> = {{{int(v)}}});')
     for k, v in doubles.items():
         lines.append(f'    SetDoubleAnalysisInput("ParasiteDrag", "{k}", array<double> = {{{float(v)!r}}});')
-    for k, v in enumerate(speeds, start=1):
+    for k, p in enumerate(points, start=1):
         lines += [
-            f'    SetDoubleAnalysisInput("ParasiteDrag", "Vinf", array<double> = {{{float(v)!r}}});',
+            f'    SetDoubleAnalysisInput("ParasiteDrag", "Altitude", array<double> = {{{float(p["Altitude"])!r}}});',
+            f'    SetDoubleAnalysisInput("ParasiteDrag", "Vinf", array<double> = {{{float(p["Mach"])!r}}});',
             f'    SetStringAnalysisInput("ParasiteDrag", "FileName", array<string> = {{"{vsp_path(csv_out)}.{k}.csv"}});',
             '    { string rid = ExecAnalysis("ParasiteDrag");',
             '      if (rid == "") { Print("ERR Parasite Drag returned no results"); return; }',
@@ -110,32 +114,37 @@ def main(settings_path):
     if not os.path.isfile(model):
         raise DriverError(f"OpenVSP model {model} not found")
     components = parse_components(s)
-    speeds = linspace(s.real("speed_start"), s.real("speed_end"), s.integer("speed_npts"))
-    log(f"Parasite Drag of {model}: {len(components)} component settings, {len(speeds)} speeds")
+    flight = Flight(s.text("flight"))
+    s.raw["sref"] = repr(flight.ref[0])
+    points = flight.points
+    log(f"Parasite Drag of {model}: {len(components)} component settings, {len(points)} flight points")
     for stale in os.listdir(work):
         if stale.startswith(case + ".ntvsp.parasite") or stale.startswith(case + ".ParasiteDragBuildUp"):
             os.remove(os.path.join(work, stale))
     csv_out = os.path.join(work, case + ".ParasiteDragBuildUp")
     results_out = os.path.join(work, case + ".ntvsp.parasite_results")
-    text = run_vspscript(vsp_dir, script(s, model, components, speeds, csv_out, results_out,
+    text = run_vspscript(vsp_dir, script(s, model, components, points, csv_out, results_out,
                                          os.path.join(work, case + ".vsp3")), work, case + ".parasite", log,
                          s.real("timeout_s", 7200))
     for line in text.splitlines():
         if "not included in Parasite Drag" in line:
             log("note: " + line.strip())
     summary = []
-    for k, v in enumerate(speeds, start=1):
+    for k, p in enumerate(points, start=1):
         path = f"{results_out}.{k}.csv"
         res = read_vsp_results_csv(path).get("Parasite_Drag")
         if not res:
-            raise DriverError(f"no Parasite_Drag results for speed {v}")
-        summary.append([res.get(src, [""])[0][0] if res.get(src) and res[src][0] else "" for _, src in SUMMARY])
+            raise DriverError(f"no Parasite_Drag results for flight point {k}")
+        row = {c: (res.get(src, [""])[0][0] if res.get(src) and res[src][0] else "") for c, src in SUMMARY}
+        row.update(Altitude_m=p["Altitude"], Point=k)
+        summary.append([row[c] for c in SUMMARY_COLUMNS])
         n = int(float(res["Num_Comp"][0][0]))
         rows = [[res[src][0][i] if src in res and i < len(res[src][0]) else "" for _, src in COMPONENTS] for i in range(n)]
         write_csv(os.path.join(work, f"{case}.ntvsp.parasite_components.{k}.csv"), [c for c, _ in COMPONENTS], rows)
         os.remove(path)
-        log(f"speed {v:g}: Mach {res['FC_Mach'][0][0]}, total CD = {res['Total_CD_Total'][0][0]} over {n} components")
-    write_csv(os.path.join(work, case + ".ntvsp.parasite.csv"), [c for c, _ in SUMMARY], summary)
+        log(f"flight point {k}: Mach {p['Mach']:g} at {p['Altitude']:g} m, total CD = {res['Total_CD_Total'][0][0]} "
+            f"over {n} components")
+    write_csv(os.path.join(work, case + ".ntvsp.parasite.csv"), SUMMARY_COLUMNS, summary)
     log("done")
     log.close()
 

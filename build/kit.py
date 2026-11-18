@@ -175,6 +175,40 @@ class Kit:
     def line(self, key, value_text):
         return self.cat([key + " = ", value_text, "\n"])
 
+    def ecat(self, parts, sep="", name=None):
+        """Join text pieces item by item: any piece may be a list (one item per flight condition or per body), and
+        the result is then a list. (``cat`` cannot take lists: a list cannot be an item of a list.)"""
+        items = [self.t(p) if isinstance(p, str) else p for p in parts]
+        out = items[0]
+        for i, p in enumerate(items[1:], start=1):
+            last = i == len(items) - 1
+            out = self.g.block("concatenate<text,text,text>", "text", [out, p, self.t(sep)], name=name if last else None,
+                               top=bool(name) and last)
+        return out
+
+    def table(self, path, name=None):
+        return self.g.block("import_table<file_path,bool>", "table", [path, self.g.boolean(True)], name=name,
+                            top=name is not None)
+
+    def column(self, table, header):
+        """A table column as reals."""
+        col = self.g.block("extract_column<table,text>", "list<text>", [table, self.t(header) if isinstance(header, str)
+                                                                          else header], top=False)
+        return self.g.block("scalar_from_text<text>", "real", [col], top=False)
+
+    def first(self, values, units=None):
+        """The first item of a list of reals, with ``units`` (one of those units per unit value)."""
+        v = self.g.block("core.list_element<list_interface,integer>", "real", [values, self.g.integer(0)], top=False)
+        if units:
+            v = self.g.block("multiply<real,real>", "real", [v, self.g.real(1.0, units)], top=False)
+        return v
+
+    def keep(self, values, by, op, limit):
+        """The items of ``values`` whose item in ``by`` compares to ``limit``: op one of == != < <= > >=."""
+        code = ("==", "!=", "<", "<=", ">", ">=").index(op)
+        return self.g.block("core.filter<list_interface,list<real>,comparison_enum,real>", "list<real>",
+                            [values, by, self.g.enum("comparison_enum", code), limit], top=False)
+
     def field_lines(self, fields, inp):
         """Settings lines for ``fields``; ``inp(field)`` gives the instance or model input of its value."""
         out = []
@@ -237,6 +271,10 @@ def run_inputs(default_case):
 
 
 RUN_INPUT_NAMES = ("Working Directory", "Case Name", "Timeout")
+
+FLIGHT_INPUT = InputSpec("Flight Condition", "text", "Output of Flight Condition (VSP): the Mach numbers, altitudes, "
+                         "angles of attack and sideslips, the standard atmosphere at each, and the reference area, "
+                         "span, chord and moment point. This block uses the parts it needs.")
 
 
 def environment(g: Graph, name, label):

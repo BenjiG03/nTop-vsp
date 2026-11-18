@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ntop-vsp"
-version = "0.3.0"
-description = "Drivers for the nTop_vsp custom blocks: nTop implicit bodies to OpenVSP models, VSPAERO, Wave Drag, Parasite Drag, aero databases and polar plots"
+version = "0.4.0"
+description = "Drivers for the nTop_vsp custom blocks: nTop implicit bodies to OpenVSP models, VSPAERO, Wave Drag, Parasite Drag, Modified Newtonian, flight conditions, aero databases and polar plots"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
-dependencies = ["matplotlib"]
+dependencies = ["ambiance", "matplotlib"]
 
 [tool.setuptools]
 packages = ["vsp_ntop"]

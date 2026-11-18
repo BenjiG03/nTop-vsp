@@ -1,0 +1,50 @@
+{
+ "plate": {
+  "rows": [
+   {
+    "mach": 3.0,
+    "layer": "Fully Turbulent",
+    "CA": 0.0021741431963958327
+   },
+   {
+    "mach": 3.0,
+    "layer": "Laminar",
+    "CA": 0.0002391816417635292
+   },
+   {
+    "mach": 8.0,
+    "layer": "Fully Turbulent",
+    "CA": 0.0006467078771207454
+   },
+   {
+    "mach": 8.0,
+    "layer": "Laminar",
+    "CA": 0.0001052526416756659
+   }
+  ]
+ },
+ "cone15": {
+  "rows": [
+   {
+    "mach": 3.0,
+    "layer": "Fully Turbulent",
+    "CA": 0.005203348982799683
+   },
+   {
+    "mach": 3.0,
+    "layer": "Laminar",
+    "CA": 0.0004683425200768763
+   },
+   {
+    "mach": 8.0,
+    "layer": "Fully Turbulent",
+    "CA": 0.0036510715315223163
+   },
+   {
+    "mach": 8.0,
+    "layer": "Laminar",
+    "CA": 0.0003506655987136535
+   }
+  ]
+ }
+}

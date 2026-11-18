@@ -16,7 +16,9 @@ Steps (each logged to ``<case>.ntvsp.log``):
    aerodynamic centre of each alpha sweep (``pressure_centers``), per-case surface pressure point maps (on thin
    components, the pressure jump across the sheet) and the panels' points and areas (``.ntvsp.faces.{1,4}.csv``).
 
-Settings (``key = value``; lengths in metres, angles in degrees, SI elsewhere) are listed in the blocks.
+Settings (``key = value``; lengths in metres, angles in degrees, SI elsewhere) are listed in the blocks. The flight
+conditions and reference come from ``flight`` (a Flight Condition's results): VSPAERO runs its distinct Mach
+numbers, angles of attack and sideslips, and the Reynolds numbers (on cref) of its flight points.
 """
 from __future__ import annotations
 
@@ -27,8 +29,9 @@ import re
 
 from . import adb
 from . import vspgeom
-from .common import (openvsp_dir, DriverError, Log, Settings, fmt, linspace, main_wrapper, run, run_vspscript,
-                    vsp_path, write_csv, write_point_map)
+from .common import (openvsp_dir, DriverError, Log, Settings, fmt, main_wrapper, run, run_vspscript, vsp_path,
+                     write_csv, write_point_map)
+from .flight import Flight
 
 # Solver settings written to <case>.vspaero, in OpenVSP's order: (file key, settings key, kind).
 SOLVER_KEYS = [
@@ -248,7 +251,7 @@ def clean(name):
     return name.replace("/", "_over_").replace("Re_over_1e6", "Re_1e6")
 
 
-def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, log):
+def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, log, flight=None):
     """Per-case Cp and pressure difference point maps at the panel triangles' centroids and nodes, and the panels'
     points and areas (``<case>.ntvsp.faces.{1,4}.csv``, thick components only) for the viscous correction.
 
@@ -288,10 +291,12 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, l
     if one_pts:
         write_point_map(os.path.join(work, case + ".ntvsp.faces.1.csv"), one_pts, one_areas)
         write_point_map(os.path.join(work, case + ".ntvsp.faces.4.csv"), four_pts, four_areas)
-    q = 0.5 * s.real("rho") * s.real("vinf") ** 2
     used = sorted({i for f in faces for i in f})
     i_mach, i_aoa, i_beta = header.index("Mach"), header.index("AoA"), header.index("Beta")
+    i_re = header.index("Re/1e6")
     for row_number, row in enumerate(data, start=1):
+        point = flight.point_at(row[i_mach], row[i_re] * 1e6) if flight else None
+        q = point["Dynamic_Pressure"] if point else 0.5 * s.real("rho") * s.real("vinf") ** 2
         # VSPAERO solves Mach 0 as Mach 0.001 and lists it so in .adb.cases; the case list has 7 decimals.
         cond = (max(row[i_mach], 0.001), row[i_aoa], row[i_beta])
         match = [k for k, c in enumerate(cases) if all(abs(a - b) < 1e-5 for a, b in zip(c, cond))]
@@ -365,6 +370,14 @@ def main(settings_path):
     for stale in os.listdir(work):
         if stale.startswith(case + ".ntvsp.") and stale.endswith(".csv"):
             os.remove(os.path.join(work, stale))
+    flight = Flight(s.text("flight"))
+    # The reference, moment point and freestream come with the flight condition (the first flight point's speed and
+    # density; they scale VSPAERO's dimensional loads only, and the pressure maps use each case's own).
+    sref, bref, cref, (xr, yr, zr) = flight.ref
+    first = flight.points[0]
+    s.raw.update(sref=repr(sref), bref=repr(bref), cref=repr(cref), xcg=repr(xr), ycg=repr(yr), zcg=repr(zr),
+                 vinf=repr(first["Velocity"]), rho=repr(first["Density"]), manual_vref="0")
+    log("flight condition: " + flight.describe())
     model = s.text("model")
     if not model.lower().endswith(".vsp3"):
         model += ".vsp3"
@@ -386,10 +399,13 @@ def main(settings_path):
         log("warning: no trailing-edge wakes (no Wing component); VSPAERO sheds no vorticity and lift will be small")
 
     # 2. Solver input.
-    machs = linspace(s.real("mach_start"), s.real("mach_end"), s.integer("mach_npts"))
-    alphas = linspace(s.real("alpha_start"), s.real("alpha_end"), s.integer("alpha_npts"))
-    betas = linspace(s.real("beta_start"), s.real("beta_end"), s.integer("beta_npts"))
-    recrefs = linspace(s.real("recref_start"), s.real("recref_end"), s.integer("recref_npts"))
+    lo, hi = s.real("mach_min", 0.0), s.real("mach_max", 1e9)
+    points = [p for p in flight.points if lo - 1e-9 <= p["Mach"] < hi - 1e-9]
+    if not points:
+        raise DriverError(f"the flight condition has no Mach number from {lo:g} up to {hi:g} (Mach Min and Max)")
+    machs = [m for m in flight.machs() if any(p["Mach"] == m for p in points)]
+    alphas, betas = flight.angles("AoA"), flight.angles("Beta")
+    recrefs = sorted({round(p["Re_cref"], 3) for p in points})
     with open(os.path.join(work, case + ".vspaero"), "w", newline="\n") as f:
         f.write(vspaero_file(s, machs, alphas, betas, recrefs))
     n_cases = len(machs) * len(alphas) * len(betas) * len(recrefs)
@@ -425,7 +441,7 @@ def main(settings_path):
     if failed:
         raise DriverError(failed)
     pressure_centers(work, case, header, data, s, log)
-    surface_outputs(work, case, g, s, header, data, log)
+    surface_outputs(work, case, g, s, header, data, log, flight)
     log("done")
     log.close()
 

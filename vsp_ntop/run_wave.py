@@ -4,7 +4,8 @@
 
 OpenVSP cuts the model with Mach planes at several roll angles (rotation sections), turns each set of cut areas
 into an equivalent area distribution, and averages their von Karman slender-body wave drag, as in OpenVSP's Wave
-Drag screen. That is linear theory at zero lift; ``validation/wave_drag_mach.py`` measures its range. Inflow and
+Drag screen, at the supersonic Mach numbers of the flight condition (``flight``) with its Sref. That is linear
+theory at zero lift; ``validation/wave_drag_mach.py`` measures its range. Inflow and
 outflow faces are not used (out of scope).
 
 Writes ``<case>.ntvsp.wave.csv`` (one row per Mach number: CD_wave and the run's settings) and, for each Mach
@@ -15,8 +16,9 @@ from __future__ import annotations
 import os
 
 
-from .common import (openvsp_dir, DriverError, Log, Settings, linspace, main_wrapper, read_vsp_results_csv,
-                    run_vspscript, vsp_path, write_csv)
+from .common import (openvsp_dir, DriverError, Log, Settings, main_wrapper, read_vsp_results_csv, run_vspscript,
+                     vsp_path, write_csv)
+from .flight import Flight
 
 SETS = {"all": 0, "thick": 3, "thin": 4}
 
@@ -52,13 +54,19 @@ def main(settings_path):
         model += ".vsp3"
     if not os.path.isfile(model):
         raise DriverError(f"OpenVSP model {model} not found")
-    machs = linspace(s.real("mach_start"), s.real("mach_end"), s.integer("mach_npts"))
-    if min(machs) < 1.0:
-        raise DriverError("Wave Drag needs supersonic Mach numbers (1 or more)")
+    flight = Flight(s.text("flight"))
+    s.raw["sref"] = repr(flight.ref[0])
+    machs = [m for m in flight.machs() if m > 1.0]
     for stale in os.listdir(work):
         if stale.startswith(case + ".ntvsp.wave"):
             os.remove(os.path.join(work, stale))
     results_out = os.path.join(work, case + ".ntvsp.wave_results")
+    header = ["Mach", "CD_wave", "Num_Slices", "Num_Rotation_Sections", "Sref"]
+    if not machs:
+        write_csv(os.path.join(work, case + ".ntvsp.wave.csv"), header, [])
+        log("the flight condition has no supersonic Mach number: no wave drag")
+        log.close()
+        return
     log(f"Wave Drag at {len(machs)} Mach numbers from {machs[0]} to {machs[-1]}: {s.integer('num_slices')} slices, "
         f"{s.integer('num_rot_sects')} rotation sections")
     run_vspscript(vsp_dir, script(s, model, machs, results_out), work, case + ".wave", log, s.real("timeout_s", 7200))
@@ -76,8 +84,7 @@ def main(settings_path):
                       [[thetas[t - 1], x, a] for x, a in zip(x_norm, a_row)])
         os.remove(path)
         log(f"Mach {m}: CD_wave = {first('CDWave')}")
-    write_csv(os.path.join(work, case + ".ntvsp.wave.csv"),
-              ["Mach", "CD_wave", "Num_Slices", "Num_Rotation_Sections", "Sref"], rows)
+    write_csv(os.path.join(work, case + ".ntvsp.wave.csv"), header, rows)
     log("done")
     log.close()
 

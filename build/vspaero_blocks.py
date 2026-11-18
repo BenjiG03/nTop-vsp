@@ -3,34 +3,8 @@ from __future__ import annotations
 
 from ntopfile import Graph, InputSpec
 
-from kit import (default_text, AREA, DENSITY, LENGTH, VELOCITY, F_angle, F_choice, F_int, F_length,
-                 F_real, F_switch, Kit, analysis, d_choice, d_int, d_point_mm,
-                 d_real, d_text, make_block, model_inputs, run_inputs)
-
-# --- Flow condition ---------------------------------------------------------------------------------------------
-
-FLOW_FIELDS = [
-    F_angle("Alpha Start", "alpha_start", 0.0, "First angle of attack of the sweep."),
-    F_angle("Alpha End", "alpha_end", 10.0, "Last angle of attack of the sweep."),
-    F_int("Alpha Points", "alpha_npts", 3, "Number of angles of attack, evenly spaced from Start to End (1: Start only)."),
-    F_angle("Beta Start", "beta_start", 0.0, "First sideslip angle."),
-    F_angle("Beta End", "beta_end", 0.0, "Last sideslip angle."),
-    F_int("Beta Points", "beta_npts", 1, "Number of sideslip angles."),
-    F_real("Mach Start", "mach_start", 0.0, description="First freestream Mach number (Prandtl-Glauert/Karman-Tsien "
-           "compressibility in VSPAERO; subsonic)."),
-    F_real("Mach End", "mach_end", 0.0, description="Last freestream Mach number."),
-    F_int("Mach Points", "mach_npts", 1, "Number of Mach numbers."),
-    F_real("Re_cref Start", "recref_start", 1.0e7, description="First Reynolds number based on the reference chord "
-           "(used for VSPAERO's skin-friction drag estimate)."),
-    F_real("Re_cref End", "recref_end", 2.0e7, description="Last Reynolds number based on the reference chord."),
-    F_int("Re_cref Points", "recref_npts", 1, "Number of Reynolds numbers."),
-    F_real("Freestream Velocity", "vinf", 100.0, VELOCITY, "Vinf: scales dimensional loads and pressures."),
-    F_real("Freestream Density", "rho", 1.225, DENSITY, "Rho: scales dimensional loads and pressures."),
-    F_switch("Reference Velocity", "manual_vref", False, "Automatic: Vref = Vinf. Manual: use the values below.",
-             labels=("Automatic (Vinf)", "Manual")),
-    F_real("Manual Reference Velocity", "vref", 100.0, VELOCITY, "Vref when Reference Velocity is Manual."),
-    F_real("Manual Reference Mach", "machref", 0.3, description="Mref when Reference Velocity is Manual."),
-]
+from kit import (default_text, LENGTH, F_choice, F_int, F_length, F_real, F_switch, Kit, analysis, d_choice, d_int,
+                 d_text, make_block, model_inputs, run_inputs)
 
 # --- Solver ----------------------------------------------------------------------------------------------------------
 
@@ -95,18 +69,6 @@ def settings_block(key, display, description, fields, comments):
     return make_block(key, display, description, specs, "text", g, out)
 
 
-def flow_block():
-    return settings_block(
-        "vspaero_flow", "VSPAERO Flow Condition (VSP)",
-        "Flight conditions for **VSPAERO Analysis (VSP)**: the alpha, beta, Mach and Re_cref sweeps (VSPAERO solves "
-        "every combination in one run, like the Flow Condition section of OpenVSP's VSPAERO screen), the freestream "
-        "velocity and density, and the reference velocity. Connect the output to the analysis block's **Flow "
-        "Condition**.", FLOW_FIELDS,
-        ["**VSPAERO flow condition.** Each input becomes one `key = value` line of text, in SI units with angles in "
-         "degrees. Sweeps are Start, End and Points, evenly spaced, as in OpenVSP. The analysis block adds these lines "
-         "to its settings file."])
-
-
 def solver_block():
     return settings_block(
         "vspaero_solver", "VSPAERO Solver Settings (VSP)",
@@ -120,16 +82,17 @@ def solver_block():
 
 # --- Analysis --------------------------------------------------------------------------------------------------------
 
-def analysis_block(flow=FLOW_FIELDS, solver=SOLVER_FIELDS):
+def analysis_block(solver=SOLVER_FIELDS):
     own = (
         InputSpec("OpenVSP Model", "text", "Output of OpenVSP Model (VSP): the model whose Thick set VSPAERO solves "
                   "with its panel method and whose Thin set with its vortex lattice."),
-        InputSpec("Reference Area", "real", "Sref.", AREA, d_real(1.0, AREA)),
-        InputSpec("Reference Span", "real", "bref.", LENGTH, d_real(1.0, LENGTH)),
-        InputSpec("Reference Chord", "real", "cref.", LENGTH, d_real(1.0, LENGTH)),
-        InputSpec("Moment Reference Point", "point", "Moments are taken about this point (VSPAERO's X_cg, Y_cg, Z_cg).",
-                  LENGTH, d_point_mm(0, 0, 0)),
-        InputSpec("Flow Condition", "text", "From VSPAERO Flow Condition (VSP).", default=d_text(default_text(flow))),
+        InputSpec("Flight Condition", "text", "Output of Flight Condition (VSP). VSPAERO runs its distinct Mach numbers, "
+                  "angles of attack and sideslips (every combination) and the Reynolds numbers of its flight points, "
+                  "with its reference area, span, chord and moment point."),
+        InputSpec("Mach Min", "real", "Lowest Mach number of the flight condition that VSPAERO runs.",
+                  default=lambda g: g.real(0.0)),
+        InputSpec("Mach Max", "real", "VSPAERO runs the flight condition's Mach numbers below this one (for example 3, "
+                  "leaving higher Mach numbers to Modified Newtonian).", default=lambda g: g.real(1000.0)),
         InputSpec("Solver Settings", "text", "From VSPAERO Solver Settings (VSP).", default=d_text(default_text(solver))),
         InputSpec("Body Wakes", "choice", "OpenVSP's FindBodyWakesFlag: also shed wakes from the bases of thick "
                   "fuselages. Wing trailing edges always shed wakes.", default=d_choice(("Off", "On"))),
@@ -142,25 +105,24 @@ def analysis_block(flow=FLOW_FIELDS, solver=SOLVER_FIELDS):
               "read the model and write VSPAERO's panel file: components in the Thick set become panel-method surfaces, "
               "those in the Thin set vortex-lattice camber surfaces, and OpenVSP marks every wing trailing edge as a "
               "wake. 3. It writes the `.vspaero` input and runs `vspaero.exe` for every Mach x alpha x beta x Re_cref "
-              "case. 4. It checks that every case converged (Solver Settings' Convergence Check) and stops with the "
+              "case of the flight condition. 4. It checks that every case converged (Solver Settings' Convergence Check) and stops with the "
               "reason if one did not. 5. The output is the path of the results, for the VSPAERO reader blocks.")
     lines = [
         k.line("model", inp("OpenVSP Model")),
-        k.line("sref", k.num(inp("Reference Area"), 1.0, AREA)),
-        k.line("bref", k.num(inp("Reference Span"), 1.0, LENGTH)),
-        k.line("cref", k.num(inp("Reference Chord"), 1.0, LENGTH)),
-    ] + [k.line(f"{c}cg", k.num(prop_of(inp("Moment Reference Point"), c), 1.0, LENGTH)) for c in "xyz"] + [
+        k.line("flight", inp("Flight Condition")),
+        k.line("mach_min", k.num(inp("Mach Min"))),
+        k.line("mach_max", k.num(inp("Mach Max"))),
         k.line("find_body_wakes", k.pick(inp("Body Wakes"), ("0", "1"))),
-        k.cat(["\n", inp("Flow Condition"), "\n", inp("Solver Settings"), "\n"]),
+        k.cat(["\n", inp("Solver Settings"), "\n"]),
     ]
     out = analysis(g, k, inp, "run_vspaero", lambda base: [], lines, "VSPAERO")
     return make_block(
         "vspaero_analysis", "VSPAERO Analysis (VSP)",
         "Runs OpenVSP's **VSPAERO** on an OpenVSP model (from **OpenVSP Model (VSP)**) and returns the path of its "
         "results (connect it to the VSPAERO reader blocks). Thick-set components are solved with the panel method, "
-        "Thin-set components with the vortex lattice method; wakes leave every wing trailing edge. Settings come from "
-        "**VSPAERO Flow Condition** and **VSPAERO Solver Settings** (VSP). Reference area, span, chord and moment "
-        "point are inputs. Every case is checked for convergence (linear-solve residuals, finite coefficients, wake "
+        "Thin-set components with the vortex lattice method; wakes leave every wing trailing edge. The conditions, "
+        "reference area, span, chord and moment point come from **Flight Condition (VSP)**, the solver options from "
+        "**VSPAERO Solver Settings (VSP)**. Every case is checked for convergence (linear-solve residuals, finite coefficients, wake "
         "settled); by default an unconverged case stops the notebook with the reason, and "
         "`<Case Name>.ntvsp.convergence.csv` lists every case. Files are written to the Working Directory under the "
         "Case Name; the run's log is `<Case Name>.ntvsp.log`.\n\nNot exposed (out of scope): X-Z symmetry, 2D FEM and Tecplot output, reference "
@@ -275,29 +237,29 @@ def mesh_faces_block():
                       specs, "real_point_map", g, out)
 
 
-CENTERS = ("Center of pressure (one point per case)", "Aerodynamic center (one point per alpha sweep)")
+CENTERS = ("Center of pressure (one point per condition)", "Aerodynamic center (one point per alpha sweep)")
 
 
 def center_block():
     specs = (
-        InputSpec("Results", "text", "Output of VSPAERO Analysis (VSP) or of Aero Database (VSP). From a database the "
-                  "centers come from its totals (every contribution, about the database's moment point)."),
-        InputSpec("Quantity", "choice", "Center of pressure: where the resultant of each case's normal force and "
+        InputSpec("Aero Database", "text", "Output of Aero Database (VSP): the centers come from its totals (every "
+                  "contribution, about the flight condition's moment point)."),
+        InputSpec("Quantity", "choice", "Center of pressure: where the resultant of each condition's normal force and "
                   "pitching moment crosses the line through the moment reference point along x (it runs away as the "
                   "normal force goes to zero). Aerodynamic center: the point about which the pitching moment does not "
-                  "change with lift (the neutral point), from the alpha sweep at each Mach number, beta and Re_cref.",
-                  default=d_choice(CENTERS)),
+                  "change with lift (the neutral point), from the alpha sweep at each Mach number, altitude and "
+                  "sideslip.", default=d_choice(CENTERS)),
     )
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**Center of pressure.** The VSPAERO and Aero Database drivers compute, from the normal force CN (z up) "
-              "and pitching moment Cm about the moment reference point (over Sref and cref, x aft): x_cp = x_ref - "
-              "Cm cref / CN for every case, and x_ac = x_ref - (dCm/dCN) cref for every alpha sweep at one Mach number "
-              "and sideslip (a straight-line fit). VSPAERO's are from its inviscid coefficients; a database's from its "
-              "totals. The points are positions in metres on the line through the reference point along x; a case "
-              "with no normal force gets the reference point (column Defined = 0 in the file).")
-    path = k.cat([inp("Results"), k.pick(inp("Quantity"), (".ntvsp.center_of_pressure.csv",
+    g.comment("**Center of pressure.** The Aero Database driver computes, from the total normal force CN (z up) and "
+              "pitching moment Cm about the moment reference point (over Sref and cref, x aft): x_cp = x_ref - Cm cref "
+              "/ CN for every condition, and x_ac = x_ref - (dCm/dCN) cref for every alpha sweep at one Mach number, "
+              "altitude and sideslip (a straight-line fit). The points are positions (metres in the files, lengths "
+              "here) on the line through the reference point along x; a condition with no normal force gets the "
+              "reference point (column Defined = 0 in the file).")
+    path = k.cat([inp("Aero Database"), k.pick(inp("Quantity"), (".ntvsp.center_of_pressure.csv",
                                                             ".ntvsp.aerodynamic_center.csv"))], name="Table File")
     table = g.block("import_table<file_path,bool>", "table", [path, g.boolean(True)], "Import Table")
     metre = g.real(1.0, LENGTH)
@@ -309,8 +271,8 @@ def center_block():
     out = g.block("point<real,real,real>", "list<point>", xyz, "Centers")
     return make_block(
         "center_of_pressure", "Center of Pressure (VSP)",
-        "Center of pressure of every case of a VSPAERO run or an Aero Database, or the aerodynamic center (neutral "
-        "point) of every alpha sweep, as "
+        "Center of pressure of every condition of an Aero Database, or the aerodynamic center (neutral point) of every "
+        "alpha sweep, as "
         "a list of points: absolute positions in the model's frame with length units (not fractions of the "
         "reference chord), on the line through the moment reference point along x. Compare the aerodynamic center "
         "with the CG for the static margin.", specs, "list<point>", g, out)

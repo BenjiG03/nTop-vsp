@@ -1,0 +1,52 @@
+{
+ "rows": [
+  {
+   "mach": 0.3,
+   "layer": "Fully Turbulent",
+   "cp": 0.0,
+   "CA": 0.006591392270465643
+  },
+  {
+   "mach": 0.3,
+   "layer": "Fully Turbulent",
+   "cp": -0.5,
+   "CA": 0.009359846360847973
+  },
+  {
+   "mach": 0.3,
+   "layer": "Laminar",
+   "cp": 0.0,
+   "CA": 0.0010134718154713215
+  },
+  {
+   "mach": 0.3,
+   "layer": "Laminar",
+   "cp": -0.5,
+   "CA": 0.0013562595581582612
+  },
+  {
+   "mach": 0.8,
+   "layer": "Fully Turbulent",
+   "cp": 0.0,
+   "CA": 0.005387634779035873
+  },
+  {
+   "mach": 0.8,
+   "layer": "Fully Turbulent",
+   "cp": -0.5,
+   "CA": 0.006659891042556014
+  },
+  {
+   "mach": 0.8,
+   "layer": "Laminar",
+   "cp": 0.0,
+   "CA": 0.0006160155854696993
+  },
+  {
+   "mach": 0.8,
+   "layer": "Laminar",
+   "cp": -0.5,
+   "CA": 0.000754652150672257
+  }
+ ]
+}

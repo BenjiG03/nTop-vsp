@@ -34,8 +34,13 @@ def dot(a, b):
     return sum(p * q for p, q in zip(a, b))
 
 
+PER_BODY = ("file", "ox", "oy", "oz", "sx", "sy", "sz")
+
+
 def parse_components(path):
-    """``component = key: value; key: value; ...`` lines, in order."""
+    """``component = key: value; key: value; ...`` lines, in order. A component block given several bodies writes
+    one line for all of them: ``names`` and the per-body values (``files``, ``ox`` ... ``sz``) are ``|``-separated
+    lists, expanded here into one component per body. One name for several bodies numbers them (Name_1, Name_2...)."""
     out = []
     for line in open(path, encoding="utf-8"):
         key, _, value = line.partition("=")
@@ -46,6 +51,20 @@ def parse_components(path):
             k, sep, v = item.partition(":")
             if sep:
                 c[k.strip()] = v.strip()
+        if "files" in c:
+            files = [x.strip() for x in c.pop("files").split("|") if x.strip()]
+            names = [x.strip() for x in c.pop("names", "").split("|") if x.strip()] or [c.get("kind", "Component").capitalize()]
+            if len(names) == 1 and len(files) > 1:
+                names = [f"{names[0]}_{i + 1}" for i in range(len(files))]
+            if len(names) != len(files):
+                raise DriverError(f"{len(names)} names for {len(files)} bodies: give one name per body, or one for all")
+            lists = {k: [x.strip() for x in c.pop(k).split("|")] for k in PER_BODY[1:] if k in c}
+            for k, v in lists.items():
+                if len(v) != len(files):
+                    raise DriverError(f"component {names[0]}: {len(v)} values of {k} for {len(files)} bodies")
+            for i, (n, f) in enumerate(zip(names, files)):
+                out.append(dict(c, name=n, file=f, **{k: v[i] for k, v in lists.items()}))
+            continue
         for need in ("kind", "name", "file"):
             if need not in c:
                 raise DriverError(f"component line without '{need}': {line.strip()}")
@@ -146,10 +165,13 @@ def main(settings_path):
     comps = parse_components(settings_path)
     if not comps:
         raise DriverError("no components: connect OpenVSP Fuselage or OpenVSP Wing blocks to Components")
-    names = [M.clean_name(c["name"]) for c in comps]
-    dup = {n for n in names if names.count(n) > 1}
-    if dup:
-        raise DriverError(f"component names must differ: {', '.join(sorted(dup))}")
+    seen = {}
+    for c in comps:  # names must differ in OpenVSP: number repeats
+        n = M.clean_name(c["name"])
+        seen[n] = seen.get(n, 0) + 1
+        if seen[n] > 1:
+            log(f"note: a second component named {n} is called {n}_{seen[n]}")
+            c["name"] = f"{n}_{seen[n]}"
 
     lines, fuse_fits, fuse_tess, checks, rows = [], {}, {}, [], []
     for k, c in enumerate(comps):
@@ -173,12 +195,15 @@ def main(settings_path):
                 checks.append((name, layers, frame, 0.0, 6 * n_sec, 32))
                 size = f.sections[-1].x - f.sections[0].x
             elif kind == "wing":
-                if int(num(c, "symmetric", 0)):
+                symmetry = c.get("symmetry", "xz" if int(num(c, "symmetric", 0)) else "none")
+                if symmetry not in M.SYMMETRY_FLAGS:
+                    raise DriverError(f"{name}: symmetry '{symmetry}': expected none, xz, xy or xzxy")
+                if symmetry != "none":
                     o_s = dot(frame.origin, frame.ez)
                     layers = [l for l in layers if o_s + l.z >= -1e-6]
                 f = F.fit_wing(layers, frame, int(num(c, "sections", 8)), int(num(c, "airfoil_points", 41)),
                                num(c, "section_tolerance", 0.01), num(c, "min_section_span", 0.04))
-                lines += M.wing_lines(k, name, f, set_name, bool(int(num(c, "symmetric", 0))), int(num(c, "tess_u", 20)),
+                lines += M.wing_lines(k, name, f, set_name, symmetry, int(num(c, "tess_u", 20)),
                                       int(num(c, "tess_w", 33)), num(c, "le_cluster", 0.25), num(c, "te_cluster", 0.25),
                                       num(c, "root_cluster", 1.0), num(c, "tip_cluster", 1.0),
                                       bool(int(num(c, "sharp_te", 1))))

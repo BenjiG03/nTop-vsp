@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from ntopfile import Graph, InputSpec
 
-from kit import (AREA, F_choice, F_int, F_length, F_real, F_switch, F_text, Field, Kit, analysis, d_choice,
-                 d_int, d_real, d_text, make_block, model_inputs, run_inputs)
+from kit import (F_choice, F_int, F_length, F_real, F_switch, F_text, Kit, analysis, d_choice,
+                 d_int, make_block, model_inputs, run_inputs)
 
 # --- Parasite drag -------------------------------------------------------------------------------------------------
 
@@ -19,7 +19,6 @@ TURB_CF = [("Explicit Fit of Spalding", 0), ("Explicit Fit of Spalding-Chi", 1),
            ("Power Law Prandtl Low Re", 7), ("Power Law Prandtl Medium Re", 8), ("Power Law Prandtl High Re", 9),
            ("Schlichting Compressible", 10), ("Schultz-Grunow Estimate of Schoenherr", 14),
            ("Roughness Schlichting Avg", 16), ("Roughness Schlichting Avg Compressible", 19)]
-SPEED_UNITS = ("ft/s", "m/s", "mph", "km/hr", "KEAS", "KTAS", "Mach")
 MODEL_UNITS = ("mm", "cm", "m", "in", "ft", "yd", "unitless")
 
 COMPONENT_FIELDS = [
@@ -74,18 +73,9 @@ PARASITE_FIELDS = [
              "Length unit of the OpenVSP model's dimensions (OpenVSP models carry no units)."),
     F_int("Geometry Set", "geom_set", 0, "OpenVSP set of components to include (0: All, 1: Shown, 2: Not Shown, "
           "3 and up: the model's user sets)."),
-    Field(InputSpec("Reference Area", "real", "Sref.", AREA, d_real(1.0, AREA)), "sref", "real", (1.0, AREA)),
     F_choice("Laminar Cf Equation", "lam_cf", LAM_CF, (0, 1), 0, "Laminar skin-friction equation."),
     F_choice("Turbulent Cf Equation", "turb_cf", [n for n, _ in TURB_CF], [v for _, v in TURB_CF], 9,
              "Turbulent skin-friction equation."),
-    F_real("Speed Start", "speed_start", 0.3, description="First freestream speed of the sweep, in Speed Unit."),
-    F_real("Speed End", "speed_end", 2.0, description="Last freestream speed, in Speed Unit."),
-    F_int("Speed Points", "speed_npts", 5, "Number of speeds, evenly spaced from Start to End (1: Start only)."),
-    F_choice("Speed Unit", "speed_unit", SPEED_UNITS, range(len(SPEED_UNITS)), 6, "Unit of the speeds (Mach: they are "
-             "Mach numbers, which an aero database matches with VSPAERO's)."),
-    F_length("Altitude", "altitude", 6096.0, "Geometric altitude in the US Standard Atmosphere 1976."),
-    F_real("Temperature Offset", "delta_temp", 0.0, description="Temperature offset from the standard atmosphere, kelvin."),
-    F_real("Specific Heat Ratio", "gamma", 1.4, description="Gamma of the air."),
     F_switch("Export Sub-Components", "export_subcomp", False, "Also list each component's sub-surfaces in OpenVSP's "
              "own CSV table (<Case Name>.ParasiteDragBuildUp.csv)."),
 ]
@@ -96,6 +86,8 @@ def parasite_block():
         InputSpec("OpenVSP Model", "text", "Output of OpenVSP Model (VSP), or the path of any .vsp3 model. Parasite Drag "
                   "works on OpenVSP's own components (wings, fuselages...): it needs their wetted areas, reference "
                   "lengths and thickness or fineness ratios."),
+        InputSpec("Flight Condition", "text", "Output of Flight Condition (VSP): its flight points' Mach numbers and altitudes (one OpenVSP run per flight point), "
+                  "and its reference area."),
     ) + tuple(f.spec for f in PARASITE_FIELDS) + (
         InputSpec("Components", "list<text>", "Per-component settings from Parasite Drag Component (VSP) blocks, in a "
                   "List. Leave the default (one empty line) to use the settings stored in the model.",
@@ -107,27 +99,27 @@ def parasite_block():
     inp = model_inputs(specs)
     g.comment("**OpenVSP Parasite Drag.** A component drag buildup: each component's skin friction (laminar and "
               "turbulent Cf equations at its Reynolds number), times its form factor and interference factor, "
-              "times its wetted area over Sref. The flow condition is the US Standard Atmosphere 1976 at the "
-              "Altitude and Temperature Offset, with Speed in Speed Unit.")
-    lines = k.field_lines(PARASITE_FIELDS, lambda f: inp(f.spec.name))
+              "times its wetted area over Sref, at each flight point of the flight condition (its Mach number at its "
+              "altitude in the US Standard Atmosphere 1976, which OpenVSP evaluates itself).")
+    lines = k.field_lines(PARASITE_FIELDS, lambda f: inp(f.spec.name)) + [k.line("flight", inp("Flight Condition"))]
     lines.append(k.line("model", inp("OpenVSP Model")))
     lines.append(k.cat([k.join(inp("Components"), "\n"), "\n"]))
     out = analysis(g, k, inp, "run_parasite", lambda base: [], lines, "Parasite Drag")
     return make_block(
         "parasite_drag", "Parasite Drag (VSP)",
-        "Runs OpenVSP's **Parasite Drag** tool on an OpenVSP model over a sweep of speeds (or Mach numbers) and returns "
-        "the path of its results (connect it to Parasite Drag Result, Parasite Drag Component Values or Aero Database). "
-        "All settings of OpenVSP's Parasite Drag screen are inputs: geometry set, model length unit, reference area, "
-        "laminar and turbulent Cf equations, speed and its unit, altitude and temperature offset (US Standard "
-        "Atmosphere 1976), specific heat ratio, sub-component export, and each component's form factor equation, % "
-        "laminar, Q, roughness and temperature ratios. OpenVSP takes the form-factor inputs (reference length, "
-        "thickness or fineness ratio) from the model's components.\n\nNot exposed (out of scope): other atmosphere "
-        "models, excrescences, reference area from a wing.",
+        "Runs OpenVSP's **Parasite Drag** tool on an OpenVSP model at every flight point (Mach number and altitude) "
+        "of a Flight Condition, with its reference area, and returns the path of its results (connect it to Parasite "
+        "Drag Result, Parasite Drag Component Values or Parasite Drag Contribution). The other settings of OpenVSP's "
+        "Parasite Drag screen are inputs: geometry set, model length unit, laminar and turbulent Cf equations, "
+        "sub-component export, and each component's form factor equation, % laminar, Q, roughness and temperature "
+        "ratios. OpenVSP takes the form-factor inputs (reference length, thickness or fineness ratio) from the "
+        "model's components.\n\nNot exposed: atmospheres other than the US Standard Atmosphere 1976 (no temperature "
+        "offset), excrescences, reference area from a wing.",
         specs, "text", g, out)
 
 
-PARASITE_RESULTS = ("Total_CD", "Geom_CD", "Total_f", "Geom_f", "Re_per_length", "Mach", "Vinf", "Altitude",
-                    "Temperature", "Pressure", "Density", "Sref", "Num_Components")
+PARASITE_RESULTS = ("Total_CD", "Geom_CD", "Total_f", "Geom_f", "Re_per_length", "Mach", "Altitude_m", "Vinf",
+                    "Temperature", "Pressure", "Density", "Sref", "Num_Components", "Point")
 PARASITE_COMPONENT_COLUMNS = ("CD", "Percent_Total_CD", "f", "Cf", "FF", "Q", "Swet", "Lref", "t_c_or_fineness", "Re",
                               "Percent_Laminar", "Roughness", "Te_Tw", "Taw_Tw", "Surface")
 
@@ -151,33 +143,33 @@ def _reader(key, display, description, file_suffix, labels, out_type, comment, c
 
 def parasite_result_block():
     return _reader("parasite_result", "Parasite Drag Result (VSP)",
-                   "A total of a Parasite Drag run, one value per speed of the sweep: CD (total and geometry), drag area "
-                   "f, Reynolds number per unit length, and the flight condition OpenVSP used (Mach, Vinf, altitude, "
-                   "temperature, pressure, density, in the units OpenVSP reports for the chosen Speed Unit; altitude in "
-                   "metres, temperature in kelvin, pressure in pascals).",
+                   "A total of a Parasite Drag run, one value per flight point: CD (total and geometry), drag area f, "
+                   "Reynolds number per unit length, and the flight condition OpenVSP used (Mach, altitude in metres, "
+                   "Vinf, temperature in kelvin, pressure in pascals, density), Sref, components and flight point.",
                    ".ntvsp.parasite.csv", PARASITE_RESULTS, "list<real>",
-                   "**Parasite Drag totals.** The driver writes one row per speed to `<Case Name>.ntvsp.parasite.csv`; "
+                   "**Parasite Drag totals.** The driver writes one row per flight point to `<Case Name>.ntvsp.parasite.csv`; "
                    "Import Table reads it and the chosen column becomes a list.")
 
 
 def parasite_components_block():
     specs = (
         InputSpec("Results", "text", "Output of Parasite Drag (VSP)."),
-        InputSpec("Speed Number", "integer", "Which speed of the sweep, counted from 1.", default=d_int(1)),
+        InputSpec("Flight Point", "integer", "Which flight point of the flight condition, counted from 1.",
+                  default=d_int(1)),
         InputSpec("Column", "choice", "Which column of the table.", default=d_choice(PARASITE_COMPONENT_COLUMNS)),
     )
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
     g.comment("**Parasite Drag table.** One row per component in `<Case Name>.ntvsp.parasite_components.<n>.csv` for "
-              "speed n; the chosen column comes out as a list.")
-    path = k.cat([inp("Results"), ".ntvsp.parasite_components.", k.num(inp("Speed Number")), ".csv"])
+              "flight point n; the chosen column comes out as a list.")
+    path = k.cat([inp("Results"), ".ntvsp.parasite_components.", k.num(inp("Flight Point")), ".csv"])
     table = g.block("import_table<file_path,bool>", "table", [path, g.boolean(True)], "Import Results Table")
     col = g.block("extract_column<table,text>", "list<text>", [table, k.pick(inp("Column"), PARASITE_COMPONENT_COLUMNS)],
                   top=False)
     out = g.block("scalar_from_text<text>", "real", [col], "Values")
     return make_block("parasite_components", "Parasite Drag Component Values (VSP)",
-                      "One column of the Parasite Drag table at one speed of the sweep, one value per component in "
+                      "One column of the Parasite Drag table at one flight point, one value per component in "
                       "OpenVSP's order (CD, % of total, f, Cf, form factor, Q, wetted area, reference length, t/c or "
                       "fineness ratio, Reynolds number...).", specs, "list<real>", g, out)
 
@@ -185,16 +177,12 @@ def parasite_components_block():
 # --- Wave drag --------------------------------------------------------------------------------------------------------
 
 WAVE_FIELDS = [
-    F_real("Mach Start", "mach_start", 1.2, description="First Mach number of the sweep (1 or more)."),
-    F_real("Mach End", "mach_end", 2.0, description="Last Mach number."),
-    F_int("Mach Points", "mach_npts", 5, "Number of Mach numbers, evenly spaced from Start to End (1: Start only)."),
     F_int("Number of Slices", "num_slices", 30, "Mach-plane cuts along the configuration for each rotation section. The "
           "result keeps changing with this when the area distribution has steps (a blunt base, an inlet face): check "
           "it at 20 and 40."),
     F_int("Number of Rotation Sections", "num_rot_sects", 30, "Roll angles at which the configuration is cut. Wings of "
           "high aspect ratio need many (the result falls towards linear theory as they increase): 30 is converged for "
           "slender aircraft such as the X-59, a straight wing of aspect ratio 12 needs over 120."),
-    Field(InputSpec("Reference Area", "real", "Sref.", AREA, d_real(1.0, AREA)), "sref", "real", (1.0, AREA)),
     F_switch("Symmetry", "symmetry", True, "Use the configuration's x-z symmetry to cut only half the rotation sections."),
     F_choice("Geometry Set", "geom_set", ("All", "Thick", "Thin"), ("all", "thick", "thin"), 0,
              "Components of the model to include (by OpenVSP set)."),
@@ -202,24 +190,26 @@ WAVE_FIELDS = [
 
 
 def wave_block():
-    own = (InputSpec("OpenVSP Model", "text", "Output of OpenVSP Model (VSP), or the path of any .vsp3 model."),) + \
-        tuple(f.spec for f in WAVE_FIELDS)
+    own = (InputSpec("OpenVSP Model", "text", "Output of OpenVSP Model (VSP), or the path of any .vsp3 model."),
+        InputSpec("Flight Condition", "text", "Output of Flight Condition (VSP): its flight points' Mach numbers above 1 (wave drag is zero subsonic), "
+                  "and its reference area."),) + tuple(f.spec for f in WAVE_FIELDS)
     specs = own + run_inputs("wave")
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**OpenVSP Wave Drag** at each Mach number of the sweep. OpenVSP cuts the model with Mach planes "
+    g.comment("**OpenVSP Wave Drag** at each supersonic Mach number of the flight condition. OpenVSP cuts the model with Mach planes "
               "(inclined at the Mach angle) at each rotation section, turns each set of cut areas into an equivalent "
               "area distribution, and averages the von Karman slender-body wave drag over the roll angles: the "
               "supersonic area rule, zero-lift linear theory. CD_wave = D / (q Sref).")
-    lines = k.field_lines(WAVE_FIELDS, lambda f: inp(f.spec.name)) + [k.line("model", inp("OpenVSP Model"))]
+    lines = k.field_lines(WAVE_FIELDS, lambda f: inp(f.spec.name)) + [k.line("model", inp("OpenVSP Model")),
+                                                                      k.line("flight", inp("Flight Condition"))]
     out = analysis(g, k, inp, "run_wave", lambda base: [], lines, "Wave Drag")
     return make_block(
         "wave_drag", "Wave Drag (VSP)",
-        "Runs OpenVSP's **Wave Drag** (supersonic area rule) on an OpenVSP model over a sweep of Mach numbers and returns "
-        "the path of its results (connect it to Wave Drag Result, Wave Drag Area Distribution or Aero Database). Inputs "
-        "are those of OpenVSP's Wave Drag screen: Mach, number of slices, number of rotation sections, reference area, "
-        "symmetry and geometry set. It is linear theory at zero lift: see the README for the Mach range it holds over. "
+        "Runs OpenVSP's **Wave Drag** (supersonic area rule) on an OpenVSP model at the supersonic Mach numbers of a "
+        "Flight Condition, with its reference area, and returns the path of its results (connect it to Wave Drag "
+        "Result, Wave Drag Area Distribution or Wave Drag Contribution). The other inputs are those of OpenVSP's Wave "
+        "Drag screen: number of slices, number of rotation sections, symmetry and geometry set. It is linear theory at zero lift: see the README for the Mach range it holds over. "
         "Not exposed (out of scope): inflow and outflow faces.", specs, "text", g, out)
 
 

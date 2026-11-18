@@ -1,10 +1,13 @@
 # nTop_vsp
 
-nTop custom blocks that turn **nTop implicit bodies into an OpenVSP model** and run three OpenVSP 3.56 analyses on
-it: **VSPAERO**, **Wave Drag** and **Parasite Drag**. **Aero Database (VSP)** sums any mix of contributions (these
-three, and coefficients computed in nTop such as `ntop_newtonian`'s Modified Newtonian and viscous correction, each
-over its own Mach range) into a **six-degree-of-freedom aero database** (CL, CD, CY, Cl, Cm, Cn against Mach, alpha
-and beta), and **Polar Plot (VSP)** plots it with matplotlib. Because the geometry stays parametric in nTop, its
+nTop custom blocks that turn **nTop implicit bodies into an OpenVSP model** and run aerodynamic analyses on one
+shared **Flight Condition** (Mach numbers and altitudes through the US Standard Atmosphere 1976, angles of attack and
+sideslips, and the reference area, span, chord and moment point): OpenVSP 3.56's **VSPAERO**, **Wave Drag** and
+**Parasite Drag**, and, computed entirely in nTop on the implicit body itself, **Modified Newtonian** pressure and a
+**Viscous Correction** (skin friction). **Aero Database (VSP)** sums any mix of them, each over its own Mach range,
+into a **six-degree-of-freedom aero database** (CL, CD, CY, Cl, Cm, Cn against Mach, altitude, alpha and beta);
+**Center of Pressure (VSP)** gives its centers of pressure and aerodynamic centers as positions, and **Polar Plot
+(VSP)** plots it with matplotlib. Because the geometry stays parametric in nTop, its
 inputs can be independent variables of the database too: `examples/x59_doe.py` runs a design of experiments over
 the wing span and sweep of an X-59-style aircraft.
 
@@ -15,52 +18,61 @@ canards and tails are separate implicit bodies. `build/x59_example.py` reads it 
 ## How it works
 
 ```
-implicit body ──► OpenVSP Fuselage / Wing (VSP) ──► component line ─┐
-   (nTop Slice Body → section contours, CLI)                         ├─► OpenVSP Model (VSP) ──► <case>.vsp3
-implicit body ──► ...                                               ─┘     (vsp_ntop/run_model.py: fit + build)
-                                                                                      │
-             ┌────────────────────────────┬───────────────────────────┬───────────────┘
-   VSPAERO Analysis (VSP)          Wave Drag (VSP)            Parasite Drag (VSP)
-   (Thin set: vortex lattice;      (area rule, Mach sweep)    (component buildup, Mach sweep)
-    Thick set: panel method)
-             │                            │                           │
-   VSPAERO Contribution         Wave Drag Contribution      Parasite Drag Contribution
-             │                            │                           │
-             │                            │                           │    Coefficient Rows Contribution
-             │                            │                           │      ▲ rows from nTop blocks (Modified
-             │                            │                           │      │ Newtonian, viscous correction,
-             │                            │                           │      │ any six numbers)
-             └────────────────────────────┴─────────────┬─────────────┴──────┘
+implicit bodies ─► OpenVSP Fuselage / Wing (VSP) ─► component line ─┐
+  (lists; nTop Slice Body → section contours, CLI)                  ├─► OpenVSP Model (VSP) ─► <case>.vsp3
+implicit bodies ─► ...                                             ─┘    (run_model.py: fit + build)
+                                                                                    │
+Flight Condition (VSP): Mach + altitude (US Std Atmosphere 1976), alpha, beta,     │
+                        Sref, bref, cref, moment point ─── into every analysis ────┤
+                                                                                    │
+   ┌────────────────────┬───────────────────┬─────────────────────┬───────────────────┴───┐
+VSPAERO Analysis     Wave Drag          Parasite Drag      Modified Newtonian    Viscous Correction
+(vortex lattice /    (area rule)        (component         (in nTop, on the      (in nTop, on the
+ panel method)                           buildup)           implicit body)        implicit body)
+   │                    │                   │                     │                     │
+VSPAERO              Wave Drag          Parasite Drag      Coefficients          Coefficients
+Contribution         Contribution       Contribution       Contribution          Contribution
+   └────────────────────┴───────────────────┴──────────┬──────────┴─────────────────────┘
                                                         ▼
-                                   Aero Database (VSP) ──► CSV / DOE table, readers, Center of Pressure
+                         Aero Database (VSP) on the Flight Condition ─► CSV / DOE table, readers
                                                         ▼
-                                   Polar Plot (VSP) ──► PNG + window
+                         Center of Pressure (VSP) ─► points       Polar Plot (VSP) ─► PNG + window
 ```
 
-Each analysis block writes its inputs to a settings file (`key = value`, SI units) and runs a driver of the
-`vsp_ntop` Python package (`python -m vsp_ntop.<module> <settings file>`) with nTop's **Run Command**; the driver runs OpenVSP (`vspscript.exe`) and VSPAERO and writes plain CSV
-files, which reader blocks load with Import Table and Import Scalar Point Map. A failed run stops the notebook with
-the driver's error, and every run leaves `<Case Name>.ntvsp.log` in the Working Directory.
+The OpenVSP analyses, the Flight Condition and the database write their inputs to a settings file (`key = value`,
+SI units) and run a driver of the `vsp_ntop` Python package (`python -m vsp_ntop.<module> <settings file>`) with
+nTop's **Run Command**; the drivers run OpenVSP (`vspscript.exe`) and VSPAERO and write plain CSV files, which reader
+blocks load with Import Table and Import Scalar Point Map. A failed run stops the notebook with the driver's error,
+and every run leaves `<Case Name>.ntvsp.log` in the Working Directory. Modified Newtonian and the Viscous Correction
+run no program: they are nTop block graphs evaluated once per flight condition, which write their coefficient table
+with Export Text.
 
 * `blocks/` — the custom blocks, one `.ntop` file each (File > Import, or drag into a notebook).
-* `examples/X-59 Aero Database.ntop` — the X-59 starter's geometry with the whole chain appended, floating comments
-  throughout; `examples/x59_doe.py` — the design of experiments over it.
-* `vsp_ntop/` — the drivers, an installable package (`pyproject.toml`; Python 3.8+, standard library except
-  matplotlib for the plots): `run_model.py` with `slices.py` (contour reader),
+* `examples/X-59 Aero Database.ntop` — the X-59 starter's geometry with VSPAERO, Wave Drag and Parasite Drag on one
+  flight condition, floating comments throughout; `examples/x59_doe.py` — the design of experiments over it.
+* `examples/X-59 Mixed Analyses.ntop` — the same geometry, VSPAERO and Wave Drag below Mach 2.5, Modified Newtonian
+  from Mach 2.5 and the Viscous Correction in place of Parasite Drag, on three flight points at three altitudes.
+* `vsp_ntop/` — the drivers, an installable package (`pyproject.toml`; Python 3.8+; `ambiance` for the standard
+  atmosphere, matplotlib for the plots): `run_flight.py` and `flight.py` (the flight condition), `run_model.py` with
+  `slices.py` (contour reader),
   `fit.py` (section fitting) and `vspmodel.py` (OpenVSP script and `.vsp3` writing); `run_vspaero.py`,
   `run_wave.py`, `run_parasite.py`, `run_database.py` (the buildup), `run_plot.py`; `vspgeom.py` and `adb.py` read VSPAERO's panel file and
   binary results.
-* `build/` — writes the blocks and the example (`build_blocks.py` with `model_blocks.py`, `vspaero_blocks.py`,
-  `drag_blocks.py`, `buildup_blocks.py`; `x59_example.py`; `x59.py` derives notebooks from
-  the starter; `ntopfile.py` is the `.ntop` writer from `ntop_newtonian`).
-* `validation/wave_drag_mach.py` — the wave drag study below (results in `validation/results/`).
+* `build/` — writes the blocks and the examples (`build_blocks.py` with `model_blocks.py`, `aero_blocks.py` (flight
+  condition, Newtonian, viscous, coefficients), `vspaero_blocks.py`, `drag_blocks.py`, `buildup_blocks.py`;
+  `newtonian.py`, `viscous.py` and `ops.py` are the Modified Newtonian and skin-friction block graphs, brought over
+  from the former `ntop_newtonian` project; `x59_example.py`, `mixed_example.py`; `x59.py` derives notebooks from the
+  starter; `ntopfile.py` writes `.ntop` files).
+* `validation/wave_drag_mach.py` — the wave drag study below (results in `validation/results/`);
+  `validation/newtonian/` — the Modified Newtonian and viscous-correction validation report from `ntop_newtonian`.
 
 ## Setup
 
 1. Install OpenVSP 3.56: unpack the Windows 64-bit build (for example into `OpenVSP-3.56.0-win64/` here; it is not
    in the repository).
 2. Install the drivers into a Python 3.8 or newer: `pip install -e .` in this folder (or `pip install .`); this
-   also installs matplotlib, which only Polar Plot uses. A conda environment's Python works without activating it.
+   also installs `ambiance` (the US Standard Atmosphere 1976 of Flight Condition) and matplotlib (Polar Plot). A conda
+   environment's Python works without activating it.
 3. Set two environment variables (Windows: System Properties > Environment Variables), then restart nTop so it
    sees them:
    * `NTOP_PYTHON_PATH`: that Python's executable, e.g. `C:/Users/me/anaconda3/python.exe`;
@@ -68,40 +80,43 @@ the driver's error, and every run leaves `<Case Name>.ntvsp.log` in the Working 
 
 The blocks read both with nTop's **Get Environment Variable** block, so they have no Python, driver or OpenVSP path
 inputs; a missing variable stops the notebook with nTop's "Environment variable ... is not set". The only path
-input left is each analysis block's **Working Directory** (default: `runs/` here). nTop asks once to trust Run
-Command blocks.
+input left is each driver block's **Working Directory** (default: `runs/` here); Modified Newtonian, Viscous
+Correction and Aero Coefficients write next to their Flight Condition's files. nTop asks once to trust Run Command
+blocks.
 
 ## Blocks
 
 | Block | Output | Purpose |
 |---|---|---|
-| OpenVSP Fuselage (VSP) | text | an implicit body as an OpenVSP Fuselage: slicing, sections, clustering, tessellation, set |
-| OpenVSP Wing (VSP) | text | an implicit lifting surface as an OpenVSP Wing: span axis, symmetry, sections, airfoils, tessellation, clustering, set |
+| OpenVSP Fuselage (VSP) | text | a list of implicit bodies as OpenVSP Fuselages: names, slicing, sections, clustering, tessellation, set |
+| OpenVSP Wing (VSP) | text | a list of implicit lifting surfaces as OpenVSP Wings: names, span axes (one per body), symmetry (none, x-z, x-y, both), sections, airfoils, tessellation, clustering, set |
 | OpenVSP Model (VSP) | model path | builds `<case>.vsp3` from a list of component lines |
 | OpenVSP Model Check (VSP) | list of reals | per component: largest and mean distance from the OpenVSP surface to the nTop contours, sections, slices |
 | OpenVSP Model Mesh (VSP) | mesh | OpenVSP's tessellation of the model, to view against the bodies |
-| VSPAERO Flow Condition (VSP) | text | alpha, beta, Mach, Re_cref sweeps; Vinf, Rho; reference velocity |
-| VSPAERO Solver Settings (VSP) | text | threads, wake model and nodes, far field, ground effect, freezing, implicit wake, convergence factors, preconditioners, quad tree, restart file |
-| VSPAERO Analysis (VSP) | results path | model, Sref, bref, cref, moment point, body wakes, the two settings |
+| Flight Condition (VSP) | results path | Mach numbers paired with altitudes (US Standard Atmosphere 1976), angles of attack, sideslips; reference area, span, chord, moment point |
+| VSPAERO Solver Settings (VSP) | text | threads, wake model and nodes, far field, ground effect, freezing, implicit wake, convergence factors, preconditioners, quad tree, restart file, convergence check |
+| VSPAERO Analysis (VSP) | results path | model, flight condition, Mach range, body wakes, solver settings |
 | VSPAERO Coefficient (VSP) | list of reals | any column of VSPAERO's polar, one value per case |
-| Center of Pressure (VSP) | list of points | from a VSPAERO run or an Aero Database: each case's center of pressure, or each alpha sweep's aerodynamic center (neutral point), as absolute positions with length units |
 | VSPAERO Surface Pressure (VSP) | Scalar Point Map | Cp or p - p_inf of one case at panel centroids, nodes or both (thin surfaces: the jump across the sheet) |
-| VSPAERO Mesh Faces (VSP) | Scalar Point Map | the Thick-set panels as points weighted by area, for ntop_newtonian's Viscous Correction on Mesh blocks |
-| Wave Drag (VSP) | results path | model, Mach sweep, slices, rotation sections, Sref, symmetry, geometry set |
+| Wave Drag (VSP) | results path | model, flight condition (its supersonic Mach numbers), slices, rotation sections, symmetry, geometry set |
 | Wave Drag Result (VSP) | list of reals | CD_wave (or Mach, counts, Sref), one value per Mach number |
 | Wave Drag Area Distribution (VSP) | list of reals | x/L or slice areas of one rotation section at one Mach number |
 | Parasite Drag Component (VSP) | text | one component's form factor equations, % laminar, Q, roughness, temperature ratios |
-| Parasite Drag (VSP) | results path | model, units, Sref, Cf equations, speed sweep and unit, altitude, dT, gamma, components |
-| Parasite Drag Result (VSP) | list of reals | total CD, f, Re/L and the flight condition, one value per speed |
-| Parasite Drag Component Values (VSP) | list of reals | one column of the buildup table at one speed, per component |
+| Parasite Drag (VSP) | results path | model, flight condition (one run per flight point), units, Cf equations, components |
+| Parasite Drag Result (VSP) | list of reals | total CD, f, Re/L and the flight condition, one value per flight point |
+| Parasite Drag Component Values (VSP) | list of reals | one column of the buildup table at one flight point, per component |
+| Modified Newtonian (VSP) | results path | an implicit body's Modified Newtonian forces and moments at every condition of a flight condition in a Mach range, computed in nTop |
+| Modified Newtonian Pressure (VSP) | scalar field | the Modified Newtonian Cp of one condition, to view on the body |
+| Viscous Correction (VSP) | results path | an implicit body's skin-friction forces and moments at every condition (standard-atmosphere edge state), computed in nTop |
+| Aero Coefficients (VSP) | results path | six lists of coefficients from anywhere, one value per flight condition, as a coefficient table |
 | VSPAERO Contribution (VSP) | text | a VSPAERO run for the database: inviscid or total coefficients, which forces to use, Mach range, scale |
 | Wave Drag Contribution (VSP) | text | a Wave Drag run for the database: CD_wave(Mach) along the freestream, Mach range (default from 1), scale |
-| Parasite Drag Contribution (VSP) | text | a Parasite Drag run for the database: CD(Mach) along the freestream, Mach range, scale |
-| Aero Coefficient Row (VSP) | text | six coefficients at one condition, with reference and moment point; sweep it for one row per condition |
-| Coefficient Rows Contribution (VSP) | text | a list of rows (this package's, or `ntop_newtonian`'s Database Row blocks) for the database |
-| Aero Database (VSP) | results path | sums a list of contributions at the database's conditions on one reference; design variables; appends to a DOE file |
-| Aero Database Coefficient (VSP) | list of reals | one column of the database (CL, CD, CY, Cl, Cm, Cn, L/D, CA, CN, Mach, AoA, Beta) |
+| Parasite Drag Contribution (VSP) | text | a Parasite Drag run for the database: CD(Mach, altitude) along the freestream, Mach range, scale |
+| Coefficients Contribution (VSP) | text | a Modified Newtonian, Viscous Correction or Aero Coefficients table for the database |
+| Aero Database (VSP) | results path | sums a list of contributions at every condition of a flight condition, on its reference; design variables; appends to a DOE file |
+| Aero Database Coefficient (VSP) | list of reals | one column of the database (CL, CD, CY, Cl, Cm, Cn, L/D, CA, CN, Mach, Altitude, AoA, Beta) |
 | Aero Database Table (VSP) | table | the whole database, each contribution's share included |
+| Center of Pressure (VSP) | list of points | from an Aero Database: each condition's center of pressure, or each alpha sweep's aerodynamic center (neutral point), as positions with length units |
 | Polar Plot (VSP) | image path | one database quantity against another for a list of databases (matplotlib); opens in a window by default |
 
 Every length is sent to OpenVSP in metres, so reference areas and lengths are nTop quantities with units.
@@ -110,7 +125,13 @@ Every length is sent to OpenVSP in metres, so reference areas and lengths are nT
 
 ![OpenVSP model of the X-59 starter](examples/x59_openvsp_model.png)
 
-**Slicing in nTop.** A component block cuts its body with nTop's **Slice Body** (planes normal to x for a fuselage,
+**Lists of bodies.** Each component block takes a list of bodies (**Bodies**), a list of **Names** (one per body, or
+one name that the driver numbers) and, for wings, a list of **Span Axes** (one per body, in order; nTop stops with
+"Input list length mismatch" otherwise); every other input applies to all of them. nTop slices them one by one
+(list processing), and the driver makes one OpenVSP component of each. The X-59 example has one Wing block for the
+wing, canards and both horizontal tails, and another for the fin, which is not mirrored.
+
+**Slicing in nTop.** A component block cuts each body with nTop's **Slice Body** (planes normal to x for a fuselage,
 normal to the span axis for a wing) and exports the contours with **Export Slices to CLI** into a temporary folder.
 The cuts start just outside the body's bounding box; **Slice Spacing** (a fraction of the body's length, or of its
 extent along the span axis) and **Contour Tolerance** (a fraction of its bounding-box diagonal) set the resolution.
@@ -132,8 +153,10 @@ position, chord, twist, thickness and the airfoil's upper and lower surfaces (co
 Stations become OpenVSP wing sections where leading edge, chord, twist or thickness stop varying linearly (**Section
 Tolerance**, 1% of the root chord), at most **Sections**, none narrower than 4% of the span, so measurement noise of
 a few millimetres does not create sliver sections. Each section's span, sweep and dihedral come from its end
-stations; the surface is rotated about x for a canted or vertical span axis. **Symmetric** mirrors it about the x-z
-plane and uses only the +span side of the body. **Trailing Edge: Sharp** shears a blunt base onto the chord line so
+stations; the surface is rotated about x for a canted or vertical span axis. **Symmetry** is OpenVSP's planar
+symmetry: about the x-z plane (left and right), the x-y plane (top and bottom: a dorsal fin mirrored into a ventral
+one) or both (cruciform tails); with any of them only the part of the body on the +span side of the plane through
+the origin normal to its span axis is used. **Trailing Edge: Sharp** shears a blunt base onto the chord line so
 that VSPAERO's wake leaves one edge. OpenVSP marks every wing trailing edge as a wake: no wake input.
 
 **Tessellation.** Wings: **Tess U** spanwise points (shared between sections by span), **Tess W** around the
@@ -244,72 +267,126 @@ singular at Mach 1) up to where Mach × nose or forebody angle reaches about 0.2
 answer is also zero-lift only (drag due to lift comes from VSPAERO). Within that range, use enough rotation sections
 for the wing aspect ratio and check the slice count when the configuration has blunt bases or inlets.
 
+## Flight condition
+
+**Flight Condition (VSP)** is the one place flight conditions and the reference are defined; every analysis and the
+Aero Database take its output and use what they need.
+
+* **Mach** and **Altitude** are lists paired item by item into flight points (one altitude serves every Mach
+  number). The atmosphere at each altitude (geometric, -16,400 to 265,800 ft) is the US Standard Atmosphere 1976 as
+  implemented by the `ambiance` package: temperature, pressure, density, speed of sound and viscosity; the velocity,
+  dynamic pressure and Reynolds number (per metre and on cref) follow from the Mach number. Enter the altitude in feet
+  (nTop takes any length unit).
+* **Angle of Attack** and **Sideslip** are lists; every flight point is run at each. The conditions are flight point x
+  sideslip x angle of attack (angle of attack fastest).
+* **Reference Area**, **Reference Span**, **Reference Chord** and **Moment Reference Point** travel with the
+  conditions: every coefficient of every analysis and of the database is over them and about that point.
+
+What each analysis takes from it: VSPAERO its distinct Mach numbers, angles and sideslips (all combinations, in one
+run), the Reynolds numbers of its flight points and the reference; Wave Drag its supersonic Mach numbers and Sref;
+Parasite Drag each flight point (one OpenVSP run per Mach number and altitude) and Sref; Modified Newtonian the
+distinct (Mach, alpha, beta) combinations and the reference; the Viscous Correction every condition with its
+pressure and temperature. VSPAERO, Modified Newtonian and the Viscous Correction also have a **Mach Min** and **Mach
+Max**, so each runs only where it is meant to (VSPAERO below Mach 3, Newtonian from Mach 3, say).
+
+## Modified Newtonian and the viscous correction, in nTop
+
+These two analyses work on the implicit body itself, entirely with nTop blocks (no Run Command, no Python): the
+method of the former `ntop_newtonian` project, now built here (`build/newtonian.py`, `build/viscous.py`) and
+evaluated once per flight condition through nTop's list processing.
+
+* **Modified Newtonian (VSP)**: Cp = Cp_max max(-n.V, 0)^2 with n the unit gradient of the body's field, so any
+  implicit works; each force and moment component is one Surface Integral. Cp_max is the stagnation pressure behind
+  a normal shock above Mach 1 (Rayleigh pitot) and the isentropic one below it (both 1.839 at Mach 1), or 2
+  (Classical). No self-shadowing: correct for convex bodies, a part in another's shadow is over-loaded.
+* **Viscous Correction (VSP)**: skin friction at the inviscid edge state, hypanel's `viscous.correct`: edge pressure
+  from the Modified Newtonian Cp of each condition (or the freestream, Cp = 0, for flat-plate friction), edge total
+  pressure behind a normal shock above Mach 1 and isentropic below it, total temperature conserved; Blasius with
+  Eckert's reference temperature (laminar) and White's van Driest II (turbulent), sudden transition at a running-length
+  Reynolds number, adiabatic or fixed wall; shear along the surface flow, faded out between 30 and 60 degrees of
+  leeward inclination. The freestream pressure and temperature of each condition come from the flight condition.
+* **Modified Newtonian Pressure (VSP)** shows one condition's Cp on the body.
+
+Axes: x along **Aft Axis** (the model's +x), z toward **Up Axis**, y = z x x: CA, CY, CN along them, moments about
+them (the axes of VSPAERO too). Each writes a coefficient table, `<Flight Condition>_<Case Name>.ntvsp.coefficients.csv`,
+with Export Text, for **Coefficients Contribution (VSP)**. Accuracy is nTop's Surface Integral (about 1e-4 on smooth
+bodies, 0.1 to 1% across sharp edges, **Integration Tolerance**); validation against exact results and wind-tunnel
+data, beside hypanel's implementation, is in `validation/newtonian/REPORT.md`: sphere CD within 8e-4, 15 degree cone
+CA and CN within 0.002 and 0.010 from 0 to 60 degrees, the Apollo capsule's pressures at hypanel's RMS, skin friction
+within 0.5% of hypanel's on a plate and a cone.
+
+On the flight condition, a cone checked against the former single-condition blocks gives the same CA, CN and Cm at
+alpha 0 and within 0.15% at alpha 4 degrees (the Surface Integral's tolerance), and finite, flat-plate-like friction
+at Mach 0.6. Not carried over: the on-mesh viscous blocks (sums over VSPAERO's panel centroids instead of Surface
+Integrals). Evaluating a list of fields at a list of points makes a list of lists, which nTop does not allow, so they
+cannot run over a flight condition.
+
+**Run time.** Each condition costs six Surface Integrals for each of Newtonian and friction, about 1 to 3 s each on
+simple bodies, more on a full aircraft; use Mach Min and Max, and few angles, where Newtonian applies.
+
 ## Aero buildup: mixing analyses in one database
 
 Every source of forces and moments enters the database the same way, as a **contribution**: one line of text made by
-a contribution block, collected with other contributions in a list and connected to **Aero Database (VSP)**.
+a contribution block, collected with other contributions in a list and connected to **Aero Database (VSP)**, which
+also takes the Flight Condition (its conditions and reference).
 
-| Source | Contribution block | What the database takes |
+| Analysis | Contribution block | What the database takes |
 |---|---|---|
-| VSPAERO Analysis | VSPAERO Contribution | forces and moments of every case, inviscid (default) or with VSPAERO's own friction; reference and moment point from the run |
-| Wave Drag | Wave Drag Contribution | CD_wave against Mach (from Mach 1 by default) |
-| Parasite Drag | Parasite Drag Contribution | Total_CD against Mach |
-| `ntop_newtonian`: Modified Newtonian, Viscous Correction (supersonic, subsonic, on mesh) | their **Database Row** blocks, swept over conditions, into Coefficient Rows Contribution | one row per condition: six coefficients with their reference and moment point |
-| anything else with six numbers per condition | Aero Coefficient Row (Body or Wind axes), swept, into Coefficient Rows Contribution | the same rows |
+| VSPAERO Analysis | VSPAERO Contribution | forces and moments of every case, inviscid (default) or with VSPAERO's own friction; at each condition the run's Reynolds number nearest the condition's |
+| Wave Drag | Wave Drag Contribution | CD_wave against Mach (from Mach 1 by default), along the freestream |
+| Parasite Drag | Parasite Drag Contribution | Total_CD against Mach at the condition's altitude, along the freestream |
+| Modified Newtonian, Viscous Correction, Aero Coefficients | Coefficients Contribution | their coefficient tables (Newtonian's by Mach, alpha and beta; friction's and Aero Coefficients' by altitude too) |
 
-Each contribution has a **Mach Min** and **Mach Max** (it applies from Min up to, not including, Max), a **Scale** and,
-where it has more than drag, a **Use** choice: all forces and moments, drag only (the force component along the
-freestream), or everything but drag. So, for example:
+Each contribution applies over the Mach numbers its analysis ran (Wave Drag: none subsonic; VSPAERO, Newtonian and
+friction: their own Mach Min to Max) and within the contribution's own **Mach Min** and **Mach Max** (from Min up to,
+not including, Max). It has a **Scale** and, where it has more than drag, a **Use** choice: all forces and moments,
+drag only (the force component along the freestream), or everything but drag. So, for example:
 
-* VSPAERO below Mach 3 and Modified Newtonian from Mach 3: give the two contributions the ranges [0, 3) and [3, ...).
-* A viscous correction instead of Parasite Drag: connect its rows (Use: Drag only, or All to keep its small lift and
-  moments) and leave Parasite Drag out of the list.
+* VSPAERO below Mach 3 and Modified Newtonian from Mach 3: give VSPAERO Analysis Mach Max 3 and Modified Newtonian
+  Mach Min 3 (the analyses then only compute there, and the contributions follow).
+* The Viscous Correction instead of Parasite Drag: connect its contribution (Use: Drag only, or All to keep its small
+  lift and moments) and leave Parasite Drag out of the list.
 * Lift and moments from one source and drag from others: Use: All but drag on the first.
 
-**What the database does** (`vsp_ntop/run_database.py`). Its flight conditions are those of the first contribution
-(VSPAERO's cases, or the first rows), or every combination of Mach, Angle of Attack and Sideslip lists; its reference
-area, span, chord and moment point are the first contribution's, or given. At each condition, every contribution
-whose Mach range holds it is taken at that condition if it has it, else interpolated (multilinear between the
+**What the database does** (`vsp_ntop/run_database.py`). At each condition of the flight condition, every
+contribution that applies is taken at that condition if it has it, else interpolated (multilinear between the
 neighbouring Mach numbers, angles and sideslips; Wave and Parasite Drag linearly in Mach). It is turned into
-body-axis force and moment coefficients (x aft, y right, z up: VSPAERO's and `ntop_newtonian`'s axes), made
-dimensional with its own reference, moved to the database's moment point (M + (r - r_ref) x F) and normalised by the
-database's reference. Wave and Parasite Drag carry no moments and act through the database's moment point. The sum
-gives CL, CD and CY in wind axes (VSPAERO's: freestream (cos a cos b, -sin b, sin a cos b), CD along it, CL along
-(-sin a, 0, cos a), CY along (cos a sin b, cos b, sin a sin b)) and Cl, Cm, Cn in aircraft body-axis signs (right
-wing down, nose up, nose right). `<case>.ntvsp.database.csv` has the design variables, Mach, AoA, Beta, the totals,
-L/D, CA, CN, and each contribution's own six coefficients in columns named after it (CD_Wave_Drag, Cm_Newtonian, ...).
-The center of pressure and aerodynamic center of the totals are written for **Center of Pressure (VSP)**.
+body-axis force and moment coefficients (x aft, y right, z up), made dimensional with its own reference, moved to the
+flight condition's moment point (M + (r - r_ref) x F) and normalised by its reference. Wave and Parasite Drag carry
+no moments and act through the moment point. The sum gives CL, CD and CY in wind axes (VSPAERO's: freestream (cos a
+cos b, -sin b, sin a cos b), CD along it, CL along (-sin a, 0, cos a), CY along (cos a sin b, cos b, sin a sin b)) and
+Cl, Cm, Cn in aircraft body-axis signs (right wing down, nose up, nose right). `<case>.ntvsp.database.csv` has the
+design variables, Mach, Altitude (m), AoA, Beta, the totals, L/D, CA, CN, and each contribution's own six
+coefficients in columns named after it (CD_Wave_Drag, Cm_Newtonian, ...).
 
-**Why rows.** nTop cannot sweep a block whose output is a list (a list of lists is not allowed), so `ntop_newtonian`'s
-Coefficients blocks cannot be mapped over a list of angles, and sweeping its single-Coefficient blocks repeats every
-Surface Integral once per coefficient. A row is text, which sweeps: the Database Row blocks compute the six
-coefficients once per condition (`ntop_newtonian/row.py`). Lists swept in nTop are paired item by item, so compute
-rows at the database's conditions, make the rows themselves the database's conditions, or give paired lists that
-form a grid.
+**Center of Pressure (VSP)** takes the Aero Database: each condition's center of pressure, x_cp = x_ref - Cm cref /
+CN, or each alpha sweep's aerodynamic center (neutral point), x_ac = x_ref - (dCm/dCN) cref at each Mach number,
+altitude and sideslip, from the totals, as points with length units on the line through the moment point along x.
 
-**Checks.** The driver reproduces the earlier VSPAERO + Wave + Parasite database of the X-59 to 1e-12 in every
-coefficient. VSPAERO's coefficients re-expressed about another moment point and reference, as body rows and as wind
-rows, come back unchanged (to 1e-16). In nTop, a database mixing VSPAERO and Wave Drag below Mach 1.6, Modified
-Newtonian rows of a cone and its viscous correction (drag only) from Mach 1.6, and generic wind-axis rows on another
-reference and moment point (106 s, with `ntop_newtonian`'s real blocks) matches a hand calculation to 5e-13 at every
-condition, including Mach 2.5, interpolated between the Newtonian rows at Mach 2 and 3.
+**Checks.** The driver reproduced the earlier VSPAERO + Wave + Parasite database of the X-59 to 1e-12 in every
+coefficient, and VSPAERO's coefficients re-expressed about another moment point and reference, in body and in wind
+axes, come back unchanged (to 1e-16). A database mixing VSPAERO and Wave Drag below Mach 1.6, Modified Newtonian of a
+cone and its friction (drag only) from Mach 1.6, and wind-axis coefficients on another reference and moment point
+matched a hand calculation to 5e-13 at every condition, including Mach 2.5, interpolated between Newtonian at Mach 2
+and 3.
 
 **Polar Plot (VSP)** plots one database column against another (X and Y dropdowns: CL, CD, CY, Cl, Cm, Cn, L/D,
-CA, CN, AoA, Beta, Mach) for a list of databases, one curve per combination of the conditions that do not vary along
-the curve (**Curves Along**: angle of attack, sideslip or Mach), optionally only at zero sideslip or zero angle of
-attack. Curves of one result are shaded light to dark by condition and results differ by line style (by colour when
-each has one curve). It saves `<Case Name>.png` and by default opens the plot in matplotlib's window, which zooms,
-pans and saves; nTop does not wait for it. The window is a separate process: it stays open while nTop is, and a
-headless `ntopcl` run closes it when it exits.
+CA, CN, AoA, Beta, Mach, Altitude) for a list of databases, one curve per combination of the conditions that do not
+vary along the curve (**Curves Along**: angle of attack, sideslip or Mach), optionally only at zero sideslip or zero
+angle of attack. Curves of one result are shaded light to dark by condition and results differ by line style (by
+colour when each has one curve). It saves `<Case Name>.png` and by default opens the plot in matplotlib's window,
+which zooms, pans and saves; nTop does not wait for it. The window is a separate process: it stays open while nTop
+is, and a headless `ntopcl` run closes it when it exits.
 
 ## Aero database and design of experiments
 
-**`examples/X-59 Aero Database.ntop`**: the starter's geometry (unchanged), six component blocks (fuselage assembly
-in no VSPAERO set; wing, canards, horizontal tail, T-tail and the fin cut below the T-tail, all thin), the model, and
-a shared envelope: VSPAERO at Mach 0.6 to 1.8 (5 values) x alpha -2 to 8 degrees (6) x beta 0 and 4 degrees (60
-cases, fixed wake), Wave Drag at Mach 1.2, 1.5, 1.8 (30 slices, 30 rotation sections), Parasite Drag at the five
-Mach numbers at 16,764 m (55,000 ft), Sref 61.5 m², bref 9.04 m, cref 8.72 m (the fitted baseline wing), moments
-about the starter's CG station (x = 18.27 m). **Wing Span** and **Wing Inner Sweep** are notebook inputs, recorded
+**`examples/X-59 Aero Database.ntop`**: the starter's geometry (unchanged), three component blocks (the fuselage
+assembly in no VSPAERO set; one Wing block for the wing, canards, horizontal tail and T-tail; one for the fin, cut
+below the T-tail; all thin), the model, and one Flight Condition: Mach 0.6, 0.9, 1.2, 1.5 and 1.8 at 55,000 ft x alpha
+-2 to 8 degrees (6) x beta 0 and 4 degrees (60 conditions), Sref 61.5 m², bref 9.04 m, cref 8.72 m (the fitted
+baseline wing), moments about the starter's CG station (x = 18.27 m). VSPAERO runs every condition (fixed wake),
+Wave Drag the three supersonic Mach numbers (30 slices, 30 rotation sections), Parasite Drag the five flight
+points. **Wing Span** and **Wing Inner Sweep** are notebook inputs, recorded
 in every row. One run takes about 23 minutes on 16 threads, nearly all of it VSPAERO's subsonic cases.
 
 Baseline results at beta 0 (derivatives per degree):
@@ -337,9 +414,9 @@ above), and the wave drag carries the uncertainty of the nacelle's inlet and bas
 
 **`examples/x59_doe.py`** runs the notebook headlessly once per design with `ntopcl --trustnotebook -j inputs.json`
 (the JSON sets Wing Span and Wing Inner Sweep) and collects every run's rows in `runs/x59_doe.csv`: one table with
-Wing_Span_m, Wing_Inner_Sweep_deg, Mach, AoA, Beta, CL, CD, CY, Cl, Cm, Cn, L/D, CA, CN and each contribution's
-share (CL_VSPAERO ... Cn_Parasite_Drag). `examples/x59_doe_results.csv` was made with the earlier database layout
-(Re_cref and the drag parts as columns; the same totals). Designs: the
+Wing_Span_m, Wing_Inner_Sweep_deg, Mach, Altitude, AoA, Beta, CL, CD, CY, Cl, Cm, Cn, L/D, CA, CN and each
+contribution's share (CL_VSPAERO ... Cn_Parasite_Drag). `examples/x59_doe_results.csv` was made with the first
+database layout (Re_cref and the drag parts as columns; the same totals). Designs: the
 baseline (9 m, 68.3°), span 8 and 10 m, inner sweep 65 and 71°. `--keep` adds designs to an existing table and
 `--summary` prints the slopes per design.
 
@@ -368,8 +445,8 @@ Every option of OpenVSP 3.56's VSPAERO, Parasite Drag and Wave Drag analyses was
 
 | OpenVSP option | Here |
 |---|---|
-| Alpha, Beta, Mach, Re_cref start / end / points; Vinf, Rho, Vref (manual flag), Machref | Flow Condition |
-| Sref, bref, cref; Xcg, Ycg, Zcg | Analysis |
+| Alpha, Beta, Mach; Re_cref, Vinf, Rho (from the standard atmosphere at each flight point); Sref, bref, cref; Xcg, Ycg, Zcg | Flight Condition |
+| Vref, Machref (manual reference velocity) | not exposed: Vref = Vinf |
 | NCPU, fixed wake, wake iterations, wake nodes, far field, ground effect, freezing, implicit wake, wake relaxation, convergence factors, core size, multipole, preconditioners, quad tree, `-save`/`-restart` | Solver Settings |
 | Thick and thin geometry sets | each component's Set (Thick, Thin or None) |
 | Find body wakes | Analysis: Body Wakes |
@@ -378,19 +455,21 @@ Every option of OpenVSP 3.56's VSPAERO, Parasite Drag and Wave Drag analyses was
 | NRef (refinement levels), cull fraction, degenerate-region merging, intersection cleaning | OpenVSP's defaults |
 | `-fem`, `-interrogate` with survey points | not implemented (say if you want them) |
 
-**Parasite Drag**: geometry set, model length unit, Sref, laminar and turbulent Cf equations, speed sweep and unit,
-altitude, temperature offset, specific heat ratio and sub-component export are inputs; each component's form factor
-equations, manual form factor, % laminar, Q, roughness, Te/Tw, Taw/Tw and incorporated generation are inputs of
-Parasite Drag Component (VSP). Out of scope: atmospheres other than US Standard 1976, excrescences, Sref from a wing.
+**Parasite Drag**: geometry set, model length unit, laminar and turbulent Cf equations and sub-component export are
+inputs; Mach, altitude and Sref come from the Flight Condition (one run per flight point, Mach as the speed unit);
+each component's form factor equations, manual form factor, % laminar, Q, roughness, Te/Tw, Taw/Tw and incorporated
+generation are inputs of Parasite Drag Component (VSP). Not exposed: atmospheres other than US Standard 1976 (no
+temperature offset; gamma 1.4), excrescences, Sref from a wing.
 
-**Wave Drag**: Mach sweep, number of slices, number of rotation sections, Sref, symmetry and geometry set are
-inputs. Out of scope: inflow and outflow faces.
+**Wave Drag**: number of slices, number of rotation sections, symmetry and geometry set are inputs; the Mach numbers
+(the supersonic ones) and Sref come from the Flight Condition. Out of scope: inflow and outflow faces.
 
 ## Rebuilding and running headlessly
 
 ```bash
 sh build/py.sh build/build_blocks.py
 sh build/py.sh build/x59_example.py --run
+sh build/py.sh build/mixed_example.py --run
 sh build/py.sh examples/x59_doe.py
 sh build/py.sh validation/wave_drag_mach.py
 ```
@@ -409,6 +488,8 @@ runners stop it once the output file is written. A signed-in nTop is needed.
   are smoothed: 0.43 m at the X-59's nacelle inlet.
 * Surface pressures are read from VSPAERO's binary `.adb`; every run checks the last case against VSPAERO's Tecplot
   output. Integrated over the surface, these pressures do not give VSPAERO's forces (it computes those from its
-  vortex edges): use them for viewing and as viscous-correction edge conditions.
-* The HL-20 files in this folder (`h20*`, `hl20.*`) belong to the earlier mesh-based workflow, which these blocks
-  replace.
+  vortex edges): use them for viewing.
+* nTop pairs lists item by item: a Wing block's Span Axes must have one vector per body, and Aero Coefficients' lists
+  one value per flight condition ("Input list length mismatch" otherwise).
+* Modified Newtonian and the Viscous Correction cost Surface Integrals per condition (see above); the on-mesh friction
+  sums of the former `ntop_newtonian` cannot run over a flight condition and were not carried over.

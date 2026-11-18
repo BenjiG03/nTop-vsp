@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from ntopfile import CustomBlock, Graph, InputSpec, ModelInput, Ref
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
-DEFAULT_WORK_DIR = ROOT + "/runs"
+FALLBACK_WORK_DIR = "ntop_vsp"  # in the system temporary folder, when Working Directory is left empty
 ENV_BLOCK = "get_environment_variable<text,bool,list_interface>[5.20.0]"
 PYTHON_VARIABLE = "NTOP_PYTHON_PATH"  # a Python with this package installed (pip install -e .)
 VSP_VARIABLE = "VSP_PATH"  # the OpenVSP folder (vspscript.exe, vspaero.exe)
@@ -203,6 +203,16 @@ class Kit:
             v = self.g.block("multiply<real,real>", "real", [v, self.g.real(1.0, units)], top=False)
         return v
 
+    def choose(self, condition, if_true, if_false):
+        """``if_true`` when the bool ``condition`` holds, else ``if_false`` (texts): the pair filtered by
+        [condition, not condition], first item. nTop has no select-by-bool for text."""
+        g = self.g
+        pair = g.block("core.list<text>", "list<text>", [if_true, if_false], top=False)
+        flags = g.block("core.list<bool>", "list<bool>",
+                        [condition, g.block("not<bool>", "bool", [condition], top=False)], top=False)
+        kept = g.block("core.filter<list_interface,list<bool>>", "list<text>", [pair, flags], top=False)
+        return g.block("core.list_element<list_interface,integer>", "text", [kept, g.integer(0)], top=False)
+
     def keep(self, values, by, op, limit):
         """The items of ``values`` whose item in ``by`` compares to ``limit``: op one of == != < <= > >=."""
         code = ("==", "!=", "<", "<=", ">", ">=").index(op)
@@ -263,7 +273,8 @@ def run_inputs(default_case):
     return (
         InputSpec("Working Directory", "file_path",
                   "Folder for every file of the run (created if missing). Results stay there and the reader blocks "
-                  "load them from it.", default=d_path(DEFAULT_WORK_DIR)),
+                  "load them from it. Empty: a folder `ntop_vsp` in the system temporary folder (%TEMP%).",
+                  default=d_path("")),
         InputSpec("Case Name", "text", "Base name of the run's files. Give each concurrent run its own name.",
                   default=d_text(default_case)),
         InputSpec("Timeout", "real", "Longest time each external program may run.", TIME, d_real(7200.0, TIME)),
@@ -296,9 +307,12 @@ def analysis(g: Graph, k: Kit, inp, module, exports, settings_lines, what, needs
               + (f"; OpenVSP is the folder named by `{VSP_VARIABLE}`." if needs_openvsp else "."))
     python = environment(g, PYTHON_VARIABLE, "Python")
     temp = environment(g, "TEMP", "Temporary Folder Path")
-    g.comment("**Run folder.** The Working Directory is created if it does not exist; every file of this run "
-              "is named after the Case Name inside it.")
-    work = k.cat([inp("Working Directory")], name="Working Directory Text")
+    g.comment("**Run folder.** The Working Directory, or `ntop_vsp` in the system temporary folder when it is left "
+              "empty, is created if it does not exist; every file of this run is named after the Case Name inside it.")
+    given = k.cat([inp("Working Directory")])
+    empty = g.block("equals<text,text>", "bool", [given, k.t("")], top=False)
+    work = g.block("core.var<text>", "text", [k.choose(empty, k.cat([temp, "/" + FALLBACK_WORK_DIR]), given)],
+                   "Working Directory Text")
     base = k.cat([work, "/", inp("Case Name")], name="Results Base")
     mkdir = k.run_command(k.cat(['"', python, '" -c "import os,sys; os.makedirs(sys.argv[1], exist_ok=True)" "',
                                  work, '"']), temp, inp("Timeout"), name="Create Working Directory")
@@ -320,13 +334,14 @@ def analysis(g: Graph, k: Kit, inp, module, exports, settings_lines, what, needs
     after = command
     for w in [written] + list(waits):
         after = k.wait(w, after)
-    rc = k.run_command(after, inp("Working Directory"), inp("Timeout"), name="Run Driver")
+    rc = k.run_command(after, work, inp("Timeout"), name="Run Driver")
     ok = k.check(rc, what)
     return k.wait(ok, base, name="Results")
 
 
-def make_block(key, display, description, specs, output_type, g, output):
-    return CustomBlock(key, display, MD + description, tuple(specs), output_type, g, output, side_effects=True)
+def make_block(key, display, description, specs, output_type, g, output, requires=()):
+    return CustomBlock(key, display, MD + description, tuple(specs), output_type, g, output, side_effects=True,
+                       requires=tuple(requires))
 
 
 def model_inputs(specs):

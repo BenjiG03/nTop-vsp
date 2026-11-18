@@ -80,8 +80,9 @@ with Export Text.
 
 The blocks read both with nTop's **Get Environment Variable** block, so they have no Python, driver or OpenVSP path
 inputs; a missing variable stops the notebook with nTop's "Environment variable ... is not set". The only path
-input left is each driver block's **Working Directory** (default: `runs/` here); Modified Newtonian, Viscous
-Correction and Aero Coefficients write next to their Flight Condition's files. nTop asks once to trust Run Command
+input left is each driver block's **Working Directory**, empty by default: then the files go to a folder `ntop_vsp`
+in the system temporary folder (%TEMP%). Modified Newtonian, Viscous Correction and Aero Coefficients write next to
+their Flight Condition's files. nTop asks once to trust Run Command
 blocks.
 
 ## Blocks
@@ -109,6 +110,7 @@ blocks.
 | Modified Newtonian Pressure (VSP) | scalar field | the Modified Newtonian Cp of one condition, to view on the body |
 | Viscous Correction (VSP) | results path | an implicit body's skin-friction forces and moments at every condition (standard-atmosphere edge state), computed in nTop |
 | Aero Coefficients (VSP) | results path | six lists of coefficients from anywhere, one value per flight condition, as a coefficient table |
+| Aero Contribution (VSP) | text | the common contribution block: source, results, name, terms, use, Mach range, scale, all with defaults; the blocks below wrap it |
 | VSPAERO Contribution (VSP) | text | a VSPAERO run for the database: inviscid or total coefficients, which forces to use, Mach range, scale |
 | Wave Drag Contribution (VSP) | text | a Wave Drag run for the database: CD_wave(Mach) along the freestream, Mach range (default from 1), scale |
 | Parasite Drag Contribution (VSP) | text | a Parasite Drag run for the database: CD(Mach, altitude) along the freestream, Mach range, scale |
@@ -207,6 +209,11 @@ OpenVSP's own default fuselage and wing:
   **Panel Aspect Ratio**.
 * Thin surfaces that cross each other near a tip make VSPAERO return NaN above Mach 1: the X-59's fin rises 55 mm
   through its T-tail. Cut such a surface in nTop (the example cuts the fin 65 mm below the T-tail).
+* **Parallel cases.** VSPAERO solves its cases one after another, each on all its threads (**Processors**). nTop runs
+  independent blocks at the same time (two Run Commands in one notebook started together in a test), so to spread a
+  large sweep over cases, split it into two or more VSPAERO Analysis blocks with adjacent Mach ranges (**Mach Min**,
+  **Mach Max**), separate Case Names and the threads shared out, and give each its own VSPAERO Contribution: the
+  database takes each where it has values. For several designs, run separate `ntopcl` processes.
 * **Wake Nodes** default 16 (OpenVSP's GUI writes 64): on the X-59 at Mach 1.6 the coefficients agree within 0.2% and
   the run is 20 times faster. A fixed wake changed CL by under 0.1% there and is about four times faster than a
   relaxed one; the example uses it.
@@ -326,9 +333,14 @@ simple bodies, more on a full aircraft; use Mach Min and Max, and few angles, wh
 
 ## Aero buildup: mixing analyses in one database
 
-Every source of forces and moments enters the database the same way, as a **contribution**: one line of text made by
-a contribution block, collected with other contributions in a list and connected to **Aero Database (VSP)**, which
-also takes the Flight Condition (its conditions and reference).
+Every source of forces and moments enters the database the same way, as a **contribution**, collected with other
+contributions in a list and connected to **Aero Database (VSP)**, which also takes the Flight Condition (its
+conditions and reference). Every contribution is made by one block, **Aero Contribution (VSP)**: Source, Results,
+Name, Terms, Use, Mach Min, Mach Max and Scale, all with defaults. It checks that Results is connected and writes one
+`contribution.<key> = <value>` line per setting (names and paths may hold any character but a line break). The
+per-source blocks (VSPAERO, Wave Drag, Parasite Drag and Coefficients Contribution) are wrappers: custom blocks that
+call it with their source fixed, their own defaults and only the inputs that matter for that source. The database
+checks that every item of its Contributions list is one.
 
 | Analysis | Contribution block | What the database takes |
 |---|---|---|

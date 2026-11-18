@@ -3,8 +3,8 @@
     python -m vsp_ntop.run_database SETTINGS_FILE
 
 The database's conditions (every flight point x sideslip x angle of attack) and its reference (Sref, bref, cref,
-moment point) are those of the Flight Condition ``flight``. Each ``contribution = kind: ...; name: ...; ...``
-line of the settings file is one source of forces and moments:
+moment point) are those of the Flight Condition ``flight``. Each group of ``contribution.<key> = <value>`` lines
+(written by Aero Contribution (VSP), starting with ``contribution.kind``) is one source of forces and moments:
 
 * ``vspaero``: a VSPAERO run (``results``), its inviscid (``terms: inviscid``, CFi*, CMi*) or total (``terms:
   total``, with VSPAERO's own skin-friction estimate) coefficients; at each condition the run's Reynolds number
@@ -318,17 +318,21 @@ class Contribution:
 
 
 def parse_contributions(path):
+    """``contribution.<key> = <value>`` lines, as Aero Contribution (VSP) writes them: each ``contribution.kind``
+    starts a contribution, and the following ``contribution.*`` lines are its settings."""
     out = []
     for line in open(path, encoding="utf-8"):
-        key, _, value = line.partition("=")
-        if key.strip() != "contribution" or not value.strip():
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        if not sep or not key.startswith("contribution."):
             continue
-        c = {}
-        for item in value.split(";"):
-            k, sep, v = item.partition(":")
-            if sep:
-                c[k.strip()] = v.strip()
-        out.append(c)
+        field = key[len("contribution."):]
+        if field == "kind":
+            out.append({"kind": value.strip()})
+        elif not out:
+            raise DriverError(f"'{line.strip()}' comes before any contribution.kind line")
+        else:
+            out[-1][field] = value.strip()
     return out
 
 
@@ -378,7 +382,12 @@ def main(settings_path):
     os.makedirs(work, exist_ok=True)
     log = Log(os.path.join(work, case + ".ntvsp.log"))
     flight = Flight(s.text("flight"))
-    parts = [Contribution(c, log) for c in parse_contributions(settings_path)]
+    found = parse_contributions(settings_path)
+    expected = s.integer("contribution_count", len(found))
+    if len(found) != expected:
+        raise DriverError(f"Contributions has {expected} items but {len(found)} are contributions: connect outputs of "
+                          "Aero Contribution (VSP) or the per-source contribution blocks, not the analyses themselves")
+    parts = [Contribution(c, log) for c in found]
     if not parts:
         raise DriverError("no contributions connected")
     names, seen = [], {}

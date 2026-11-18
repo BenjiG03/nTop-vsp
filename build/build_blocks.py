@@ -27,6 +27,7 @@ from ntopfile import save_block  # noqa: E402
 def blocks():
     """(file stem, block): the model blocks, the flight condition, each analysis with its settings and readers, then
     the buildup."""
+    base = b.contribution_block()
     return [
         ("OpenVSP Fuselage (VSP)", m.fuselage_block()),
         ("OpenVSP Wing (VSP)", m.wing_block()),
@@ -49,10 +50,11 @@ def blocks():
         ("Modified Newtonian Pressure (VSP)", a.newtonian_pressure_block()),
         ("Viscous Correction (VSP)", a.viscous_block()),
         ("Aero Coefficients (VSP)", a.coefficients_block()),
-        ("VSPAERO Contribution (VSP)", b.vspaero_contribution_block()),
-        ("Wave Drag Contribution (VSP)", b.drag_contribution_block("wave")),
-        ("Parasite Drag Contribution (VSP)", b.drag_contribution_block("parasite")),
-        ("Coefficients Contribution (VSP)", b.coefficients_contribution_block()),
+        ("Aero Contribution (VSP)", base),
+        ("VSPAERO Contribution (VSP)", b.vspaero_contribution_block(base)),
+        ("Wave Drag Contribution (VSP)", b.drag_contribution_block("wave", base)),
+        ("Parasite Drag Contribution (VSP)", b.drag_contribution_block("parasite", base)),
+        ("Coefficients Contribution (VSP)", b.coefficients_contribution_block(base)),
         ("Aero Database (VSP)", b.database_block()),
         ("Aero Database Coefficient (VSP)", b.database_coefficient_block()),
         ("Aero Database Table (VSP)", b.database_table_block()),

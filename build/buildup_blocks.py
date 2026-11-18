@@ -1,116 +1,158 @@
 """Aero buildup blocks: contributions from any analysis, the Aero Database that sums them, its readers and plots.
 
-A **contribution** is one line of text naming a source of forces and moments and how to use it: a VSPAERO run, a
-Wave Drag run, a Parasite Drag run, or a coefficient table made in nTop (Modified Newtonian, Viscous Correction,
-Aero Coefficients). **Aero Database (VSP)** takes a Flight Condition (its conditions and reference) and a list of
-contributions; it takes each at the database's conditions (interpolating where needed), moves it to the reference
-and moment point, keeps it only inside its Mach range, and sums them (``vsp_ntop.run_database``).
+A **contribution** tells the database where one source of forces and moments is and how to use it. Every
+contribution is made by one block, **Aero Contribution (VSP)**, whose inputs all have defaults; the per-source
+blocks (VSPAERO, Wave Drag, Parasite Drag, Coefficients, nTop Fluids Contribution) wrap it with that source's
+defaults and only the inputs that matter for it. Its output is a few ``contribution.<key> = <value>`` lines, one
+setting per line, so names and paths may hold any character but a line break. **Aero Database (VSP)** takes a
+Flight Condition (its conditions and reference) and a list of contributions; it takes each at the database's
+conditions (interpolating where needed), moves it to the reference and moment point, keeps it only inside its Mach
+range, and sums them (``vsp_ntop.run_database``).
 """
 from __future__ import annotations
 
 from ntopfile import Graph, InputSpec
 
-from kit import (FLIGHT_INPUT, Kit, analysis, d_choice, d_real, d_text, make_block, model_inputs, run_inputs)
+from kit import (FLIGHT_INPUT, Kit, analysis, d_choice, d_real, d_text, make_block, model_inputs, prop, run_inputs)
 
 USE = ("All forces and moments", "Drag only (force along the freestream)", "All but drag")
 USE_KEYS = ("all", "drag", "nodrag")
-
-
-def range_inputs(mach_min=0.0, what="it"):
-    return (
-        InputSpec("Mach Min", "real", f"Lowest Mach number at which {what} applies.", default=d_real(mach_min)),
-        InputSpec("Mach Max", "real", f"{what[0].upper() + what[1:]} applies below this Mach number (not at it), so "
-                  "contributions that hand over at one Mach number do not overlap.", default=d_real(1000.0)),
-        InputSpec("Scale", "real", "Factor on every force and moment of this contribution (1: as computed).",
-                  default=d_real(1.0)),
-    )
-
+SOURCES = ("VSPAERO", "Wave Drag", "Parasite Drag",
+           "Coefficient table (Modified Newtonian, Viscous Correction, nTop Fluids, Aero Coefficients)")
+SOURCE_KEYS = ("vspaero", "wave", "parasite", "coefficients")
+SOURCE_NAMES = ("VSPAERO", "Wave Drag", "Parasite Drag", "Coefficients")
+VSPAERO_TERMS = ("Inviscid (surface pressure: CFi, CMi)", "Total (with VSPAERO's own skin-friction estimate)")
 
 USE_INPUT = InputSpec("Use", "choice", "All: every force and moment. Drag only: just the force component along the "
                       "freestream, no moments (to take only drag from this source). All but drag: everything else "
                       "(to take lift, side force and moments from this source and drag from others).",
                       default=d_choice(USE))
+TERMS_INPUT = InputSpec("Terms", "choice", "VSPAERO only. Inviscid: VSPAERO's surface-pressure forces and moments, for "
+                        "databases whose friction comes from Parasite Drag or a viscous correction. Total: with "
+                        "VSPAERO's own skin-friction estimate (the o columns).", default=d_choice(VSPAERO_TERMS))
+RANGE_DOC = ("**Mach range.** The database uses a contribution where its analysis has values and from Mach Min up to "
+             "(not including) Mach Max, so one source can hand over to another: for example VSPAERO below Mach 3 and "
+             "Modified Newtonian from Mach 3.")
 
 
-def range_text(k, inp, with_use=True):
-    parts = ["; mach_min: ", k.num(inp("Mach Min")), "; mach_max: ", k.num(inp("Mach Max")), "; scale: ",
-             k.num(inp("Scale"))]
-    if with_use:
-        parts += ["; use: ", k.pick(inp("Use"), USE_KEYS)]
-    return parts
+def range_inputs(mach_min=0.0, mach_max=1000.0):
+    return (
+        InputSpec("Mach Min", "real", "Lowest Mach number at which the database uses this contribution.",
+                  default=d_real(mach_min)),
+        InputSpec("Mach Max", "real", "The database uses this contribution below this Mach number (not at it), so "
+                  "contributions that hand over at one Mach number do not overlap.", default=d_real(mach_max)),
+        InputSpec("Scale", "real", "Factor on every force and moment of this contribution (1: as computed).",
+                  default=d_real(1.0)),
+    )
 
 
-RANGE_DOC = ("**Mach range.** The database uses this contribution from Mach Min up to (not including) Mach Max, so "
-             "one source can hand over to another: for example VSPAERO below Mach 3 and Modified Newtonian from Mach 3.")
+# --- the common contribution block ------------------------------------------------------------------------------------
 
-# --- contributions ---------------------------------------------------------------------------------------------------
-
-VSPAERO_TERMS = ("Inviscid (surface pressure: CFi, CMi)", "Total (with VSPAERO's own skin-friction estimate)")
-
-
-def vspaero_contribution_block():
+def contribution_block():
     specs = (
-        InputSpec("Results", "text", "Output of VSPAERO Analysis (VSP)."),
-        InputSpec("Name", "text", "Name of this contribution in the database's columns.", default=d_text("VSPAERO")),
-        InputSpec("Terms", "choice", "Inviscid: VSPAERO's surface-pressure forces and moments, for databases whose "
-                  "friction comes from Parasite Drag or a viscous correction. Total: with VSPAERO's own skin-friction "
-                  "estimate (the o columns).", default=d_choice(VSPAERO_TERMS)),
+        InputSpec("Source", "choice", "Which kind of analysis Results comes from.", default=d_choice(SOURCES)),
+        InputSpec("Results", "text", "Output of the analysis: VSPAERO Analysis, Wave Drag, Parasite Drag, or a block "
+                  "that writes a coefficient table (Modified Newtonian, Viscous Correction, nTop Fluids, Aero "
+                  "Coefficients).", default=d_text("")),
+        InputSpec("Name", "text", "Name of this contribution in the database's columns. Empty: the source's name.",
+                  default=d_text("")),
+        TERMS_INPUT,
         USE_INPUT,
-    ) + range_inputs(0.0)
+    ) + range_inputs()
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**VSPAERO contribution.** One line of text for **Aero Database (VSP)**: the run's results path and how "
-              "to use them. The database reads the body-axis force and moment coefficients of every case from the "
-              "run's polar, and its reference and moment point from the run's settings.\n\n" + RANGE_DOC)
-    out = k.cat(["kind: vspaero; name: ", inp("Name"), "; results: ", inp("Results"), "; terms: ",
-                 k.pick(inp("Terms"), ("inviscid", "total"))] + range_text(k, inp), name="Contribution")
-    return make_block("contribution_vspaero", "VSPAERO Contribution (VSP)",
-                      "A VSPAERO run as a contribution to **Aero Database (VSP)**: its forces and moments over its Mach x "
-                      "alpha x beta cases, inviscid or with VSPAERO's own friction, within a Mach range.",
-                      specs, "text", g, out)
+    g.comment("**Aero contribution.** The one block every contribution goes through: the per-source contribution "
+              "blocks call it with their own defaults. It checks that Results is connected and writes the settings "
+              "the database reads, one per line: `contribution.kind`, `name`, `results`, `terms`, `use`, `mach_min`, "
+              "`mach_max`, `scale`.\n\n" + RANGE_DOC)
+    results = k.cat([inp("Results")])
+    connected = g.block("not_equal<text,text>", "bool", [results, k.t("")], top=False)
+    check = g.block("core.validate<bool,text,message_type_enum>", "text",
+                    [connected, k.t("Aero Contribution: connect an analysis's output to Results"),
+                     g.enum("message_type_enum", 1)], "Results Connected")
+    name = k.choose(g.block("equals<text,text>", "bool", [inp("Name"), k.t("")], top=False),
+                    k.pick(inp("Source"), SOURCE_NAMES), inp("Name"))
+    lines = k.cat(["contribution.kind = ", k.pick(inp("Source"), SOURCE_KEYS),
+                   "\ncontribution.name = ", name,
+                   "\ncontribution.results = ", results,
+                   "\ncontribution.terms = ", k.pick(inp("Terms"), ("inviscid", "total")),
+                   "\ncontribution.use = ", k.pick(inp("Use"), USE_KEYS),
+                   "\ncontribution.mach_min = ", k.num(inp("Mach Min")),
+                   "\ncontribution.mach_max = ", k.num(inp("Mach Max")),
+                   "\ncontribution.scale = ", k.num(inp("Scale"))])
+    out = k.wait(check, lines, name="Contribution")
+    return make_block("aero_contribution", "Aero Contribution (VSP)",
+                      "One source of forces and moments for **Aero Database (VSP)**: which analysis (Source), its "
+                      "output (Results), a name for its columns, which forces to use, the Mach range it applies over "
+                      "and a scale factor. Every input has a default; the per-source contribution blocks call this "
+                      "one.", specs, "text", g, out)
 
 
-def drag_contribution_block(kind):
+def _wrapper(key, display, description, source, own, comment, base):
+    """A contribution block for one source: its own inputs (by name, among Results, Name, Terms, Use, Mach Min,
+    Mach Max, Scale), the rest fixed at the common block's defaults, calling the common block."""
+    names = [s.name for s in own]
+    g = Graph()
+    k = Kit(g)
+    inp = model_inputs(own)
+    g.comment(comment + "\n\n" + RANGE_DOC)
+    values = []
+    for spec in base.inputs:
+        if spec.name == "Source":
+            values.append(g.choice(list(SOURCES), SOURCE_KEYS.index(source)))
+        elif spec.name in names:
+            values.append(inp(spec.name))
+        else:
+            values.append(spec.default(g))
+    out = g.block(base.signature, base.output_type, values, "Contribution")
+    return make_block(key, display, description, own, "text", g, out, requires=(base,))
+
+
+def vspaero_contribution_block(base=None):
+    base = base or contribution_block()
+    own = (InputSpec("Results", "text", "Output of VSPAERO Analysis (VSP)."),
+           InputSpec("Name", "text", "Name of this contribution in the database's columns.", default=d_text("VSPAERO")),
+           TERMS_INPUT, USE_INPUT) + range_inputs()
+    return _wrapper("contribution_vspaero", "VSPAERO Contribution (VSP)",
+                    "A VSPAERO run as a contribution to **Aero Database (VSP)**: its forces and moments over its cases, "
+                    "inviscid or with VSPAERO's own friction, within a Mach range.", "vspaero", own,
+                    "**VSPAERO contribution**, through Aero Contribution (VSP). The database reads the body-axis force "
+                    "and moment coefficients of every case from the run's polar (at each condition the run's Reynolds "
+                    "number nearest the condition's), and the reference and moment point from the run's flight "
+                    "condition.", base)
+
+
+def drag_contribution_block(kind, base=None):
+    base = base or contribution_block()
     wave = kind == "wave"
     title = "Wave Drag" if wave else "Parasite Drag"
-    specs = (
-        InputSpec("Results", "text", f"Output of {title} (VSP)."),
-        InputSpec("Name", "text", "Name of this contribution in the database's columns.", default=d_text(title)),
-    ) + range_inputs(1.0 if wave else 0.0)
-    g = Graph()
-    k = Kit(g)
-    inp = model_inputs(specs)
-    g.comment(f"**{title} contribution.** One line of text for **Aero Database (VSP)**. {title} is a drag coefficient "
-              "per Mach number: the database interpolates it linearly in Mach and applies it along the freestream at "
-              "every angle, through the database's moment point (no moments)."
-              + (" Mach Min defaults to 1: wave drag is zero subsonic." if wave else "") + "\n\n" + RANGE_DOC)
-    out = k.cat([f"kind: {kind}; name: ", inp("Name"), "; results: ", inp("Results")] + range_text(k, inp, False),
-                name="Contribution")
-    return make_block(f"contribution_{kind}", f"{title} Contribution (VSP)",
-                      f"A {title} run as a contribution to **Aero Database (VSP)**: a drag coefficient per Mach number, "
-                      "applied along the freestream at every angle, within a Mach range.", specs, "text", g, out)
+    own = (InputSpec("Results", "text", f"Output of {title} (VSP)."),
+           InputSpec("Name", "text", "Name of this contribution in the database's columns.", default=d_text(title))) + \
+        range_inputs(1.0 if wave else 0.0)
+    return _wrapper(f"contribution_{kind}", f"{title} Contribution (VSP)",
+                    f"A {title} run as a contribution to **Aero Database (VSP)**: a drag coefficient per Mach number"
+                    + ("" if wave else " (and altitude)") + ", applied along the freestream at every angle, within a "
+                    "Mach range.", kind, own,
+                    f"**{title} contribution**, through Aero Contribution (VSP). {title} is a drag coefficient per Mach "
+                    "number" + ("" if wave else " at each flight point's altitude") + ": the database interpolates it "
+                    "linearly in Mach and applies it along the freestream at every angle, through the moment point (no "
+                    "moments)." + (" Mach Min defaults to 1: wave drag is zero subsonic." if wave else ""), base)
 
 
-def coefficients_contribution_block():
-    specs = (
-        InputSpec("Results", "text", "Output of Modified Newtonian (VSP), Viscous Correction (VSP) or Aero Coefficients "
-                  "(VSP): a coefficient table, one row per flight condition."),
-        InputSpec("Name", "text", "Name of this contribution in the database's columns.", default=d_text("Newtonian")),
-        USE_INPUT,
-    ) + range_inputs(0.0)
-    g = Graph()
-    k = Kit(g)
-    inp = model_inputs(specs)
-    g.comment("**Coefficients contribution.** A coefficient table computed in nTop as one line of text for **Aero "
-              "Database (VSP)**. The database takes it where it has values: over its own Mach range (an analysis "
-              "computed between its own Mach Min and Max) and, for tables by altitude (Viscous Correction, Aero "
-              "Coefficients), at its own altitudes; between its Mach numbers and angles it interpolates.\n\n" + RANGE_DOC)
-    out = k.cat(["kind: coefficients; name: ", inp("Name"), "; results: ", inp("Results")] + range_text(k, inp),
-                name="Contribution")
-    return make_block("contribution_coefficients", "Coefficients Contribution (VSP)",
-                      "Coefficients computed in nTop (Modified Newtonian, Viscous Correction, Aero Coefficients) as a "
-                      "contribution to **Aero Database (VSP)**, within a Mach range.", specs, "text", g, out)
+def coefficients_contribution_block(base=None):
+    base = base or contribution_block()
+    own = (InputSpec("Results", "text", "Output of Modified Newtonian (VSP), Viscous Correction (VSP), nTop Fluids "
+                     "(VSP) or Aero Coefficients (VSP): a coefficient table, one row per flight condition."),
+           InputSpec("Name", "text", "Name of this contribution in the database's columns.", default=d_text("Newtonian")),
+           USE_INPUT) + range_inputs()
+    return _wrapper("contribution_coefficients", "Coefficients Contribution (VSP)",
+                    "Coefficients computed in nTop (Modified Newtonian, Viscous Correction, nTop Fluids, Aero "
+                    "Coefficients) as a contribution to **Aero Database (VSP)**, within a Mach range.", "coefficients",
+                    own, "**Coefficients contribution**, through Aero Contribution (VSP). The database takes the table "
+                    "where it has values: over its own Mach range and, for tables by altitude (Viscous Correction, nTop "
+                    "Fluids, Aero Coefficients), at its own altitudes; between its Mach numbers and angles it "
+                    "interpolates.", base)
 
 
 # --- database ----------------------------------------------------------------------------------------------------------
@@ -124,8 +166,9 @@ def database_block():
         InputSpec("Flight Condition", "text", "Output of Flight Condition (VSP): the database's conditions (every "
                   "flight point x sideslip x angle of attack) and its reference area, span, chord and moment point. "
                   "Normally the one the analyses ran on."),
-        InputSpec("Contributions", "list<text>", "The contributions to sum: outputs of VSPAERO, Wave Drag, Parasite "
-                  "Drag and Coefficients Contribution (VSP), in any number and order."),
+        InputSpec("Contributions", "list<text>", "The contributions to sum: outputs of Aero Contribution (VSP) or of "
+                  "the per-source contribution blocks (VSPAERO, Wave Drag, Parasite Drag, Coefficients, nTop Fluids), "
+                  "in any number and order."),
         InputSpec("Variable Names", "list<text>", "Names of design variables to record with every row (e.g. geometry "
                   "inputs of a design of experiments). Empty list item: none.",
                   default=lambda g: g.block("core.list<text>", "list<text>", [g.text("")], top=False)),
@@ -150,9 +193,10 @@ def database_block():
               "Cn, L_over_D, CA, CN, then each contribution's own six coefficients (columns named after it). Also the "
               "centre of pressure and aerodynamic centre files read by **Center of Pressure (VSP)**. With Append To, "
               "the rows are added to that file as well.")
-    contrib = k.cat(["contribution = ", k.join(inp("Contributions"), "\ncontribution = "), "\n"])
+    contrib = k.cat([k.join(inp("Contributions"), "\n"), "\n"])
     lines = [
         contrib,
+        k.line("contribution_count", k.num(prop(inp("Contributions"), "size"))),
         k.line("flight", inp("Flight Condition")),
         k.line("append_to", inp("Append To")),
         k.line("variables", k.join(inp("Variable Names"))),

@@ -70,6 +70,7 @@ class Derived:
     def save(self, path, graph: Graph, blocks=(), output=None, output_type="", display="X-59 example", description=""):
         used = [int(m.group(1)) for s in self.secs for m in [re.fullmatch(r"sf(\d+)", s.name)] if m]
         first = max(used, default=-1) + 1
+        blocks = ntopfile.with_dependencies(blocks, first)
         embedded = []
         for k, block in enumerate(blocks):
             parts = block.sections(prefix=f"sf{first + k}")

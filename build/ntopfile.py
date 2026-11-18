@@ -8,7 +8,7 @@ bottom turn it into container sections. Container reading and writing comes from
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from implicit_io.file_processing import nbgen
 from implicit_io.file_processing import ntop_container as nc
@@ -223,6 +223,7 @@ class CustomBlock:
     side_effects: bool = True
     function_id: str = ""  # keeps the id of a block saved from nTop; default derives one from the key
     dependencies: tuple = ()  # indices of the custom blocks this one calls, among the embedded sf sections
+    requires: tuple = field(default=(), compare=False)  # the custom blocks this one calls (set dependencies on save)
 
     @property
     def signature(self) -> str:
@@ -269,12 +270,39 @@ def _template_sections(top_count, path=TEMPLATE):
     return secs
 
 
+def embed_order(blocks) -> list:
+    """``blocks`` and every block they require, each once, required blocks before the blocks that call them."""
+    out = []
+
+    def add(b):
+        for r in b.requires:
+            add(r)
+        if all(x.key != b.key for x in out):
+            out.append(b)
+
+    for b in blocks:
+        add(b)
+    return out
+
+
+def with_dependencies(blocks, first=0) -> list:
+    """The blocks to embed as sf sections numbered from ``first``: ``blocks`` and what they require, each with
+    ``dependencies`` set to the sf numbers of the blocks it calls."""
+    order = embed_order(blocks)
+    number = {b.key: first + i for i, b in enumerate(order)}
+    return [replace(b, dependencies=tuple(number[r.key] for r in b.requires)) for b in order]
+
+
 def save_block(block: CustomBlock, path, template=TEMPLATE, embedded=()) -> str:
     """Write the block as its own .ntop file, importable with File > Import.
 
-    ``embedded`` are the custom blocks it calls, in the order its ``dependencies`` index; they are stored as
-    sf sections, as nTop stores a custom block that uses other custom blocks.
+    The custom blocks it calls (``block.requires``, or ``embedded`` in the order its ``dependencies`` index) are
+    stored as sf sections, as nTop stores a custom block that uses other custom blocks.
     """
+    if block.requires:
+        embedded = with_dependencies(block.requires)
+        number = {b.key: i for i, b in enumerate(embedded)}
+        block = replace(block, dependencies=tuple(number[r.key] for r in block.requires))
     secs = _template_sections(len(block.graph.top), template)
     keep = [s for s in secs if s.name not in ("main",) and not s.name.startswith(("inp", "sf"))]
     head = [s for s in keep if s.name == "turhe"]
@@ -295,6 +323,7 @@ def save_host(graph: Graph, blocks, path, output=None, output_type="", name="hos
     keep = [s for s in secs if s.name != "main" and not s.name.startswith(("inp", "sf"))]
     head = [s for s in keep if s.name == "turhe"]
     tail = [s for s in keep if s.name != "turhe"]
+    blocks = with_dependencies(blocks)
     embedded = []
     for i, block in enumerate(blocks):
         parts = block.sections(prefix=f"sf{i}")

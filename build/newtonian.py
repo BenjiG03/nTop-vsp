@@ -22,7 +22,15 @@ from dataclasses import dataclass
 from ntopfile import Graph, InputSpec, Ref
 from ops import ANGLE, AREA, LENGTH, Ops
 
-CP_MAX_MODES = ("Modified (Rayleigh Pitot)", "Classical (Cp_max = 2)")
+CP_MAX_MODES = ("Modified (Rayleigh Pitot)", "Classical (Cp_max = 2)", "User Defined (Cp Max Field)")
+CP_MAX_FIELD_DOC = ("Cp_max when Stagnation Pressure is User Defined: a scalar field, so it may vary over the body "
+                    "(for example one value on the fins and another on the nose). A constant is a field too. "
+                    "Ignored by the other choices.")
+
+
+def default_cp_max_field(g):
+    """The User Defined Cp_max default: the constant field 2 (classical Newtonian)."""
+    return g.leaf("real_field", {"expression": "2", "units": {}})
 COEFFICIENTS = ("CA", "CY", "CN", "CD", "CL", "Cl", "Cm", "Cn", "Cp_max")
 OUTPUTS = ("Coefficients", "Pressure Coefficient")
 
@@ -49,7 +57,9 @@ INPUTS = (
     InputSpec("Reference Length", "real", "Normalizes moment coefficients.", LENGTH, _real(1.0, LENGTH)),
     InputSpec("Moment Center", "point", "Point the moments are taken about.", default=lambda g: g.point(0, 0, 0)),
     InputSpec("Stagnation Pressure", "choice",
-              "Modified: Cp_max behind a normal shock (Rayleigh pitot formula). Classical: Cp_max = 2.", default=_choice(CP_MAX_MODES)),
+              "Modified: Cp_max behind a normal shock (Rayleigh pitot formula). Classical: Cp_max = 2. User Defined: "
+              "the Cp Max Field.", default=_choice(CP_MAX_MODES)),
+    InputSpec("Cp Max Field", "real_field", CP_MAX_FIELD_DOC, default=default_cp_max_field),
     InputSpec("Integration Tolerance", "real", "Relative error of nTop's Surface Integral.", default=_real(1e-3)),
 )
 
@@ -120,9 +130,12 @@ def build(g: Graph, inp, with_moments=True, integrate_forces=True) -> Newtonian:
     x, y, z, v, (ca, sa, cb, sb) = freestream(o, inp)
     g.comment("**2. Stagnation pressure coefficient.** Modified: Cp_max = 2/(gamma M^2) (p02/p_inf - 1), with p02/p_inf "
               "from the Rayleigh pitot formula above Mach 1 and the isentropic total pressure below it. Classical: "
-              "Cp_max = 2. The Stagnation Pressure dropdown picks one (a 0/1 weighting, so it works on lists).")
-    cp_max = o.pick(inp("Stagnation Pressure"), [cp_max_stagnation(o, inp("Mach"), inp("Gamma")), o.real(2.0)],
-                    name="Cp Max")
+              "Cp_max = 2. User Defined: the Cp Max Field, which may vary over the body. The Stagnation Pressure "
+              "dropdown picks one (0/1 weightings, so it works on lists).")
+    cp_max = o.pick(inp("Stagnation Pressure"), [cp_max_stagnation(o, inp("Mach"), inp("Gamma")), o.real(2.0),
+                                                 o.real(0.0)], name="Cp Max")
+    user = o.select(inp("Stagnation Pressure"), [o.real(0.0), o.real(0.0), o.real(1.0)])
+    cp_max_field = o.fadd(o.fmul(inp("Cp Max Field"), user), cp_max, name="Cp Max Field Used")
     body = inp("Body")
     v_up = o.vscale(v, o.real(-1.0))
     g.comment("**3. Surface pressure field.** The unit normal is n = grad f / |grad f| of the Body's field, so any implicit "
@@ -130,7 +143,7 @@ def build(g: Graph, inp, with_moments=True, integrate_forces=True) -> Newtonian:
               "away from the flow. Pressure Coefficient = Cp_max * (Impact Sine)^2 (Lees' modified Newtonian). There is "
               "no self-shadowing.")
     normal, sine = surface_fields(o, body, v_up)
-    cp = o.fmul(o.fsq(sine), cp_max, name="Pressure Coefficient")
+    cp = o.fmul(o.fsq(sine), cp_max_field, name="Pressure Coefficient")
 
     coefficients = integrate(o, inp, body, cp, normal, (x, y, z), (ca, sa, cb, sb), with_moments) if integrate_forces else {}
     coefficients["Cp_max"] = cp_max
@@ -173,7 +186,8 @@ def integrate(o: Ops, inp, body, cp, normal, frame, trig, with_moments=True):
 METHOD_DOC = """
 **Method.** Modified Newtonian impact (Lees): `Cp = Cp_max * max(-n.V, 0)^2`, with `n` the unit gradient of the Body
 and `V` the unit freestream velocity. Surfaces facing away from the flow carry no pressure; there is no self-shadowing.
-Cp_max is the stagnation value behind a normal shock (Rayleigh pitot formula), or 2 for classical Newtonian.
+Cp_max is the stagnation value behind a normal shock (Rayleigh pitot formula), 2 for classical Newtonian, or a
+User Defined scalar field (Cp Max Field), which may vary over the body.
 
 **Forces.** Each component is one Surface Integral: `C_F.e = -(1/S_ref) * integral(Cp n.e dA)`, and moments about the
 Moment Center are `-(1/(S_ref L_ref)) * integral(Cp n.(e x (r - c)) dA)`.

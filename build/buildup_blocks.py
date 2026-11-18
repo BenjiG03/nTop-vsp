@@ -301,3 +301,16 @@ def plot_block():
                       "Plots one quantity of one or more Aero Databases against another (CL against CD, Cm against "
                       "alpha, ...) with matplotlib, picked from dropdowns. Saves `<Case Name>.png` and, by default, "
                       "opens the plot in a window. Outputs the image path.", specs, "text", g, out)
+
+
+def rasaero_contribution_block(base=None):
+    base = base or contribution_block()
+    own = (InputSpec("Results", "text", "Output of RASAero II (VSP): its coefficient table, one row per flight condition."),
+           InputSpec("Name", "text", "Name of this contribution in the database's columns.", default=d_text("RASAero")),
+           USE_INPUT) + range_inputs()
+    return _wrapper("contribution_rasaero", "RASAero Contribution (VSP)",
+                    "A RASAero II run as a contribution to **Aero Database (VSP)**: its normal force, axial force "
+                    "(drag included: friction, wave, base) and the moments of its centre of pressure, within a Mach "
+                    "range. Use All but drag to take only its lift and moments, Drag only for its drag.", "coefficients",
+                    own, "**RASAero II contribution**, through Aero Contribution (VSP). RASAero II's table is by Mach "
+                    "number, altitude, angle of attack and sideslip; the database takes it where it has values.", base)

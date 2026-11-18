@@ -153,8 +153,10 @@ def _axes_inputs():
 
 
 STAGNATION_INPUT = InputSpec("Stagnation Pressure", "choice", "Modified: Cp_max at the stagnation point, behind a "
-                             "normal shock above Mach 1 (Rayleigh pitot) and isentropic below. Classical: Cp_max = 2.",
-                             default=d_choice(newtonian.CP_MAX_MODES))
+                             "normal shock above Mach 1 (Rayleigh pitot) and isentropic below. Classical: Cp_max = 2. "
+                             "User Defined: the Cp Max Field.", default=d_choice(newtonian.CP_MAX_MODES))
+CP_MAX_FIELD_INPUT = InputSpec("Cp Max Field", "real_field", newtonian.CP_MAX_FIELD_DOC,
+                               default=newtonian.default_cp_max_field)
 TOLERANCE_INPUT = InputSpec("Integration Tolerance", "real", "Relative error of nTop's Surface Integral.",
                             default=d_real(1e-3))
 
@@ -164,7 +166,8 @@ def _newtonian_values(g, k, inp, cond, ref, extra=None):
     values = {"Body": inp("Body"), "Mach": cond["Mach"], "Angle of Attack": cond.angle("AoA"),
               "Sideslip": cond.angle("Beta"), "Gamma": g.real(GAMMA), "Aft Axis": inp("Aft Axis"),
               "Up Axis": inp("Up Axis"), "Reference Area": area, "Reference Length": chord, "Moment Center": centre,
-              "Stagnation Pressure": inp("Stagnation Pressure"), "Integration Tolerance": inp("Integration Tolerance")}
+              "Stagnation Pressure": inp("Stagnation Pressure"), "Cp Max Field": inp("Cp Max Field"),
+              "Integration Tolerance": inp("Integration Tolerance")}
     values.update(extra or {})
     return values
 
@@ -173,7 +176,7 @@ def _newtonian_values(g, k, inp, cond, ref, extra=None):
 
 def newtonian_block():
     specs = (InputSpec("Body", "implicit", "The body (an implicit). Its gradient gives the surface normal, so any "
-                       "implicit works."), FLIGHT_INPUT) + _axes_inputs() + (STAGNATION_INPUT, TOLERANCE_INPUT) + \
+                       "implicit works."), FLIGHT_INPUT) + _axes_inputs() + (STAGNATION_INPUT, CP_MAX_FIELD_INPUT, TOLERANCE_INPUT) + \
         _range_inputs(1.0) + (InputSpec("Case Name", "text", "Its results are `<Flight Condition>_<Case Name>`.",
                                         default=d_text("newtonian")),)
     g = Graph()
@@ -201,7 +204,7 @@ def newtonian_pressure_block():
     specs = (InputSpec("Body", "implicit", "The body (an implicit)."), FLIGHT_INPUT,
              InputSpec("Condition Number", "integer", "Row of the flight condition's distinct (Mach, angle of attack, "
                        "sideslip) combinations, counted from 1 (`.ntvsp.inviscid.csv`).", default=d_int(1))) + \
-        _axes_inputs() + (STAGNATION_INPUT,)
+        _axes_inputs() + (STAGNATION_INPUT, CP_MAX_FIELD_INPUT)
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
@@ -220,12 +223,97 @@ def newtonian_pressure_block():
               "Gamma": g.real(GAMMA), "Aft Axis": inp("Aft Axis"), "Up Axis": inp("Up Axis"),
               "Reference Area": g.real(1.0, AREA), "Reference Length": g.real(1.0, LENGTH),
               "Moment Center": g.point(0, 0, 0), "Stagnation Pressure": inp("Stagnation Pressure"),
+              "Cp Max Field": inp("Cp Max Field"),
               "Integration Tolerance": zero}
     sol = newtonian.build(g, values.__getitem__, with_moments=False, integrate_forces=False)
     out = g.block("core.var<real_field>", "real_field", [sol.cp], "Cp")
     return make_block("modified_newtonian_pressure", "Modified Newtonian Pressure (VSP)",
                       "The Modified Newtonian pressure coefficient of one flight condition as a scalar field, to show on "
                       "the body (Field Viewer) or evaluate at points.", specs, "real_field", g, out)
+
+
+# --- Modified Newtonian on a mesh ----------------------------------------------------------------------------------------
+
+MESH_CP_MAX_KEYS = ("modified", "classical", "user")
+
+
+def newtonian_mesh_block():
+    """Modified Newtonian of an implicit body with the force integrals done over nTop's mesh of it (a Python driver
+    sums them), instead of nTop's Surface Integral: the same pressure, much faster."""
+    from kit import PYTHON_VARIABLE, environment
+    from ops import Ops
+    from ntopfile import NONE, Ref
+
+    specs = (InputSpec("Body", "implicit", "The body (an implicit). Its gradient gives the surface normal of the "
+                       "pressure; nTop meshes it for the integrals."), FLIGHT_INPUT,
+             InputSpec("Mesh Tolerance", "real", "Largest distance between nTop's mesh of the Body (Mesh from Implicit "
+                       "Body, sharp edges kept) and the body. Smaller is more accurate and slower; a few thousandths of "
+                       "the body's length is a good start.", LENGTH, d_real(0.0005, LENGTH))) + _axes_inputs() + (
+        STAGNATION_INPUT, CP_MAX_FIELD_INPUT) + _range_inputs(1.0) + run_inputs("newtonian_mesh")
+    g = Graph()
+    k = Kit(g)
+    o = Ops(g)
+    inp = model_inputs(specs)
+    g.comment("# Modified Newtonian on a mesh\nThe pressure is the implicit body's, as in Modified Newtonian (VSP): "
+              "Cp = Cp_max max(-n.V, 0)^2 with n the unit gradient of the Body. The force and moment integrals are sums "
+              "over nTop's mesh of the Body, -(1/Sref) sum Cp S_f and -(1/(Sref cref)) sum Cp (r_f - c) x S_f over its "
+              "faces (S_f the face's outward vector area, r_f its centroid), done by a Python driver at every "
+              "(Mach, alpha, beta) of the flight condition within Mach Min to Mach Max: far faster than nTop's Surface "
+              "Integral.")
+
+    def exports(ready):
+        g.comment("**1. Mesh.** Mesh from Implicit Body at the Mesh Tolerance (sharp edges kept), exported as an STL "
+                  "in millimetres. The driver lists its faces' centroids and areas as a point map.")
+        mesh = g.block("implicit_to_mesh<implicit,real,real,bool,bool>[2.5.0]", "mesh",
+                       [inp("Body"), inp("Mesh Tolerance"), NONE, g.boolean(True), g.boolean(False)], "Body Mesh")
+        stl = k.cat([ready, ".ntvsp.mesh.stl"], name="Mesh File")
+        exported = g.block("export_mesh<file_path,mesh,unit_length_enum>", "mesh_file_data",
+                           [stl, mesh, g.unit_length("mm")], "Export Mesh")
+        python = environment(g, PYTHON_VARIABLE, "Python (Faces)")
+        temp = environment(g, "TEMP", "Temporary Folder (Faces)")
+        faces_csv = k.cat([ready, ".ntvsp.mesh_faces.csv"])
+        command = k.wait(exported, k.cat(['"', python, '" -m vsp_ntop.run_newtonian_mesh faces "', stl, '" "',
+                                          faces_csv, '"']))
+        rc = k.run_command(command, temp, inp("Timeout"), name="List Mesh Faces")
+        ok = k.check(rc, "Listing the mesh faces", name="Check Faces")
+        g.comment("**2. The body at the faces.** nTop evaluates the Body's gradient (its normal) and the Cp Max Field "
+                  "at every face centroid and exports them as point maps (`<Case Name>.ntvsp.mesh_gradient.csv`, "
+                  "`<Case Name>.ntvsp.mesh_cp_max.csv`), in the faces' order.")
+        faces = g.block("import_real_point_map<file_path,unit_length_enum,real_field>", "real_point_map",
+                        [k.wait(ok, faces_csv), g.unit_length("mm"), o.field("1")], "Mesh Faces")
+        points = Ref(faces, ("points",))
+        gradient = g.block("evaluate_field_gradient<real_field,list<point>>", "list<vector>", [inp("Body"), points],
+                           "Body Gradient at Faces")
+        cp_max = g.block("evaluate_field<real_field,list<point>>", "list<real>", [inp("Cp Max Field"), points],
+                         "Cp Max at Faces")
+        gmap = g.block("point_map<list<point>,list<vector>>", "vector_point_map", [points, gradient], top=False)
+        cmap = g.block("point_map<list<point>,list<real>>", "real_point_map", [points, cp_max], top=False)
+        written = []
+        for m, suffix, label in ((gmap, "gradient", "Gradient"), (cmap, "cp_max", "Cp Max")):
+            kind = "vector_point_map" if m is gmap else "real_point_map"
+            written.append(g.block(f"export_point_map<file_path,{kind},unit_length_enum>", "point_map_file",
+                                   [k.cat([ready, f".ntvsp.mesh_{suffix}.csv"]), m, g.unit_length("mm")],
+                                   f"Export {label}"))
+        return written
+
+    aft, up = inp("Aft Axis"), inp("Up Axis")
+    lines = [k.line("flight", inp("Flight Condition")),
+             k.line("mach_min", k.num(inp("Mach Min"))), k.line("mach_max", k.num(inp("Mach Max"))),
+             k.line("stagnation", k.pick(inp("Stagnation Pressure"), MESH_CP_MAX_KEYS))]
+    lines += [k.line(f"aft_{c}", k.num(_prop(aft, c))) for c in "xyz"]
+    lines += [k.line(f"up_{c}", k.num(_prop(up, c))) for c in "xyz"]
+    g.comment("**3. Sums.** The driver `vsp_ntop.run_newtonian_mesh` computes Cp on every face at every condition and "
+              "sums the forces and moments; it writes `<Case Name>.ntvsp.coefficients.csv` (Mach, AoA, Beta, CA, CY, "
+              "CN, Cl, Cm, Cn and the reference), the layout of Modified Newtonian (VSP).")
+    out = analysis(g, k, inp, "run_newtonian_mesh", exports, lines, "Modified Newtonian on Mesh", needs_openvsp=False)
+    return make_block(
+        "modified_newtonian_mesh", "Modified Newtonian on Mesh (VSP)",
+        "Modified Newtonian (Lees) pressure forces and moments of an implicit body at every condition of a Flight "
+        "Condition, like Modified Newtonian (VSP), with the integrals done over nTop's mesh of the body instead of "
+        "Surface Integrals: the pressure comes from the implicit (its gradient normal and the Cp_max choice, "
+        "including a User Defined Cp Max Field), the areas, centroids and force directions from the mesh. Much "
+        "faster on detailed bodies; its accuracy is the mesh's (Mesh Tolerance). " + RANGE_DOC + " Outputs the "
+        "results path for Coefficients Contribution (VSP).\n" + newtonian.METHOD_DOC, specs, "text", g, out)
 
 
 # --- Viscous correction -----------------------------------------------------------------------------------------------------
@@ -238,7 +326,7 @@ def viscous_block():
              InputSpec("Inviscid Pressure", "choice", "Edge state of the boundary layer: from the Modified Newtonian "
                        "pressure of each condition (hypersonic practice), or the freestream (Cp = 0), which gives "
                        "flat-plate skin friction at the local running length (subsonic and low supersonic practice).",
-                       default=d_choice(PRESSURE_SOURCES))) + _axes_inputs() + (STAGNATION_INPUT,) + tuple(
+                       default=d_choice(PRESSURE_SOURCES))) + _axes_inputs() + (STAGNATION_INPUT, CP_MAX_FIELD_INPUT) + tuple(
         s for s in viscous.INPUTS if s.name in ("Boundary Layer", "Transition Reynolds Number", "Wall",
                                                  "Wall Temperature")) + (TOLERANCE_INPUT,) + _range_inputs(0.0) + (
         InputSpec("Case Name", "text", "Its results are `<Flight Condition>_<Case Name>`.", default=d_text("viscous")),)

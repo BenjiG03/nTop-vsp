@@ -378,6 +378,26 @@ def fit_wing(layers, frame: Frame, n_sections=8, airfoil_points=41, tolerance=0.
     return WingFit(frame, chosen, notes)
 
 
+def extend_wing(fit: WingFit, z0):
+    """Extend the wing inboard to span station ``z0`` (the plane through the model's origin normal to the span axis):
+    a new root station whose leading edge, chord and thickness continue the first section's linear variation, with
+    the root airfoil and twist. Returns the span from ``z0`` to the original root (where the wing body starts)."""
+    a, b = fit.stations[0], fit.stations[1]
+    exposed = a.z - z0
+    if exposed <= 1e-9 * max(1.0, abs(a.z)):
+        return 0.0  # the wing already reaches the plane
+    t = (z0 - a.z) / (b.z - a.z)
+    chord = a.chord + t * (b.chord - a.chord)
+    if chord <= 0.0:
+        raise FitError("extending the wing into the body makes its chord vanish before the origin plane")
+    le = tuple(p + t * (q - p) for p, q in zip(a.le, b.le))
+    thick = a.thickness + t * (b.thickness - a.thickness)
+    fit.stations.insert(0, WingStation(z0, le, chord, a.twist, list(a.upper), list(a.lower), thick, a.te_thickness, []))
+    fit.notes.append(f"extended into the body: root moved {exposed:.4f} m inboard to the origin plane, chord "
+                     f"{chord:.4f} m there")
+    return exposed
+
+
 def wing_sections(fit: WingFit):
     """OpenVSP's section parameters between consecutive stations: span (in the section's own plane), leading
     edge sweep and dihedral in degrees, root and tip chords, tip twist."""

@@ -22,6 +22,7 @@ numbers, angles of attack and sideslips, and the Reynolds numbers (on cref) of i
 """
 from __future__ import annotations
 
+import csv
 import math
 import os
 import re
@@ -359,6 +360,105 @@ def pressure_centers(work, case, header, data, s: Settings, log):
         log("aerodynamic centre x: " + ", ".join(f"Mach {r[0]:g} beta {r[1]:g}: {r[3]:.3f} m" for r in ac))
 
 
+# --- Force Accounting: Exposed Strip ------------------------------------------------------------------------------------
+
+LOD_FORCES = {  # polar column: .lod strip column (0-based) of the same quantity, per strip area
+    "CLo": 14, "CDo": 15, "CSo": 16, "CLi": 17, "CDi": 18, "CSi": 19, "CLtot": 11, "CDtot": 12, "CStot": 13,
+    "CFox": 23, "CFoy": 24, "CFoz": 25, "CFix": 26, "CFiy": 27, "CFiz": 28, "CFxtot": 20, "CFytot": 21, "CFztot": 22}
+LOD_MOMENTS = {  # polar column: (.lod column, reference length key): per strip area and chord
+    "CMox": (32, "bref"), "CMoy": (33, "cref"), "CMoz": (34, "bref"), "CMix": (35, "bref"), "CMiy": (36, "cref"),
+    "CMiz": (37, "bref"), "CMxtot": (29, "bref"), "CMytot": (30, "cref"), "CMztot": (31, "bref")}
+
+
+def read_lod(path):
+    """VSPAERO's spanwise loads: {(Mach, AoA, Beta): strips}, each strip the row's numbers (Xavg, Yavg, Zavg at 3-5,
+    chord 8, area 9, then the coefficients). VSPAERO writes one set per (Mach, AoA, Beta), whatever the number of
+    Reynolds numbers."""
+    cases, cur, key = {}, None, {}
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            p = line.split()
+            if not p:
+                continue
+            if p[0] in ("Mach_", "AoA_"):
+                key[p[0]] = float(p[1])
+            elif p[0] == "Beta_":
+                cur = []
+                cases[(round(key["Mach_"], 6), round(key["AoA_"], 6), round(float(p[1]), 6))] = cur
+            elif cur is not None and p[0].isdigit() and len(p) > 38:
+                try:
+                    cur.append([float(x) for x in p[:39]])
+                except ValueError:
+                    pass
+    return cases
+
+
+def exposed_wings(model_vsp3):
+    """The model's wings with Force Accounting Exposed Strip (from OpenVSP Model's ``.ntvsp.wings.csv``), each as a
+    list of (span axis, plane normal, root point, root span) for it and its mirror copies."""
+    path = model_vsp3[:-5] + ".ntvsp.wings.csv"
+    if not os.path.isfile(path):
+        return []
+    out = []
+    with open(path, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            if r["Accounting"] != "exposed":
+                continue
+            s, n, q = ([float(r[k + c]) for c in "xyz"] for k in ("S", "N", "Q"))
+            flips = {"none": [(1, 1)], "xz": [(1, 1), (-1, 1)], "xy": [(1, 1), (1, -1)],
+                     "xzxy": [(1, 1), (-1, 1), (1, -1), (-1, -1)]}[r["Symmetry"]]
+            copies = []
+            for fy, fz in flips:
+                m = lambda v: (v[0], fy * v[1], fz * v[2])  # noqa: E731
+                copies.append((m(s), m(n), m(q), float(r["Root_Span"])))
+            out.append((r["Name"], copies))
+    return out
+
+
+def inboard(strip, wings):
+    """Whether a strip lies on an Exposed Strip wing inboard of its root: between the origin plane and the root,
+    in the wing's own plane."""
+    p = strip[3:6]
+    for _, copies in wings:
+        for s, n, q, root in copies:
+            along = sum(a * b for a, b in zip(p, s))
+            off = abs(sum((a - b) * c for a, b, c in zip(p, q, n)))
+            if -1e-6 <= along < root * (1.0 - 1e-6) and off <= 0.05 * max(root, 1e-6) + 1e-6:
+                return True
+    return False
+
+
+def exposed_accounting(header, data, lod_path, wings, s: Settings, log):
+    """Take the inboard strips' loads off every case: VSPAERO solves the whole (extended) wing, the forces count only
+    where the wing is exposed."""
+    cases = read_lod(lod_path)
+    sref, ref = s.real("sref"), {"bref": s.real("bref"), "cref": s.real("cref")}
+    col = {h: i for i, h in enumerate(header)}
+    shares = []
+    for row in data:
+        k = tuple(round(row[col[c]], 6) for c in ("Mach", "AoA", "Beta"))
+        strips = cases.get(k)
+        if strips is None:
+            raise DriverError(f"Force Accounting: no spanwise loads for Mach {k[0]:g}, alpha {k[1]:g}, beta {k[2]:g} "
+                              f"in {lod_path}")
+        inner = [st for st in strips if inboard(st, wings)]
+        lift_all = sum(st[17] * st[9] for st in strips)
+        if abs(lift_all) > 1e-3 * sum(st[9] for st in strips):  # skip conditions without lift
+            shares.append(sum(st[17] * st[9] for st in inner) / lift_all)
+        for name, j in LOD_FORCES.items():
+            if name in col:
+                row[col[name]] -= sum(st[j] * st[9] for st in inner) / sref
+        for name, (j, length) in LOD_MOMENTS.items():
+            if name in col:
+                row[col[name]] -= sum(st[j] * st[9] * st[8] for st in inner) / (sref * ref[length])
+        if "L/D" in col and abs(row[col["CDtot"]]) > 1e-12:
+            row[col["L/D"]] = row[col["CLtot"]] / row[col["CDtot"]]
+    first = next(iter(cases.values()), [])
+    n_in = sum(1 for st in first if inboard(st, wings))
+    log(f"Force Accounting Exposed Strip ({', '.join(w for w, _ in wings)}): {n_in} inboard strips left out; they "
+        + (f"carried {100 * min(shares):.0f} to {100 * max(shares):.0f}% of the inviscid lift" if shares else ""))
+
+
 def main(settings_path):
     s = Settings(settings_path)
     work = os.path.abspath(s.text("work_dir"))
@@ -436,6 +536,12 @@ def main(settings_path):
     if len(data) != n_cases:
         raise DriverError(f"VSPAERO's polar has {len(data)} rows for {n_cases} cases; see {case}.vspaero.log")
     flags, failed = convergence(work, case, header, data, s, log)
+    wings = exposed_wings(model)
+    if wings:
+        write_csv(os.path.join(work, case + ".ntvsp.polar_whole.csv"),
+                  ["Case"] + [clean(h) for h in header] + ["Converged"],
+                  [[i] + list(row) + [f] for i, (row, f) in enumerate(zip(data, flags), start=1)])
+        exposed_accounting(header, data, os.path.join(work, case + ".lod"), wings, s, log)
     write_csv(os.path.join(work, case + ".ntvsp.polar.csv"), ["Case"] + [clean(h) for h in header] + ["Converged"],
               [[i] + row + [f] for i, (row, f) in enumerate(zip(data, flags), start=1)])
     if failed:

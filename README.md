@@ -64,7 +64,9 @@ with Export Text.
   from the former `ntop_newtonian` project; `x59_example.py`, `mixed_example.py`; `x59.py` derives notebooks from the
   starter; `ntopfile.py` writes `.ntop` files).
 * `validation/wave_drag_mach.py` — the wave drag study below (results in `validation/results/`);
-  `validation/newtonian/` — the Modified Newtonian and viscous-correction validation report from `ntop_newtonian`.
+  `validation/newtonian/` — the Modified Newtonian and viscous-correction validation report from `ntop_newtonian`;
+  `validation/rasaero/` — which combination of these analyses best reproduces RASAero II on a finned rocket (Mach
+  1.5 to 5, alpha -15 to 15, beta -4 to 4 degrees): `validation/rasaero/REPORT.md`.
 
 ## Setup
 
@@ -76,7 +78,10 @@ with Export Text.
 3. Set two environment variables (Windows: System Properties > Environment Variables), then restart nTop so it
    sees them:
    * `NTOP_PYTHON_PATH`: that Python's executable, e.g. `C:/Users/me/anaconda3/python.exe`;
-   * `VSP_PATH`: the OpenVSP folder, the one holding `vspscript.exe` and `vspaero.exe`.
+   * `VSP_PATH`: the OpenVSP folder, the one holding `vspscript.exe` and `vspaero.exe`;
+   * `RASAERO_PATH` (only for RASAero II (VSP)): the RASAero II folder, the one holding `RASAero II.exe`. RASAero II
+     (Rogers Aeroscience, free download from rasaero.com, Windows) is not in this repository: its site offers it free
+     but grants no right to redistribute it, so install it yourself.
 
 The blocks read both with nTop's **Get Environment Variable** block, so they have no Python, driver or OpenVSP path
 inputs; a missing variable stops the notebook with nTop's "Environment variable ... is not set". The only path
@@ -90,7 +95,7 @@ blocks.
 | Block | Output | Purpose |
 |---|---|---|
 | OpenVSP Fuselage (VSP) | text | a list of implicit bodies as OpenVSP Fuselages: names, slicing, sections, clustering, tessellation, set |
-| OpenVSP Wing (VSP) | text | a list of implicit lifting surfaces as OpenVSP Wings: names, span axes (one per body), symmetry (none, x-z, x-y, both), sections, airfoils, tessellation, clustering, set |
+| OpenVSP Wing (VSP) | text | a list of implicit lifting surfaces as OpenVSP Wings: names, span axes (one per body), symmetry (none, x-z, x-y, both), extension into the body, force accounting (whole wing or exposed strips), sections, airfoils, tessellation, clustering, set |
 | OpenVSP Model (VSP) | model path | builds `<case>.vsp3` from a list of component lines |
 | OpenVSP Model Check (VSP) | list of reals | per component: largest and mean distance from the OpenVSP surface to the nTop contours, sections, slices |
 | OpenVSP Model Mesh (VSP) | mesh | OpenVSP's tessellation of the model, to view against the bodies |
@@ -103,10 +108,13 @@ blocks.
 | Wave Drag Result (VSP) | list of reals | CD_wave (or Mach, counts, Sref), one value per Mach number |
 | Wave Drag Area Distribution (VSP) | list of reals | x/L or slice areas of one rotation section at one Mach number |
 | Parasite Drag Component (VSP) | text | one component's form factor equations, % laminar, Q, roughness, temperature ratios |
-| Parasite Drag (VSP) | results path | model, flight condition (one run per flight point), units, Cf equations, components |
+| Parasite Drag (VSP) | results path | model (metres), flight condition (one run per flight point), Cf equations, components |
 | Parasite Drag Result (VSP) | list of reals | total CD, f, Re/L and the flight condition, one value per flight point |
 | Parasite Drag Component Values (VSP) | list of reals | one column of the buildup table at one flight point, per component |
+| Body Lift (VSP) | results path | the fuselages' normal force from their OpenVSP area distribution: slender-body nose lift, optional viscous crossflow |
+| RASAero II (VSP) | results path | RASAero II run on a rocket's OpenVSP model (design fitted to its surfaces) at every condition, as a coefficient table |
 | Modified Newtonian (VSP) | results path | an implicit body's Modified Newtonian forces and moments at every condition of a flight condition in a Mach range, computed in nTop |
+| Modified Newtonian on Mesh (VSP) | results path | the same Modified Newtonian pressure on the implicit body, with the force and moment integrals summed over nTop's mesh of it (much faster) |
 | Modified Newtonian Pressure (VSP) | scalar field | the Modified Newtonian Cp of one condition, to view on the body |
 | Viscous Correction (VSP) | results path | an implicit body's skin-friction forces and moments at every condition (standard-atmosphere edge state), computed in nTop |
 | Aero Coefficients (VSP) | results path | six lists of coefficients from anywhere, one value per flight condition, as a coefficient table |
@@ -114,7 +122,8 @@ blocks.
 | VSPAERO Contribution (VSP) | text | a VSPAERO run for the database: inviscid or total coefficients, which forces to use, Mach range, scale |
 | Wave Drag Contribution (VSP) | text | a Wave Drag run for the database: CD_wave(Mach) along the freestream, Mach range (default from 1), scale |
 | Parasite Drag Contribution (VSP) | text | a Parasite Drag run for the database: CD(Mach, altitude) along the freestream, Mach range, scale |
-| Coefficients Contribution (VSP) | text | a Modified Newtonian, Viscous Correction or Aero Coefficients table for the database |
+| Coefficients Contribution (VSP) | text | a Modified Newtonian, Viscous Correction, Body Lift or Aero Coefficients table for the database |
+| RASAero Contribution (VSP) | text | a RASAero II run for the database |
 | Aero Database (VSP) | results path | sums a list of contributions at every condition of a flight condition, on its reference; design variables; appends to a DOE file |
 | Aero Database Coefficient (VSP) | list of reals | one column of the database (CL, CD, CY, Cl, Cm, Cn, L/D, CA, CN, Mach, Altitude, AoA, Beta) |
 | Aero Database Table (VSP) | table | the whole database, each contribution's share included |
@@ -161,6 +170,20 @@ one) or both (cruciform tails); with any of them only the part of the body on th
 the origin normal to its span axis is used. **Trailing Edge: Sharp** shears a blunt base onto the chord line so
 that VSPAERO's wake leaves one edge. OpenVSP marks every wing trailing edge as a wake: no wake input.
 
+**Wings in a body.** **Extend Into Body** continues each wing inboard to the plane through the origin normal to its
+span axis (for fins on a body along the x axis: to the axis), with the first section's leading- and trailing-edge
+lines, thickness and root airfoil. VSPAERO then solves panels through the body, which removes the free root edge (and
+its tip-like loss of lift) of a wing that ends at the body surface. **Force Accounting** says which of those loads
+count: Whole Wing (every strip: the inboard part's lift stands for the body's carry-over, and over-predicts it on a
+slender body), or Exposed Strip (only outboard of the wing body's own root: give the wing trimmed at the fuselage
+surface). For Exposed Strip, OpenVSP Model records each wing's root (`<case>.ntvsp.wings.csv`) and VSPAERO Analysis
+takes the inboard strips' forces and moments off every case from VSPAERO's spanwise loads (`.lod`; the whole-wing
+polar is kept as `.ntvsp.polar_whole.csv`). On a cruciform rocket (`validation/rasaero/REPORT.md`) the exposed strips'
+lift is within -6% to +11% of SU2's fin lift, where fins ending at the body give 59 to 76% of it; Whole Wing puts 30 to
+38% of the lift on the inboard strips, 2 to 6 times SU2's carry-over. Opposite wings that meet at the origin plane
+become one continuous wing in VSPAERO, and four fins meeting on the axis are two crossing thin surfaces: VSPAERO
+returned no finite result at Mach 1.5 for them (Mach 2 to 5 converged).
+
 **Tessellation.** Wings: **Tess U** spanwise points (shared between sections by span), **Tess W** around the
 airfoil, OpenVSP's leading- and trailing-edge clustering, root and tip clustering. Fuselages: **Tess W** around each
 section and a **Panel Aspect Ratio** (panel length along the body over its width around it, default 1.5) that sets
@@ -182,8 +205,10 @@ The whole X-59 model (slicing, fitting, building and checking) takes about 70 s 
 
 **Slicer conventions found by testing nTop 6.3.3**: Slice Body cuts only from the frame's origin in the +z direction
 of the frame; contours come in the frame's x and y relative to its origin, except when slicing along exactly +x, +y
-or +z, where they come in the world's cyclic axes (y-z, z-x, x-y). The driver handles both; the blocks place the
-frame origin outside the body.
+or +z, where they come in the world's cyclic axes (y-z, z-x, x-y), and along exactly -x, -y or -z, where they come in
+(z, y), (x, z) and (y, x) (again world axes whose cross product is the slicing direction; found on the four fins of a
+cruciform rocket, whose -y fin was mis-fitted before). The driver handles all of them; the blocks place the frame
+origin outside the body.
 
 ## VSPAERO defaults, and why
 
@@ -296,6 +321,33 @@ distinct (Mach, alpha, beta) combinations and the reference; the Viscous Correct
 pressure and temperature. VSPAERO, Modified Newtonian and the Viscous Correction also have a **Mach Min** and **Mach
 Max**, so each runs only where it is meant to (VSPAERO below Mach 3, Newtonian from Mach 3, say).
 
+## Body lift and RASAero II
+
+**Body Lift (VSP)** gives a fuselage's normal force from the OpenVSP model alone: the fuselages' surface is sampled in
+rings at planes normal to x (OpenVSP's fuselage sections are such planes), giving the section area S(x).
+Slender-body (Munk) potential lift puts dCN/dx = (dS/dx / Sref) sin(2 alpha) cos(alpha / 2) where the area grows (the
+nose); optional Allen and Perkins viscous crossflow adds eta Cdn (2 r / Sref) sin^2(alpha) along the body, with
+Jorgensen's (NASA TR R-474) Cdn against crossflow Mach number and eta against fineness. Both act along the crossflow at
+the total angle of attack, so sideslip is included; no axial force. It is meant to go with Exposed Strip wings. On the
+cruciform rocket, Exposed Strip fins with Body Lift (slender body and crossflow) put the centre of pressure within 21
+mm of inviscid SU2's at Mach 2 to 5 (CN 6 to 12% low: the carry-over onto the body between the fins is in no block).
+OpenVSP's tessellation-based Planar Slice was not usable for S(x): 80% off near a nose.
+
+**RASAero II (VSP)** runs RASAero II (Rogers Aeroscience; `RASAERO_PATH`) on a rocket's OpenVSP model, with no rocket
+description of its own: `vsp_ntop.run_rasaero` fits a RASAero II design to the model's surfaces (nose: the closest
+of Conical, Tangent Ogive and Von Karman Ogive, to where the radius reaches the body tube's; body tube; boattail where
+the radius falls by 5%; one set of alike trapezoidal fins, mirrored copies counted, with hexagonal sections whose
+thickness and bevels come from the root section), starts RASAero II, opens the design and runs its Run Test through
+the window with Microsoft Active Accessibility (`vsp_ntop/rasaero_ui`, the scripts of hypanel's RASAero comparison),
+at every whole degree of total angle of attack up to the largest needed (its angle box drops decimal points) and
+each altitude (as the launch site altitude), and closes it. RASAero II is axisymmetric: at (alpha, beta) its normal
+force is taken at the total angle of attack along the crossflow, with its centre of pressure on the axis, on the
+flight condition's reference. RASAero II opens a window while it runs, so it needs a desktop session. On the rocket
+of `validation/rasaero` the fitted design gives CA within 1%, CN within 2% and the moments within 1.5% of hand-written
+design runs (50 s). Its own methods are not published (its site describes a "Rogers Modified Barrowman" method
+calibrated against wind-tunnel data), so they are not reimplemented here; Body Lift is the public-method counterpart
+for the body.
+
 ## Modified Newtonian and the viscous correction, in nTop
 
 These two analyses work on the implicit body itself, entirely with nTop blocks (no Run Command, no Python): the
@@ -304,8 +356,17 @@ evaluated once per flight condition through nTop's list processing.
 
 * **Modified Newtonian (VSP)**: Cp = Cp_max max(-n.V, 0)^2 with n the unit gradient of the body's field, so any
   implicit works; each force and moment component is one Surface Integral. Cp_max is the stagnation pressure behind
-  a normal shock above Mach 1 (Rayleigh pitot) and the isentropic one below it (both 1.839 at Mach 1), or 2
-  (Classical). No self-shadowing: correct for convex bodies, a part in another's shadow is over-loaded.
+  a normal shock above Mach 1 (Rayleigh pitot) and the isentropic one below it (both 1.839 at Mach 1), 2
+  (Classical), or **User Defined**: the **Cp Max Field** input, a scalar field, so Cp_max may differ over the body
+  (one value on the fins, another on the nose); a constant field is one number everywhere. No self-shadowing: correct
+  for convex bodies, a part in another's shadow is over-loaded.
+* **Modified Newtonian on Mesh (VSP)**: the same pressure, computed on the implicit (its gradient normal, the same
+  Cp_max choices including the Cp Max Field), with the integrals done over nTop's mesh of the body (Mesh from Implicit
+  Body at the **Mesh Tolerance**, sharp edges kept) instead of Surface Integrals: nTop meshes the body and exports it,
+  the driver `vsp_ntop.run_newtonian_mesh` lists the faces' centroids, nTop evaluates the body's gradient and the Cp
+  Max Field there and exports them as point maps (Evaluate Field Gradient, Point Map, Export Point Map), and the driver
+  sums -Cp S_f and -Cp (r_f - c) x S_f over the faces (S_f the face's outward vector area) at every condition (numpy).
+  It writes the same coefficient table. See the run time and accuracy below.
 * **Viscous Correction (VSP)**: skin friction at the inviscid edge state, hypanel's `viscous.correct`: edge pressure
   from the Modified Newtonian Cp of each condition (or the freestream, Cp = 0, for flat-plate friction), edge total
   pressure behind a normal shock above Mach 1 and isentropic below it, total temperature conserved; Blasius with
@@ -329,7 +390,14 @@ Integrals). Evaluating a list of fields at a list of points makes a list of list
 cannot run over a flight condition.
 
 **Run time.** Each condition costs six Surface Integrals for each of Newtonian and friction, about 1 to 3 s each on
-simple bodies, more on a full aircraft; use Mach Min and Max, and few angles, where Newtonian applies.
+simple bodies, more on a full aircraft and much more on thin parts (fins); use Mach Min and Max, and few angles, where
+Newtonian applies. Modified Newtonian on Mesh costs one mesh, one evaluation of the gradient at the face centroids
+and a sum per condition. On the hobby rocket of `validation/rasaero` (1.2 m, four 4 mm fins), four Newtonian
+runs (the whole rocket at 611,000 faces, the body, the fins, and the rocket again) over 330 conditions took 99 s in
+all; Surface Integrals on the body alone took 750 s for 4 conditions. On the body at Mach 3 (alpha 0 and 8, beta 0 and
+3 degrees) a 4 mm Mesh Tolerance (118,000 faces) agrees with the Surface Integral block within 0.5% in CN, CY and the
+moments and to four digits in CA, and gives exact zeros where the Surface Integral's noise gives 7e-4; a User Defined
+Cp Max Field of 1.5 scales every coefficient by exactly 1.5 / Cp_max(Modified).
 
 ## Aero buildup: mixing analyses in one database
 
@@ -467,8 +535,11 @@ Every option of OpenVSP 3.56's VSPAERO, Parasite Drag and Wave Drag analyses was
 | NRef (refinement levels), cull fraction, degenerate-region merging, intersection cleaning | OpenVSP's defaults |
 | `-fem`, `-interrogate` with survey points | not implemented (say if you want them) |
 
-**Parasite Drag**: geometry set, model length unit, laminar and turbulent Cf equations and sub-component export are
-inputs; Mach, altitude and Sref come from the Flight Condition (one run per flight point, Mach as the speed unit);
+**Parasite Drag**: geometry set, laminar and turbulent Cf equations and sub-component export are inputs; the model's
+length unit is metres, fixed (OpenVSP Model writes every nTop length in metres, so it is not a choice); the default
+turbulent Cf is Roughness Schlichting Avg Compressible, because OpenVSP 3.56's "Schlichting Compressible" applies no
+Mach correction (it equals the incompressible 0.455/(log10 Re)^2.58: 1.7x too much friction at Mach 3); Mach, altitude
+and Sref come from the Flight Condition (one run per flight point, Mach as the speed unit);
 each component's form factor equations, manual form factor, % laminar, Q, roughness, Te/Tw, Taw/Tw and incorporated
 generation are inputs of Parasite Drag Component (VSP). Not exposed: atmospheres other than US Standard 1976 (no
 temperature offset; gamma 1.4), excrescences, Sref from a wing.

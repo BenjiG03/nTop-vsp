@@ -13,3 +13,6 @@ dependencies = ["ambiance", "matplotlib"]
 
 [tool.setuptools]
 packages = ["vsp_ntop"]
+
+[tool.setuptools.package-data]
+vsp_ntop = ["rasaero_ui/*.cs", "rasaero_ui/*.ps1"]

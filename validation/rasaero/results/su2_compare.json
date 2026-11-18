@@ -1,0 +1,332 @@
+{
+ "M2_a2": {
+  "SU2": {
+   "nose": 0.08105500000000002,
+   "shoulder": 0.007694999999999998,
+   "mid-tube": -0.003006,
+   "tube at fins": 0.10312099999999999,
+   "fins": 0.49063599999999996,
+   "total": 0.6795072568227689,
+   "x_cp": 1.013888445158035
+  },
+  "RASAero": {
+   "total": 0.679,
+   "x_cp": 0.9870948
+  },
+  "parts": {
+   "VSPAERO thin, fins to axis": {
+    "CN": 0.643615965953,
+    "x_cp": 1.1165308028554857
+   },
+   "VSPAERO thin, fins from body": {
+    "CN": 0.28937473365,
+    "x_cp": 1.123279903793812
+   },
+   "Newtonian body (Modified)": {
+    "CN": 0.08700329135824095,
+    "x_cp": 0.3343464349151924
+   },
+   "Newtonian fins (Modified)": {
+    "CN": 0.03876636405241579,
+    "x_cp": 1.111148605076743
+   },
+   "VSPAERO extended, Exposed Strip": {
+    "CN": 0.5425894773587878,
+    "x_cp": 1.1257744148827453
+   },
+   "VSPAERO extended, Whole Wing": {
+    "CN": 0.779279862031,
+    "x_cp": 1.117459028607898
+   },
+   "Body Lift (slender body)": {
+    "CN": 0.06684750645806625,
+    "x_cp": 0.07901632754484367
+   },
+   "Body Lift (slender + crossflow)": {
+    "CN": 0.09599579571805648,
+    "x_cp": 0.24936193306729298
+   },
+   "Exposed Strip + Newtonian body": {
+    "CN": 0.6295927687170287,
+    "x_cp": 1.0164071499592677
+   },
+   "Exposed Strip + Body Lift (slender + crossflow)": {
+    "CN": 0.6385852730768443,
+    "x_cp": 0.9940270710021937
+   },
+   "fins to axis + Newtonian body": {
+    "CN": 0.7306192573112409,
+    "x_cp": 1.0233870569457324
+   },
+   "fins from body + Newtonian body": {
+    "CN": 0.3763780250082409,
+    "x_cp": 0.9409105732421377
+   }
+  },
+  "axis_inner_fraction": 0.23925518501370788
+ },
+ "M3_a4": {
+  "SU2": {
+   "nose": 0.172822,
+   "shoulder": 0.037974,
+   "mid-tube": 0.008795999999999998,
+   "tube at fins": 0.104023,
+   "fins": 0.698221,
+   "total": 1.021834577718138,
+   "x_cp": 0.9375324132902388
+  },
+  "RASAero": {
+   "total": 1.044,
+   "x_cp": 0.9404096
+  },
+  "parts": {
+   "VSPAERO thin, fins to axis": {
+    "CN": 0.900440042813,
+    "x_cp": 1.121871719905044
+   },
+   "VSPAERO thin, fins from body": {
+    "CN": 0.472506744057,
+    "x_cp": 1.132413097278092
+   },
+   "Newtonian body (Modified)": {
+    "CN": 0.24918891406128604,
+    "x_cp": 0.43385629787788116
+   },
+   "Newtonian fins (Modified)": {
+    "CN": 0.10694907916499968,
+    "x_cp": 1.1178737537754437
+   },
+   "VSPAERO extended, Exposed Strip": {
+    "CN": 0.7033790498941312,
+    "x_cp": 1.1322572732986158
+   },
+   "VSPAERO extended, Whole Wing": {
+    "CN": 1.029923075767,
+    "x_cp": 1.1218156241734456
+   },
+   "Body Lift (slender body)": {
+    "CN": 0.13330839710118228,
+    "x_cp": 0.079016327544844
+   },
+   "Body Lift (slender + crossflow)": {
+    "CN": 0.25080903788096043,
+    "x_cp": 0.34184160365894495
+   },
+   "Exposed Strip + Newtonian body": {
+    "CN": 0.9525679639554173,
+    "x_cp": 0.9495576789076994
+   },
+   "Exposed Strip + Body Lift (slender + crossflow)": {
+    "CN": 0.9541880877750917,
+    "x_cp": 0.9244959354992613
+   },
+   "fins to axis + Newtonian body": {
+    "CN": 1.1496289568742861,
+    "x_cp": 0.9727402850649647
+   },
+   "fins from body + Newtonian body": {
+    "CN": 0.7216956581182861,
+    "x_cp": 0.891213627259754
+   }
+  },
+  "axis_inner_fraction": 0.251430383871215
+ },
+ "M4_a4": {
+  "SU2": {
+   "nose": 0.171,
+   "shoulder": 0.05066199999999999,
+   "mid-tube": 0.028,
+   "tube at fins": 0.057747,
+   "fins": 0.5269159999999999,
+   "total": 0.8343328764360527,
+   "x_cp": 0.8650915943268739
+  },
+  "RASAero": {
+   "total": 0.853,
+   "x_cp": 0.9011157999999999
+  },
+  "parts": {
+   "VSPAERO thin, fins to axis": {
+    "CN": 0.692885140686,
+    "x_cp": 1.1223444975937997
+   },
+   "VSPAERO thin, fins from body": {
+    "CN": 0.380958210155,
+    "x_cp": 1.1341198086123028
+   },
+   "Newtonian body (Modified)": {
+    "CN": 0.254310377900053,
+    "x_cp": 0.43385629787788116
+   },
+   "Newtonian fins (Modified)": {
+    "CN": 0.10914715384097928,
+    "x_cp": 1.1178737537754437
+   },
+   "VSPAERO extended, Exposed Strip": {
+    "CN": 0.5120127338044721,
+    "x_cp": 1.133672205622691
+   },
+   "VSPAERO extended, Whole Wing": {
+    "CN": 0.766615843582,
+    "x_cp": 1.1224043292203663
+   },
+   "Body Lift (slender body)": {
+    "CN": 0.13330839710118228,
+    "x_cp": 0.079016327544844
+   },
+   "Body Lift (slender + crossflow)": {
+    "CN": 0.2529981122725794,
+    "x_cp": 0.34442165079652926
+   },
+   "Exposed Strip + Newtonian body": {
+    "CN": 0.766323111704525,
+    "x_cp": 0.9014327687052879
+   },
+   "Exposed Strip + Body Lift (slender + crossflow)": {
+    "CN": 0.7650108460770515,
+    "x_cp": 0.8726577356905963
+   },
+   "fins to axis + Newtonian body": {
+    "CN": 0.947195518586053,
+    "x_cp": 0.937493861358895
+   },
+   "fins from body + Newtonian body": {
+    "CN": 0.635268588055053,
+    "x_cp": 0.8537906983855341
+   }
+  },
+  "axis_inner_fraction": 0.26974163926079026
+ },
+ "M5_a4": {
+  "SU2": {
+   "nose": 0.16762600000000002,
+   "shoulder": 0.05457100000000001,
+   "mid-tube": 0.066069,
+   "tube at fins": 0.035077000000000004,
+   "fins": 0.42681199999999997,
+   "total": 0.7501530650745921,
+   "x_cp": 0.8076349805343747
+  },
+  "RASAero": {
+   "total": 0.757,
+   "x_cp": 0.8624569999999999
+  },
+  "parts": {
+   "VSPAERO thin, fins to axis": {
+    "CN": 0.561358040997,
+    "x_cp": 1.1224220438802537
+   },
+   "VSPAERO thin, fins from body": {
+    "CN": 0.319594308355,
+    "x_cp": 1.134469816845384
+   },
+   "Newtonian body (Modified)": {
+    "CN": 0.25671993692632084,
+    "x_cp": 0.4338562978778811
+   },
+   "Newtonian fins (Modified)": {
+    "CN": 0.11018130947355961,
+    "x_cp": 1.1178737537754437
+   },
+   "VSPAERO extended, Exposed Strip": {
+    "CN": 0.4033698332243846,
+    "x_cp": 1.1339243745059124
+   },
+   "VSPAERO extended, Whole Wing": {
+    "CN": 0.61271713669,
+    "x_cp": 1.1225720386610165
+   },
+   "Body Lift (slender body)": {
+    "CN": 0.13330839710118228,
+    "x_cp": 0.079016327544844
+   },
+   "Body Lift (slender + crossflow)": {
+    "CN": 0.25665676610158883,
+    "x_cp": 0.3486354991689828
+   },
+   "Exposed Strip + Newtonian body": {
+    "CN": 0.6600897701507054,
+    "x_cp": 0.8616562064428828
+   },
+   "Exposed Strip + Body Lift (slender + crossflow)": {
+    "CN": 0.6600265993259734,
+    "x_cp": 0.8285583431893642
+   },
+   "fins to axis + Newtonian body": {
+    "CN": 0.8180779779233209,
+    "x_cp": 0.9063441641992989
+   },
+   "fins from body + Newtonian body": {
+    "CN": 0.5763142452813208,
+    "x_cp": 0.8223806053228268
+   }
+  },
+  "axis_inner_fraction": 0.2843583279674202
+ },
+ "M5_a8": {
+  "SU2": {
+   "nose": 0.36110799999999993,
+   "shoulder": 0.138761,
+   "mid-tube": 0.504103,
+   "tube at fins": 0.137635,
+   "fins": 0.8345180000000001,
+   "total": 1.976125695104062,
+   "x_cp": 0.7882552572166471
+  },
+  "RASAero": {
+   "total": 2.04,
+   "x_cp": 0.8058658
+  },
+  "parts": {
+   "VSPAERO thin, fins to axis": {
+    "CN": 1.111789867085,
+    "x_cp": 1.1224220276929993
+   },
+   "VSPAERO thin, fins from body": {
+    "CN": 0.632968402268,
+    "x_cp": 1.1344702604602714
+   },
+   "Newtonian body (Modified)": {
+    "CN": 0.7877931479017524,
+    "x_cp": 0.5262921428158225
+   },
+   "Newtonian fins (Modified)": {
+    "CN": 0.3211668102157709,
+    "x_cp": 1.1249354645751721
+   },
+   "VSPAERO extended, Exposed Strip": {
+    "CN": 0.798772279897332,
+    "x_cp": 1.1339384969063286
+   },
+   "VSPAERO extended, Whole Wing": {
+    "CN": 1.213310519467,
+    "x_cp": 1.122579759249722
+   },
+   "Body Lift (slender body)": {
+    "CN": 0.2635394944675222,
+    "x_cp": 0.07901632754484389
+   },
+   "Body Lift (slender + crossflow)": {
+    "CN": 0.9805675899744247,
+    "x_cp": 0.48924755351680516
+   },
+   "Exposed Strip + Newtonian body": {
+    "CN": 1.5865654277990844,
+    "x_cp": 0.8322177952495148
+   },
+   "Exposed Strip + Body Lift (slender + crossflow)": {
+    "CN": 1.7793398698717566,
+    "x_cp": 0.7786589601850132
+   },
+   "fins to axis + Newtonian body": {
+    "CN": 1.8995830149867523,
+    "x_cp": 0.8751956443969919
+   },
+   "fins from body + Newtonian body": {
+    "CN": 1.4207615501697524,
+    "x_cp": 0.7972436838212587
+   }
+  },
+  "axis_inner_fraction": 0.2843508893331242
+ }
+}

@@ -40,6 +40,9 @@ COMPONENTS = [("Label", "Comp_Label"), ("ID", "Comp_ID"), ("Surface", "Comp_Surf
               ("Roughness", "Comp_Roughness"), ("Te_Tw", "Comp_TeTwRatio"), ("Taw_Tw", "Comp_TawTwRatio")]
 
 
+MODEL_LENGTH_UNIT = 2  # OpenVSP LEN_M: the unit OpenVSP Model (VSP) writes
+
+
 def parse_components(s: Settings):
     """Lines ``component = name | ff_body | ff_wing | ff_user | %lam | Q | roughness_m | Te/Tw | Taw/Tw | gen``."""
     out = []
@@ -59,8 +62,9 @@ def parse_components(s: Settings):
 
 
 def script(s: Settings, model, components, points, csv_out, results_out, model_out):
-    unit = s.integer("length_unit")
-    to_model = 1.0 / LENGTH_UNITS[unit][1]  # metres -> model length units
+    # OpenVSP Model (VSP) writes every length in metres (run_model, vspmodel), so the model is in metres.
+    unit = MODEL_LENGTH_UNIT
+    to_model = 1.0 / LENGTH_UNITS[unit][1]  # 1.0
     # Renaming the model keeps OpenVSP's side files (CompGeom tables) in the working directory, not beside the model.
     lines = [f'    ReadVSPFile("{vsp_path(model)}");', f'    SetVSP3FileName("{vsp_path(model_out)}");',
              "    Update();",

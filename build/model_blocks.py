@@ -15,6 +15,8 @@ SETS = ("Thick (panel method)", "Thin (vortex lattice)", "None (Wave and Parasit
 SET_KEYS = ("thick", "thin", "none")
 SYMMETRY = ("None", "x-z plane (left and right)", "x-y plane (top and bottom)", "x-z and x-y planes")
 SYMMETRY_KEYS = ("none", "xz", "xy", "xzxy")
+ACCOUNTING = ("Whole Wing", "Exposed Strip")
+ACCOUNTING_KEYS = ("whole", "exposed")
 
 
 def _r(g, op, a, b):
@@ -166,6 +168,18 @@ def wing_block():
                   "four copies (cruciform or X tails). With symmetry, only the part of each body on the +span side of "
                   "the plane through the origin normal to its span axis is used, so give the whole surface or that "
                   "half. None: each whole body is one surface.", default=d_choice(SYMMETRY, 1)),
+        InputSpec("Extend Into Body", "bool", "Extend each wing inboard to the plane through the origin normal to its "
+                  "span axis (for a wing on a body centred on the x axis: to the body's axis), continuing the first "
+                  "section's leading and trailing edges and thickness, with the root airfoil. VSPAERO then solves the "
+                  "panels through the body, which removes the free root edge (and its tip-like loss of lift) that a "
+                  "wing ending at the body surface has. The OpenVSP wing, and so Wave and Parasite Drag, include the "
+                  "extension.", default=lambda g: g.boolean(False)),
+        InputSpec("Force Accounting", "choice", "Which part of each wing's VSPAERO loads counts. Whole Wing: every "
+                  "strip, the extension included (the extension's lift then stands for the body's carry-over lift, "
+                  "which it over-predicts on a slender body). Exposed Strip: only the strips outboard of the wing "
+                  "body's own root (where the given implicit starts: give the wing trimmed at the fuselage surface); "
+                  "the driver takes the inboard strips' forces and moments off every case, from VSPAERO's spanwise "
+                  "loads.", default=d_choice(ACCOUNTING, 0)),
         InputSpec("Slice Spacing", "real", "Distance between nTop's section cuts, as a fraction of the body's size along "
                   "Span Axis.", default=d_real(0.01)),
         InputSpec("Contour Tolerance", "real", "Point spacing of the section contours, as a fraction of the body's "
@@ -228,7 +242,9 @@ def wing_block():
               "axes of the bodies (`|`-separated lists, one item per body), and the OpenVSP settings.")
     parts = ["component = kind: wing; names: ", k.join(inp("Names"), "|"), "; files: ", k.join(cli, "|"),
              "; set: ", k.pick(inp("Set"), SET_KEYS), "; symmetry: ", k.pick(inp("Symmetry"), SYMMETRY_KEYS),
-             "; sharp_te: ", k.pick(inp("Trailing Edge"), ("1", "0"))]
+             "; sharp_te: ", k.pick(inp("Trailing Edge"), ("1", "0")),
+             "; extend: ", k.choose(inp("Extend Into Body"), k.t("1"), k.t("0")),
+             "; accounting: ", k.pick(inp("Force Accounting"), ACCOUNTING_KEYS)]
     for key, v in zip(("ox", "oy", "oz"), (prop(origin, "x"), prop(origin, "y"), prop(origin, "z"))):
         parts += [f"; {key}: ", _per_body(k, v, 1.0, LENGTH)]
     for key, v in zip(("sx", "sy", "sz"), unit):

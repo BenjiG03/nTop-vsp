@@ -84,9 +84,11 @@ def num(c, key, default=None):
 
 
 def slicer_basis(d, ex, ey):
-    """The in-plane axes nTop's Slice Body writes contours in: the frame's own, except for slicing along +x, +y
-    or +z, where it uses the world's cyclic axes (found by testing nTop 6.3.3)."""
-    for axis, basis in ((X, (Y, Z)), (Y, (Z, X)), (Z, (X, Y))):
+    """The in-plane axes nTop's Slice Body writes contours in: the frame's own, except for slicing along a world
+    axis, where it uses world axes (u, v) with u x v the slicing direction: the cyclic ones for +x, +y, +z and
+    (z, y), (x, z), (y, x) for -x, -y, -z (found by testing nTop 6.3.3; the four fins of a cruciform rocket)."""
+    neg = lambda a: tuple(-c for c in a)  # noqa: E731
+    for axis, basis in ((X, (Y, Z)), (Y, (Z, X)), (Z, (X, Y)), (neg(X), (Z, Y)), (neg(Y), (X, Z)), (neg(Z), (Y, X))):
         if dot(d, axis) > 1.0 - 1e-9:
             return basis
     return ex, ey
@@ -173,7 +175,7 @@ def main(settings_path):
             log(f"note: a second component named {n} is called {n}_{seen[n]}")
             c["name"] = f"{n}_{seen[n]}"
 
-    lines, fuse_fits, fuse_tess, checks, rows = [], {}, {}, [], []
+    lines, fuse_fits, fuse_tess, checks, rows, wings = [], {}, {}, [], [], []
     for k, c in enumerate(comps):
         name, kind = M.clean_name(c["name"]), c["kind"]
         set_name = c.get("set", "thick")
@@ -203,6 +205,19 @@ def main(settings_path):
                     layers = [l for l in layers if o_s + l.z >= -1e-6]
                 f = F.fit_wing(layers, frame, int(num(c, "sections", 8)), int(num(c, "airfoil_points", 41)),
                                num(c, "section_tolerance", 0.01), num(c, "min_section_span", 0.04))
+                z0 = -dot(frame.origin, frame.ez)  # the plane through the origin normal to the span axis
+                root_span = f.stations[0].z - z0  # from that plane to where the wing body starts
+                if int(num(c, "extend", 0)):
+                    F.extend_wing(f, z0)
+                accounting = c.get("accounting", "whole")
+                if accounting not in ("whole", "exposed"):
+                    raise DriverError(f"{name}: accounting '{accounting}': expected whole or exposed")
+                st0 = f.stations[0]
+                wings.append({"Name": name, "Accounting": accounting, "Extended": int(num(c, "extend", 0)),
+                              "Symmetry": symmetry, "Root_Span": root_span,
+                              **{f"S{a}": v for a, v in zip("xyz", frame.ez)},
+                              **{f"N{a}": v for a, v in zip("xyz", frame.ex)},
+                              **{f"Q{a}": v for a, v in zip("xyz", frame.point(st0.le[0], st0.le[1], st0.z))}})
                 lines += M.wing_lines(k, name, f, set_name, symmetry, int(num(c, "tess_u", 20)),
                                       int(num(c, "tess_w", 33)), num(c, "le_cluster", 0.25), num(c, "te_cluster", 0.25),
                                       num(c, "root_cluster", 1.0), num(c, "tip_cluster", 1.0),
@@ -251,6 +266,9 @@ def main(settings_path):
     cols = ["Name", "Type", "Set", "Sections", "Slices", "Size", "Mean_Deviation", "Max_Deviation",
             "Max_Deviation_Fraction", "Check_Points"]
     write_csv(os.path.join(work, case + ".ntvsp.model.csv"), cols, [[r[c] for c in cols] for r in rows])
+    wing_cols = ["Name", "Accounting", "Extended", "Symmetry", "Root_Span", "Sx", "Sy", "Sz", "Nx", "Ny", "Nz", "Qx",
+                 "Qy", "Qz"]
+    write_csv(os.path.join(work, case + ".ntvsp.wings.csv"), wing_cols, [[w[c] for c in wing_cols] for w in wings])
     for p in (stage1, stage2):
         os.remove(p)
     log("done")

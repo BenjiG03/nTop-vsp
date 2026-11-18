@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from ntopfile import Graph, InputSpec
 
-from kit import (F_choice, F_int, F_length, F_real, F_switch, F_text, Kit, analysis, d_choice,
-                 d_int, make_block, model_inputs, run_inputs)
+from kit import (F_choice, F_int, F_length, F_real, F_switch, F_text, Kit, analysis, d_choice, d_real,
+                 d_int, d_text, make_block, model_inputs, run_inputs)
 
 # --- Parasite drag -------------------------------------------------------------------------------------------------
 
@@ -19,7 +19,6 @@ TURB_CF = [("Explicit Fit of Spalding", 0), ("Explicit Fit of Spalding-Chi", 1),
            ("Power Law Prandtl Low Re", 7), ("Power Law Prandtl Medium Re", 8), ("Power Law Prandtl High Re", 9),
            ("Schlichting Compressible", 10), ("Schultz-Grunow Estimate of Schoenherr", 14),
            ("Roughness Schlichting Avg", 16), ("Roughness Schlichting Avg Compressible", 19)]
-MODEL_UNITS = ("mm", "cm", "m", "in", "ft", "yd", "unitless")
 
 COMPONENT_FIELDS = [
     F_text("Component Name", "name", "Wings", "Name of the component in the OpenVSP model (every component with "
@@ -69,12 +68,10 @@ def component_block():
 
 
 PARASITE_FIELDS = [
-    F_choice("Model Length Unit", "length_unit", MODEL_UNITS, range(len(MODEL_UNITS)), 2,
-             "Length unit of the OpenVSP model's dimensions (OpenVSP models carry no units)."),
     F_int("Geometry Set", "geom_set", 0, "OpenVSP set of components to include (0: All, 1: Shown, 2: Not Shown, "
           "3 and up: the model's user sets)."),
     F_choice("Laminar Cf Equation", "lam_cf", LAM_CF, (0, 1), 0, "Laminar skin-friction equation."),
-    F_choice("Turbulent Cf Equation", "turb_cf", [n for n, _ in TURB_CF], [v for _, v in TURB_CF], 9,
+    F_choice("Turbulent Cf Equation", "turb_cf", [n for n, _ in TURB_CF], [v for _, v in TURB_CF], 12,
              "Turbulent skin-friction equation."),
     F_switch("Export Sub-Components", "export_subcomp", False, "Also list each component's sub-surfaces in OpenVSP's "
              "own CSV table (<Case Name>.ParasiteDragBuildUp.csv)."),
@@ -83,8 +80,8 @@ PARASITE_FIELDS = [
 
 def parasite_block():
     own = (
-        InputSpec("OpenVSP Model", "text", "Output of OpenVSP Model (VSP), or the path of any .vsp3 model. Parasite Drag "
-                  "works on OpenVSP's own components (wings, fuselages...): it needs their wetted areas, reference "
+        InputSpec("OpenVSP Model", "text", "Output of OpenVSP Model (VSP). Its lengths are metres (OpenVSP Model writes "
+                  "every nTop length in metres), so the drag runs in metres. Parasite Drag works on OpenVSP's own components (wings, fuselages...): it needs their wetted areas, reference "
                   "lengths and thickness or fineness ratios."),
         InputSpec("Flight Condition", "text", "Output of Flight Condition (VSP): its flight points' Mach numbers and altitudes (one OpenVSP run per flight point), "
                   "and its reference area."),
@@ -110,7 +107,7 @@ def parasite_block():
         "Runs OpenVSP's **Parasite Drag** tool on an OpenVSP model at every flight point (Mach number and altitude) "
         "of a Flight Condition, with its reference area, and returns the path of its results (connect it to Parasite "
         "Drag Result, Parasite Drag Component Values or Parasite Drag Contribution). The other settings of OpenVSP's "
-        "Parasite Drag screen are inputs: geometry set, model length unit, laminar and turbulent Cf equations, "
+        "Parasite Drag screen are inputs: geometry set, laminar and turbulent Cf equations, "
         "sub-component export, and each component's form factor equation, % laminar, Q, roughness and temperature "
         "ratios. OpenVSP takes the form-factor inputs (reference length, thickness or fineness ratio) from the "
         "model's components.\n\nNot exposed: atmospheres other than the US Standard Atmosphere 1976 (no temperature "
@@ -246,3 +243,111 @@ def wave_areas_block():
     return make_block("wave_areas", "Wave Drag Area Distribution (VSP)",
                       "The equivalent area distribution of one rotation section at one Mach number of a Wave Drag run: "
                       "x/L stations or slice areas, as a list.", specs, "list<real>", g, out)
+
+
+# --- Body lift -------------------------------------------------------------------------------------------------
+
+BODY_POTENTIAL = ("Slender Body", "Off")
+BODY_POTENTIAL_KEYS = ("slender", "off")
+BODY_CROSSFLOW = ("Viscous Crossflow (Allen-Perkins, Jorgensen)", "Off")
+BODY_CROSSFLOW_KEYS = ("jorgensen", "off")
+
+
+def body_lift_block():
+    own = (
+        InputSpec("OpenVSP Model", "text", "Output of OpenVSP Model (VSP): the body lift comes from its fuselages' "
+                  "section areas along x, sampled on the OpenVSP surface."),
+        InputSpec("Flight Condition", "text", "Output of Flight Condition (VSP): its distinct Mach numbers, angles of "
+                  "attack and sideslips, and the reference."),
+        InputSpec("Components", "list<text>", "Names of the OpenVSP fuselages whose lift this is (several add on one "
+                  "area distribution). Leave the default (one empty name) for every fuselage of the model.",
+                  default=lambda g: g.block("core.list<text>", "list<text>", [g.text("")], top=False)),
+        InputSpec("Potential Lift", "choice", "Slender Body: Munk's slender-body lift, dCN/dx = (dS/dx / Sref) "
+                  "sin(2 alpha) cos(alpha / 2), on the section area S(x): the nose (where the area grows) carries "
+                  "it, a constant section none, a boattail a negative share. Off: none.",
+                  default=d_choice(BODY_POTENTIAL, 0)),
+        InputSpec("Viscous Crossflow", "choice", "Allen and Perkins' viscous crossflow, dCN/dx = eta Cdn (2 r / Sref) "
+                  "sin^2(alpha), with Cdn against the crossflow Mach number and eta against fineness (Jorgensen, "
+                  "NASA TR R-474), r the radius of the circle of equal area. Off: none.",
+                  default=d_choice(BODY_CROSSFLOW, 0)),
+        InputSpec("Sections", "integer", "Stations along the fuselages at which the OpenVSP surface is sampled.",
+                  default=d_int(200)),
+        InputSpec("Mach Min", "real", "Lowest Mach number computed.", default=d_real(0.0)),
+        InputSpec("Mach Max", "real", "Conditions at or above this Mach number are not computed.",
+                  default=d_real(1000.0)),
+    )
+    specs = own + run_inputs("body_lift")
+    g = Graph()
+    k = Kit(g)
+    inp = model_inputs(specs)
+    g.comment("**Body lift** of the model's fuselages: OpenVSP's surface sampled in rings at planes normal to x gives "
+              "the section area S(x); slender-body theory puts the potential normal force where S grows (the nose), "
+              "Allen and Perkins' crossflow adds the viscous part along the whole body. The total angle of attack "
+              "sets both, and the force lies along the crossflow, so sideslip is included. Moments about the flight "
+              "condition's moment point; no axial force (Wave and Parasite Drag carry the drag).")
+    lines = [k.line("model", inp("OpenVSP Model")), k.line("flight", inp("Flight Condition")),
+             k.line("components", k.join(inp("Components"), "|")),
+             k.line("potential", k.pick(inp("Potential Lift"), BODY_POTENTIAL_KEYS)),
+             k.line("crossflow", k.pick(inp("Viscous Crossflow"), BODY_CROSSFLOW_KEYS)),
+             k.line("slices", k.num(inp("Sections"))), k.line("mach_min", k.num(inp("Mach Min"))),
+             k.line("mach_max", k.num(inp("Mach Max")))]
+    out = analysis(g, k, inp, "run_body_lift", lambda base: [], lines, "Body Lift")
+    return make_block(
+        "body_lift", "Body Lift (VSP)",
+        "The normal force of an OpenVSP model's fuselages from their section-area distribution (no other geometry "
+        "input): slender-body potential lift on the nose and, optionally, Allen and Perkins' viscous crossflow "
+        "(Jorgensen's tables), at every (Mach, alpha, beta) of a Flight Condition. Writes a coefficient table; "
+        "connect the output to Coefficients Contribution (VSP). Use it with lifting surfaces whose Force Accounting "
+        "is Exposed Strip, which leave the body's lift out.", specs, "text", g, out)
+
+
+# --- RASAero II ------------------------------------------------------------------------------------------------
+
+RASAERO_VARIABLE = "RASAERO_PATH"  # the folder holding RASAero II.exe
+
+
+def rasaero_block():
+    from kit import environment
+    own = (
+        InputSpec("OpenVSP Model", "text", "Output of OpenVSP Model (VSP): a rocket, one fuselage and one set of alike "
+                  "fins. Its RASAero II design (nose shape, body tube, boattail, fins) is fitted to the OpenVSP "
+                  "surfaces: no separate rocket description."),
+        InputSpec("Flight Condition", "text", "Output of Flight Condition (VSP): its Mach numbers, altitudes (RASAero "
+                  "II's launch site altitude), angles of attack and sideslips, and the reference."),
+        InputSpec("Body", "text", "Name of the fuselage that is the rocket body (empty: the model's only fuselage).",
+                  default=d_text("")),
+        InputSpec("Fins", "list<text>", "Names of the wings that are the fins (one empty name: every wing). RASAero II "
+                  "takes one set of alike trapezoidal fins; mirrored copies count.",
+                  default=lambda g: g.block("core.list<text>", "list<text>", [g.text("")], top=False)),
+        InputSpec("All Turbulent", "bool", "RASAero II's All Turbulent Flow (otherwise its transition model).",
+                  default=lambda g: g.boolean(True)),
+        InputSpec("Surface", "text", "RASAero II's surface finish, as its Surface list names it.",
+                  default=d_text("Smooth (Zero Roughness)")),
+        InputSpec("Mach Min", "real", "Lowest Mach number computed.", default=d_real(0.0)),
+        InputSpec("Mach Max", "real", "Conditions at or above this Mach number are not computed.",
+                  default=d_real(25.0)),
+    )
+    specs = own + run_inputs("rasaero")
+    g = Graph()
+    k = Kit(g)
+    inp = model_inputs(specs)
+    g.comment("**RASAero II** (Rogers Aeroscience) on the OpenVSP model. The driver fits a RASAero II design to the "
+              "model's surfaces (nose: the closest of Conical, Tangent Ogive and Von Karman Ogive; body tube; "
+              "boattail; one fin set with hexagonal sections), runs RASAero II's Run Test through its window at each "
+              "total angle of attack and altitude the flight condition needs, and writes a coefficient table on the "
+              "flight condition's reference (RASAero II is axisymmetric: sideslip enters through the total angle of "
+              "attack, the normal force lies along the crossflow, the centre of pressure on the axis). RASAero II "
+              f"is found through the `{RASAERO_VARIABLE}` environment variable; it opens a window while it runs.")
+    lines = [k.line("model", inp("OpenVSP Model")), k.line("flight", inp("Flight Condition")),
+             k.line("body", inp("Body")), k.line("fins", k.join(inp("Fins"), "|")),
+             k.line("turbulent", k.choose(inp("All Turbulent"), k.t("1"), k.t("0"))), k.line("surface", inp("Surface")),
+             k.line("mach_min", k.num(inp("Mach Min"))), k.line("mach_max", k.num(inp("Mach Max"))),
+             k.line("rasaero_dir", environment(g, RASAERO_VARIABLE, "RASAero II Folder"))]
+    out = analysis(g, k, inp, "run_rasaero", lambda base: [], lines, "RASAero II")
+    return make_block(
+        "rasaero", "RASAero II (VSP)",
+        "Runs **RASAero II** on a rocket's OpenVSP model at every condition of a Flight Condition and returns the path "
+        "of its coefficient table (connect it to RASAero Contribution (VSP)). The RASAero II design is fitted to the "
+        "model's surfaces; the fit is in `<Case Name>.ntvsp.rasaero_design.txt` and the design in "
+        f"`<Case Name>_h<altitude>.CDX1`. Needs RASAero II installed and `{RASAERO_VARIABLE}` set to its folder.",
+        specs, "text", g, out)

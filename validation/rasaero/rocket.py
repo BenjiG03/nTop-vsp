@@ -109,6 +109,13 @@ def fins(g, r=R, inner_fraction=0.75):
     return out
 
 
+def mesh(g, body, tol_mm, name=None):
+    """Mesh from Implicit Body (sharp edges kept), for the on-mesh blocks."""
+    from ntopfile import NONE
+    return g.block("implicit_to_mesh<implicit,real,real,bool,bool>[2.5.0]", "mesh",
+                   [body, g.real(tol_mm * 1e-3, LENGTH), NONE, g.boolean(True), g.boolean(False)], name, top=False)
+
+
 def env():
     e = dict(os.environ)
     e["NTOP_PYTHON_PATH"] = PYTHON

@@ -173,12 +173,14 @@ one) or both (cruciform tails); with any of them only the part of the body on th
 the origin normal to its span axis is used. **Trailing Edge: Sharp** shears a blunt base onto the chord line so
 that VSPAERO's wake leaves one edge. OpenVSP marks every wing trailing edge as a wake: no wake input.
 
-**Wings in a body.** **Extend Into Body** continues each wing inboard to the plane through the origin normal to its
-span axis (for fins on a body along the x axis: to the axis), with the first section's leading- and trailing-edge
-lines, thickness and root airfoil. It stops 0.2% of the root's distance short of that plane, so wings meeting there do
-not touch. Four fins touching on the axis are two crossing thin surfaces; VSPAERO then returned no finite result (at
-Mach 1.5 on a round body, at every Mach number on a trapezoid body), and its spanwise loads lost a strip of the merged
-pair. VSPAERO then solves panels through the body, which removes the free root edge (and
+**Wings in a body.** **Extension** (a length, 0 for none) continues each wing that far inboard of its root, along its
+span axis, with the first section's leading- and trailing-edge lines, thickness and root airfoil. It must stop short of
+the plane through the origin normal to the span axis (for fins on a body along the x axis, the axis); the driver
+refuses one that reaches it. Four fins touching on the axis are two crossing thin surfaces: VSPAERO then returned no
+finite result (at Mach 1.5 on a round body, at every Mach number on a trapezoid body), and its spanwise loads lost a
+strip of the merged pair. Stopping 1 to 2% of the root's distance short (27.6 mm for roots 27.7 mm off the axis) keeps
+opposite wings' root vortices nearly cancelling: at Mach 3 the whole-fin lift was 1.026 with 0.05% left, 1.013 with
+0.2% and 0.929 with 2%. VSPAERO then solves panels through the body, which removes the free root edge (and
 its tip-like loss of lift) of a wing that ends at the body surface. **Force Accounting** says which of those loads
 count: Whole Wing (every strip: the inboard part's lift stands for the body's carry-over, and over-predicts it on a
 slender body), or Exposed Strip (only outboard of the wing body's own root: give the wing trimmed at the fuselage
@@ -489,14 +491,16 @@ evaluated once per flight condition through nTop's list processing.
   (Classical), or **User Defined**: the **Cp Max Field** input, a scalar field, so Cp_max may differ over the body
   (one value on the fins, another on the nose); a constant field is one number everywhere. No self-shadowing: correct
   for convex bodies, a part in another's shadow is over-loaded.
-* **Modified Newtonian on Mesh (VSP)**: the same pressure, computed on the implicit (its gradient normal, the same
-  Cp_max choices including the Cp Max Field), with the integrals done over nTop's mesh of the body (Mesh from Implicit
-  Body at the **Mesh Tolerance**, sharp edges kept) instead of Surface Integrals: nTop meshes the body and exports it,
-  the driver `vsp_ntop.run_newtonian_mesh` lists the faces' centroids, nTop evaluates the body's gradient and the Cp
-  Max Field there and exports them as point maps (Evaluate Field Gradient, Point Map, Export Point Map), and the driver
-  sums -Cp S_f and -Cp (r_f - c) x S_f over the faces (S_f the face's outward vector area) at every condition (numpy).
+* **Modified Newtonian on Mesh (VSP)**: the same pressure on a **Mesh** input (Mesh from Implicit Body, or a
+  remeshed or imported surface mesh, closed with outward faces), each face's pressure from its own outward normal, the
+  integrals summed over its faces instead of Surface Integrals. The block exports the mesh, the driver
+  `vsp_ntop.run_newtonian_mesh` lists the faces' centroids, nTop evaluates the Cp Max Field there (Evaluate Field,
+  Point Map, Export Point Map), and the driver sums -Cp S_f and -Cp (r_f - c) x S_f over the faces (S_f the face's
+  outward vector area) at every condition (numpy). A mesh whose faces point inward overall is turned round. On the
+  rocket body (2 mm Mesh from Implicit Body, 489,000 faces) the face normals give the same coefficients as the implicit's
+  gradient normals within 0.7% (the tangent wedge, linear in small face angles, within 9%: refine the mesh).
   It writes the same coefficient table. See the run time and accuracy below.
-* **Tangent Wedge on Mesh (VSP)**: the same mesh pipeline with a local-inclination pressure law
+* **Tangent Wedge on Mesh (VSP)**: the same mesh pipeline (a Mesh input) with a local-inclination pressure law
   (`vsp_ntop/local_methods.py`, after hypanel's `methods.py`). Each face's impact angle is $\delta$, with
   $\sin\delta=-\hat n\cdot\hat V$ (positive windward). Supersonic only (Mach Min defaults above 1); $\gamma=1.4$.
   - *Windward:* the exact two-dimensional oblique shock that turns the flow through $\delta$ (the weak solution, from
@@ -563,7 +567,7 @@ Newtonian applies. Modified Newtonian on Mesh costs one mesh, one evaluation of 
 and a sum per condition. On the hobby rocket of `validation/rasaero` (1.2 m, four 4 mm fins), four Newtonian
 runs (the whole rocket at 611,000 faces, the body, the fins, and the rocket again) over 330 conditions took 99 s in
 all; Surface Integrals on the body alone took 750 s for 4 conditions. On the body at Mach 3 (alpha 0 and 8, beta 0 and
-3 degrees) a 4 mm Mesh Tolerance (118,000 faces) agrees with the Surface Integral block within 0.5% in CN, CY and the
+3 degrees) a mesh from Mesh from Implicit Body at 4 mm tolerance (118,000 faces), with the implicit's gradient normals, agrees with the Surface Integral block within 0.5% in CN, CY and the
 moments and to four digits in CA, and gives exact zeros where the Surface Integral's noise gives 7e-4; a User Defined
 Cp Max Field of 1.5 scales every coefficient by exactly 1.5 / Cp_max(Modified).
 

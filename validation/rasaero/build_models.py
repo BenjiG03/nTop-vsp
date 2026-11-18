@@ -38,6 +38,7 @@ VARIANTS = {  # fin set, fin inner fraction of the radius, body set (, extend in
 CHECK_MACHS = (2.0, 4.0)
 CHECK_ALPHAS = (0.0, 8.0)
 CHECK_BETAS = (0.0, 4.0)
+EXTENSION_MM = 27.6  # the fin roots are 27.7 mm from the axis: stop just short of it
 X_REF_MM = 700.0  # moment reference point on the axis, about 58% of the length (a typical CG)
 
 
@@ -79,7 +80,8 @@ def build(variant, work):
                           "Set": g.choice(sets, key[fin_set]),
                           "Span Axes": lst(g, "vector", [g.vector(0, 1, 0), g.vector(0, 0, 1), g.vector(0, -1, 0),
                                                           g.vector(0, 0, -1)]),
-                          "Symmetry": g.choice(list(mb.SYMMETRY), 0), "Extend Into Body": g.boolean(extend),
+                          "Symmetry": g.choice(list(mb.SYMMETRY), 0),
+                          "Extension": g.real(EXTENSION_MM * 1e-3 if extend else 0.0, rk.LENGTH),
                           "Force Accounting": g.choice(list(mb.ACCOUNTING), accounting)}, "Fin Components"),
     ], "Components")
     vsp_model = rk.call(g, model, {"Components": comps, **run, "Case Name": g.text(f"{variant}_model")}, "Model")

@@ -2,7 +2,7 @@
 
     sh build/py.sh validation/noncircular/build.py
 
-OpenVSP Fuselage (Set None) and four OpenVSP Wing fins (Thin, Extend Into Body, Exposed Strip + Carry-over (TR 1307),
+OpenVSP Fuselage (Set None) and four OpenVSP Wing fins (Thin, Extension 24.6 mm, Exposed Strip + Carry-over (TR 1307),
 each fin its own body and span axis: the roots differ, 25 mm at the sides, 24 mm top and bottom) make the OpenVSP
 model. On it: VSPAERO (fixed wake), Body Lift (slender body + crossflow), RASAero II (an axisymmetric code: its driver
 fits a round body to the model) and Modified Newtonian on Mesh on the body alone. Flight condition: Mach 2, 3, 5 at sea
@@ -33,6 +33,7 @@ ALPHAS = (-4.0, 0.0, 4.0, 8.0)
 BETAS = (0.0,)
 SPAN_AXES = ((0, 1, 0), (0, 0, 1), (0, -1, 0), (0, 0, -1))
 ACCOUNTING = os.environ.get("NC_ACCOUNTING", "carryover")
+EXTENSION_MM = 24.6  # roots at 24.7 mm (top, bottom) and 25.7 mm (sides) from the axis: stop just short of it
 
 
 def build(work=WORK):
@@ -51,7 +52,8 @@ def build(work=WORK):
         rk.call(g, wing, {"Bodies": lst(g, "implicit", fins), "Names": lst(g, "text", [g.text("Fin")]),
                           "Set": g.choice(list(mb.SETS), 1),
                           "Span Axes": lst(g, "vector", [g.vector(*s) for s in SPAN_AXES]),
-                          "Symmetry": g.choice(list(mb.SYMMETRY), 0), "Extend Into Body": g.boolean(True),
+                          "Symmetry": g.choice(list(mb.SYMMETRY), 0),
+                          "Extension": g.real(EXTENSION_MM * 1e-3, rk.LENGTH),
                           "Force Accounting": g.choice(list(mb.ACCOUNTING), mb.ACCOUNTING_KEYS.index(ACCOUNTING))},
                 "Fin Components"),
     ], "Components")
@@ -65,7 +67,7 @@ def build(work=WORK):
                                 "Case Name": g.text("body_lift")}, "Body Lift"),
             rk.call(g, ras_b, {"OpenVSP Model": vsp_model, "Flight Condition": fc, **run,
                                "Case Name": g.text("rasaero")}, "RASAero II"),
-            rk.call(g, newt, {"Body": body, "Flight Condition": fc, "Mesh Tolerance": g.real(1e-3, rk.LENGTH), **run,
+            rk.call(g, newt, {"Mesh": rk.mesh(g, body, 1.0), "Flight Condition": fc, **run,
                               "Case Name": g.text("newtonian_body")}, "Newtonian Body")]
     return g, blocks, g.block("core.group<any>", "group", outs, "Results")
 
@@ -96,7 +98,7 @@ def build_plate(work=WORK):
         rk.call(g, wing, {"Bodies": lst(g, "implicit", geo.fins(g)), "Names": lst(g, "text", [g.text("Fin")]),
                           "Set": g.choice(list(mb.SETS), 1),
                           "Span Axes": lst(g, "vector", [g.vector(*s) for s in SPAN_AXES]),
-                          "Symmetry": g.choice(list(mb.SYMMETRY), 0), "Extend Into Body": g.boolean(False),
+                          "Symmetry": g.choice(list(mb.SYMMETRY), 0),
                           "Force Accounting": g.choice(list(mb.ACCOUNTING), 2)}, "Fin Components"),
     ], "Components")
     vsp_model = rk.call(g, model, {"Components": comps, **run, "Case Name": g.text("plate_model")}, "Model")

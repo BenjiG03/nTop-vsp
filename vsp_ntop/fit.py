@@ -379,7 +379,7 @@ def fit_wing(layers, frame: Frame, n_sections=8, airfoil_points=41, tolerance=0.
 
 
 def extend_wing(fit: WingFit, z0):
-    """Extend the wing inboard to span station ``z0`` (the plane through the model's origin normal to the span axis):
+    """Extend the wing inboard to span station ``z0`` (between its root and the plane through the origin):
     a new root station whose leading edge, chord and thickness continue the first section's linear variation, with
     the root airfoil and twist. Returns the span from ``z0`` to the original root (where the wing body starts)."""
     a, b = fit.stations[0], fit.stations[1]
@@ -389,11 +389,11 @@ def extend_wing(fit: WingFit, z0):
     t = (z0 - a.z) / (b.z - a.z)
     chord = a.chord + t * (b.chord - a.chord)
     if chord <= 0.0:
-        raise FitError("extending the wing into the body makes its chord vanish before the origin plane")
+        raise FitError("extending the wing this far into the body makes its chord vanish")
     le = tuple(p + t * (q - p) for p, q in zip(a.le, b.le))
     thick = a.thickness + t * (b.thickness - a.thickness)
     fit.stations.insert(0, WingStation(z0, le, chord, a.twist, list(a.upper), list(a.lower), thick, a.te_thickness, []))
-    fit.notes.append(f"extended into the body: root moved {exposed:.4f} m inboard, toward the origin plane, chord "
+    fit.notes.append(f"extended into the body: root moved {exposed:.4f} m inboard, chord "
                      f"{chord:.4f} m there")
     return exposed
 

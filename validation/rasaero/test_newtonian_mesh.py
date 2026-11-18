@@ -43,20 +43,21 @@ def build(tol_mm, work):
     user = lambda g: g.choice(list(a.newtonian.CP_MAX_MODES), 2)  # noqa: E731
     field = lambda g: g.leaf("real_field", {"expression": "1.5", "units": {}})  # noqa: E731
     classical = lambda g: g.choice(list(a.newtonian.CP_MAX_MODES), 1)  # noqa: E731
+    body_mesh, whole_mesh = rk.mesh(g, body, tol_mm, "Body Mesh"), rk.mesh(g, whole, tol_mm, "Rocket Mesh")
     outs = []
     for name, blk, extra in (
             ("si_modified", si_b, {"Body": body}),
             ("si_user", si_b, {"Body": body, "Stagnation Pressure": user, "Cp Max Field": field}),
-            ("mesh_body_modified", mesh_b, {"Body": body, "Mesh Tolerance": g.real(tol_mm * 1e-3, rk.LENGTH)}),
-            ("mesh_body_user", mesh_b, {"Body": body, "Mesh Tolerance": g.real(tol_mm * 1e-3, rk.LENGTH),
-                                        "Stagnation Pressure": user, "Cp Max Field": field}),
-            ("mesh_modified", mesh_b, {"Mesh Tolerance": g.real(tol_mm * 1e-3, rk.LENGTH)}),
-            ("mesh_classical", mesh_b, {"Mesh Tolerance": g.real(tol_mm * 1e-3, rk.LENGTH), "Stagnation Pressure": classical}),
-            ("mesh_user", mesh_b, {"Mesh Tolerance": g.real(tol_mm * 1e-3, rk.LENGTH), "Stagnation Pressure": user,
-                                   "Cp Max Field": field})):
-        given = {"Body": whole, "Flight Condition": flight, "Case Name": g.text(name)}  # Body may be replaced
+            ("mesh_body_modified", mesh_b, {"Mesh": body_mesh}),
+            ("mesh_body_user", mesh_b, {"Mesh": body_mesh, "Stagnation Pressure": user, "Cp Max Field": field}),
+            ("mesh_modified", mesh_b, {"Mesh": whole_mesh}),
+            ("mesh_classical", mesh_b, {"Mesh": whole_mesh, "Stagnation Pressure": classical}),
+            ("mesh_user", mesh_b, {"Mesh": whole_mesh, "Stagnation Pressure": user, "Cp Max Field": field})):
+        given = {"Flight Condition": flight, "Case Name": g.text(name)}
         if blk is mesh_b:
             given["Working Directory"] = g.file_path(work)
+        else:
+            given["Body"] = whole
         given.update(extra)
         outs.append(rk.call(g, blk, given, name))
     group = g.block("core.group<any>", "group", outs, "Results")

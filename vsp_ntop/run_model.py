@@ -36,7 +36,6 @@ def dot(a, b):
 
 PER_BODY = ("file", "ox", "oy", "oz", "sx", "sy", "sz")
 
-EXTEND_GAP = 0.002  # Extend Into Body stops this fraction of the root's distance short of the origin plane
 CARRY_COLS = ["Name", "Copy", "Body", "Sx", "Sy", "Sz", "Nx", "Ny", "Nz", "Qx", "Qy", "Qz", "Root", "Semispan",
               "Root_Chord", "Tip_Chord", "LE_Slope", "Planform", "Body_Width", "Body_Length"]
 FLIPS = {"none": [(1, 1)], "xz": [(1, 1), (-1, 1)], "xy": [(1, 1), (1, -1)],
@@ -260,16 +259,23 @@ def main(settings_path):
                 z0 = -dot(frame.origin, frame.ez)  # the plane through the origin normal to the span axis
                 root_span = f.stations[0].z - z0  # from that plane to where the wing body starts
                 exposed_stations = list(f.stations)
-                if int(num(c, "extend", 0)):
-                    # stop just short of the origin plane: wings meeting there (crossing fins) must not touch
-                    F.extend_wing(f, z0 + EXTEND_GAP * root_span)
+                extension = num(c, "extend", 0.0)
+                if extension < 0.0:
+                    raise DriverError(f"{name}: Extension {extension:g} m is negative")
+                if extension > 0.0:
+                    if extension >= root_span - 1e-9:
+                        raise DriverError(
+                            f"{name}: an Extension of {extension * 1000:.2f} mm reaches the plane through the origin "
+                            f"normal to the span axis (the root is {root_span * 1000:.2f} mm from it): stop short of it "
+                            "(wings that meet or cross there make VSPAERO fail)")
+                    F.extend_wing(f, f.stations[0].z - extension)
                 accounting = c.get("accounting", "whole")
                 if accounting not in ("whole", "exposed", "carryover"):
                     raise DriverError(f"{name}: accounting '{accounting}': expected whole, exposed or carryover")
                 if accounting == "carryover":
                     carry.append((name, frame, z0, exposed_stations, symmetry))
                 st0 = f.stations[0]
-                wings.append({"Name": name, "Accounting": accounting, "Extended": int(num(c, "extend", 0)),
+                wings.append({"Name": name, "Accounting": accounting, "Extended": num(c, "extend", 0.0),
                               "Symmetry": symmetry, "Root_Span": root_span,
                               **{f"S{a}": v for a, v in zip("xyz", frame.ez)},
                               **{f"N{a}": v for a, v in zip("xyz", frame.ex)},

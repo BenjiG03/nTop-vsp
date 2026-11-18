@@ -402,7 +402,7 @@ def exposed_wings(model_vsp3):
     out = []
     with open(path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
-            if r["Accounting"] != "exposed":
+            if r["Accounting"] not in ("exposed", "carryover"):
                 continue
             s, n, q = ([float(r[k + c]) for c in "xyz"] for k in ("S", "N", "Q"))
             flips = {"none": [(1, 1)], "xz": [(1, 1), (-1, 1)], "xy": [(1, 1), (1, -1)],
@@ -457,6 +457,67 @@ def exposed_accounting(header, data, lod_path, wings, s: Settings, log):
     n_in = sum(1 for st in first if inboard(st, wings))
     log(f"Force Accounting Exposed Strip ({', '.join(w for w, _ in wings)}): {n_in} inboard strips left out; they "
         + (f"carried {100 * min(shares):.0f} to {100 * max(shares):.0f}% of the inviscid lift" if shares else ""))
+
+
+def carryover_fins(model_vsp3):
+    """Each copy of the wings with Force Accounting Exposed Strip + Carry-over, as OpenVSP Model measured it
+    (``.ntvsp.carryover.csv``)."""
+    path = model_vsp3[:-5] + ".ntvsp.carryover.csv"
+    if not os.path.isfile(path):
+        return []
+    with open(path, newline="", encoding="utf-8") as f:
+        return [{k: (v if k in ("Name", "Body") else float(v)) for k, v in r.items()} for r in csv.DictReader(f)]
+
+
+def carryover_accounting(header, data, lod_path, fins, s: Settings, log):
+    """Add the lift each fin carries onto the body (TR 1307 K_B(W), ``carryover.py``) to every case: K_B(W) times
+    the fin's own force along its normal (its exposed strips in VSPAERO's spanwise loads), along that normal, at the
+    planar model's centre of the carried load."""
+    from . import carryover as CO
+    cases = read_lod(lod_path)
+    sref, ref = s.real("sref"), {"bref": s.real("bref"), "cref": s.real("cref")}
+    xyz = (s.real("xcg"), s.real("ycg"), s.real("zcg"))
+    col = {h: i for i, h in enumerate(header)}
+    factors, notes = {}, {}
+    for row in data:
+        mach, a, b = (row[col[c]] for c in ("Mach", "AoA", "Beta"))
+        strips = cases[tuple(round(v, 6) for v in (mach, a, b))]
+        force, moment = [0.0] * 3, [0.0] * 3
+        for f in fins:
+            sv, nv, q = (tuple(f[k + c] for c in "xyz") for k in ("S", "N", "Q"))
+            fin_n = 0.0
+            for st in strips:
+                p = st[3:6]
+                along = sum(x * y for x, y in zip(p, sv))
+                off = abs(sum((x - y) * z for x, y, z in zip(p, q, nv)))
+                if f["Root"] * (1.0 - 1e-6) <= along <= f["Semispan"] * 1.02 and off <= 0.05 * f["Semispan"]:
+                    fin_n += sum(st[20 + i] * nv[i] for i in range(3)) * st[9] / sref
+            key = (f["Name"], f["Copy"], round(mach, 6))
+            if key not in factors:
+                factors[key] = CO.body_factor(mach, f["Root"], f["Semispan"], f["Root_Chord"], f["Tip_Chord"],
+                                              f["LE_Slope"], f["Planform"], f["Body_Width"], f["Body_Length"])
+            k, xi, eta, method = factors[key]
+            notes[(f["Name"], round(mach, 6))] = (k, method)
+            dF = [k * fin_n * c for c in nv]
+            at = [q[i] + xi * (1.0 if i == 0 else 0.0) - eta * sv[i] - xyz[i] for i in range(3)]
+            dM = (at[1] * dF[2] - at[2] * dF[1], at[2] * dF[0] - at[0] * dF[2], at[0] * dF[1] - at[1] * dF[0])
+            force = [x + y for x, y in zip(force, dF)]
+            moment = [x + y for x, y in zip(moment, dM)]
+        al, be = math.radians(a), math.radians(b)
+        V = (math.cos(al) * math.cos(be), -math.sin(be), math.sin(al) * math.cos(be))
+        L = (-math.sin(al), 0.0, math.cos(al))
+        S = (math.cos(al) * math.sin(be), math.cos(be), math.sin(al) * math.sin(be))
+        dot3 = lambda u: sum(x * y for x, y in zip(u, force))  # noqa: E731
+        add = {"L": dot3(L), "D": dot3(V), "S": dot3(S), "Fx": force[0], "Fy": force[1], "Fz": force[2],
+               "Mx": moment[0] / ref["bref"], "My": moment[1] / ref["cref"], "Mz": moment[2] / ref["bref"]}
+        for q_, v in add.items():
+            for name in (f"C{q_}i", f"C{q_}tot") if len(q_) == 1 else (f"C{q_[0]}i{q_[1]}", f"C{q_}tot"):
+                if name in col:
+                    row[col[name]] += v
+        if "L/D" in col and abs(row[col["CDtot"]]) > 1e-12:
+            row[col["L/D"]] = row[col["CLtot"]] / row[col["CDtot"]]
+    for (name, mach), (k, method) in sorted(notes.items()):
+        log(f"carry-over (TR 1307): {name} at Mach {mach:g}: K_B(W) {k:.3f} ({method})")
 
 
 def main(settings_path):
@@ -542,6 +603,9 @@ def main(settings_path):
                   ["Case"] + [clean(h) for h in header] + ["Converged"],
                   [[i] + list(row) + [f] for i, (row, f) in enumerate(zip(data, flags), start=1)])
         exposed_accounting(header, data, os.path.join(work, case + ".lod"), wings, s, log)
+        fins = carryover_fins(model)
+        if fins:
+            carryover_accounting(header, data, os.path.join(work, case + ".lod"), fins, s, log)
     write_csv(os.path.join(work, case + ".ntvsp.polar.csv"), ["Case"] + [clean(h) for h in header] + ["Converged"],
               [[i] + row + [f] for i, (row, f) in enumerate(zip(data, flags), start=1)])
     if failed:

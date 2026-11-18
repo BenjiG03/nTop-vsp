@@ -393,7 +393,7 @@ def extend_wing(fit: WingFit, z0):
     le = tuple(p + t * (q - p) for p, q in zip(a.le, b.le))
     thick = a.thickness + t * (b.thickness - a.thickness)
     fit.stations.insert(0, WingStation(z0, le, chord, a.twist, list(a.upper), list(a.lower), thick, a.te_thickness, []))
-    fit.notes.append(f"extended into the body: root moved {exposed:.4f} m inboard to the origin plane, chord "
+    fit.notes.append(f"extended into the body: root moved {exposed:.4f} m inboard, toward the origin plane, chord "
                      f"{chord:.4f} m there")
     return exposed
 

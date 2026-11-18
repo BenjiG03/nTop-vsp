@@ -39,20 +39,32 @@
     "x_cp": 1.117459028607898
    },
    "Body Lift (slender body)": {
-    "CN": 0.06684750645806625,
-    "x_cp": 0.07901632754484367
+    "CN": 0.0753265606014593,
+    "x_cp": 0.20426737785397542
    },
    "Body Lift (slender + crossflow)": {
-    "CN": 0.09599579571805648,
-    "x_cp": 0.24936193306729298
+    "CN": 0.10441603072404396,
+    "x_cp": 0.325475165050827
    },
    "Exposed Strip + Newtonian body": {
     "CN": 0.6295927687170287,
     "x_cp": 1.0164071499592677
    },
    "Exposed Strip + Body Lift (slender + crossflow)": {
-    "CN": 0.6385852730768443,
-    "x_cp": 0.9940270710021937
+    "CN": 0.6470055080828317,
+    "x_cp": 0.9966192994858286
+   },
+   "VSPAERO extended, Exposed Strip + Carry-over": {
+    "CN": 0.6008813430965108,
+    "x_cp": 1.1286351794819514
+   },
+   "Carry-over + Body Lift (slender + crossflow)": {
+    "CN": 0.7052973738205547,
+    "x_cp": 1.0097310351365896
+   },
+   "Carry-over + Newtonian body": {
+    "CN": 0.6878846344547517,
+    "x_cp": 1.028173951530713
    },
    "fins to axis + Newtonian body": {
     "CN": 0.7306192573112409,
@@ -105,20 +117,32 @@
     "x_cp": 1.1218156241734456
    },
    "Body Lift (slender body)": {
-    "CN": 0.13330839710118228,
-    "x_cp": 0.079016327544844
+    "CN": 0.15021746636465474,
+    "x_cp": 0.2042673778539753
    },
    "Body Lift (slender + crossflow)": {
-    "CN": 0.25080903788096043,
-    "x_cp": 0.34184160365894495
+    "CN": 0.2674838866745517,
+    "x_cp": 0.3950056899379367
    },
    "Exposed Strip + Newtonian body": {
     "CN": 0.9525679639554173,
     "x_cp": 0.9495576789076994
    },
    "Exposed Strip + Body Lift (slender + crossflow)": {
-    "CN": 0.9541880877750917,
-    "x_cp": 0.9244959354992613
+    "CN": 0.9708629365686829,
+    "x_cp": 0.9291359968069463
+   },
+   "VSPAERO extended, Exposed Strip + Carry-over": {
+    "CN": 0.7576479444855303,
+    "x_cp": 1.1347200877201549
+   },
+   "Carry-over + Body Lift (slender + crossflow)": {
+    "CN": 1.025131831160082,
+    "x_cp": 0.9417091245116429
+   },
+   "Carry-over + Newtonian body": {
+    "CN": 1.0068368585468164,
+    "x_cp": 0.9612585331364807
    },
    "fins to axis + Newtonian body": {
     "CN": 1.1496289568742861,
@@ -171,20 +195,32 @@
     "x_cp": 1.1224043292203663
    },
    "Body Lift (slender body)": {
-    "CN": 0.13330839710118228,
-    "x_cp": 0.079016327544844
+    "CN": 0.15021746636465474,
+    "x_cp": 0.2042673778539753
    },
    "Body Lift (slender + crossflow)": {
-    "CN": 0.2529981122725794,
-    "x_cp": 0.34442165079652926
+    "CN": 0.26967131683112117,
+    "x_cp": 0.3969876008965965
    },
    "Exposed Strip + Newtonian body": {
     "CN": 0.766323111704525,
     "x_cp": 0.9014327687052879
    },
    "Exposed Strip + Body Lift (slender + crossflow)": {
-    "CN": 0.7650108460770515,
-    "x_cp": 0.8726577356905963
+    "CN": 0.7816840506355933,
+    "x_cp": 0.8795251403420757
+   },
+   "VSPAERO extended, Exposed Strip + Carry-over": {
+    "CN": 0.5397944388972847,
+    "x_cp": 1.135865268045458
+   },
+   "Carry-over + Body Lift (slender + crossflow)": {
+    "CN": 0.809465755728406,
+    "x_cp": 0.8897101811043934
+   },
+   "Carry-over + Newtonian body": {
+    "CN": 0.7941048167973377,
+    "x_cp": 0.9110483890690074
    },
    "fins to axis + Newtonian body": {
     "CN": 0.947195518586053,
@@ -237,20 +273,32 @@
     "x_cp": 1.1225720386610165
    },
    "Body Lift (slender body)": {
-    "CN": 0.13330839710118228,
-    "x_cp": 0.079016327544844
+    "CN": 0.15021746636465474,
+    "x_cp": 0.2042673778539753
    },
    "Body Lift (slender + crossflow)": {
-    "CN": 0.25665676610158883,
-    "x_cp": 0.3486354991689828
+    "CN": 0.2733255249072942,
+    "x_cp": 0.40022771758699327
    },
    "Exposed Strip + Newtonian body": {
     "CN": 0.6600897701507054,
     "x_cp": 0.8616562064428828
    },
    "Exposed Strip + Body Lift (slender + crossflow)": {
-    "CN": 0.6600265993259734,
-    "x_cp": 0.8285583431893642
+    "CN": 0.6766953581316788,
+    "x_cp": 0.8375753284170406
+   },
+   "VSPAERO extended, Exposed Strip + Carry-over": {
+    "CN": 0.41772982369195544,
+    "x_cp": 1.1363820234397446
+   },
+   "Carry-over + Body Lift (slender + crossflow)": {
+    "CN": 0.6910553485992497,
+    "x_cp": 0.8452190037658288
+   },
+   "Carry-over + Newtonian body": {
+    "CN": 0.6744497606182762,
+    "x_cp": 0.8689753602806857
    },
    "fins to axis + Newtonian body": {
     "CN": 0.8180779779233209,
@@ -303,20 +351,32 @@
     "x_cp": 1.122579759249722
    },
    "Body Lift (slender body)": {
-    "CN": 0.2635394944675222,
-    "x_cp": 0.07901632754484389
+    "CN": 0.29696730293655316,
+    "x_cp": 0.20426737785397558
    },
    "Body Lift (slender + crossflow)": {
-    "CN": 0.9805675899744247,
-    "x_cp": 0.48924755351680516
+    "CN": 1.0129193155089729,
+    "x_cp": 0.5117856696326161
    },
    "Exposed Strip + Newtonian body": {
     "CN": 1.5865654277990844,
     "x_cp": 0.8322177952495148
    },
    "Exposed Strip + Body Lift (slender + crossflow)": {
-    "CN": 1.7793398698717566,
-    "x_cp": 0.7786589601850132
+    "CN": 1.8116915954063049,
+    "x_cp": 0.7860919773651649
+   },
+   "VSPAERO extended, Exposed Strip + Carry-over": {
+    "CN": 0.8273296983201383,
+    "x_cp": 1.1363805664123623
+   },
+   "Carry-over + Body Lift (slender + crossflow)": {
+    "CN": 1.8402490138291112,
+    "x_cp": 0.7925878347971351
+   },
+   "Carry-over + Newtonian body": {
+    "CN": 1.6151228462218907,
+    "x_cp": 0.8388035239924533
    },
    "fins to axis + Newtonian body": {
     "CN": 1.8995830149867523,

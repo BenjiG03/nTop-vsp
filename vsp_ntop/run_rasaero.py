@@ -366,7 +366,7 @@ def main(settings_path):
     parts = rings(text)
     if len(parts) != 1:
         raise DriverError(f"RASAero II needs one body: the model has {len(parts)} fuselages (name it in Body)")
-    xs, areas, centres = combine(parts, 300)
+    xs, areas, centres, _ = combine(parts, 300)
     radius = [math.sqrt(max(a, 0.0) / math.pi) for a in areas]
     nose = fit_nose(xs, radius)
     n_len, big, shape, rms = nose
@@ -394,10 +394,14 @@ def main(settings_path):
     plan = [fin_planform([[(q[0], q[1] - axis_y, q[2] - axis_z) for q in r] for r in rl], body_radius_at)
             for rl in surfaces.values()]
     ref = plan[0]
-    for p in plan[1:]:
+    for p in plan[1:]:  # measured where each fin meets the fitted round body: a noncircular body spreads them
         for k in ("root_chord", "tip_chord", "span", "sweep"):
-            if abs(p[k] - ref[k]) > 0.03 * max(ref["root_chord"], 1e-9):
+            gap = abs(p[k] - ref[k]) / max(ref["root_chord"], 1e-9)
+            if gap > 0.10:
                 raise DriverError(f"the fins differ ({k}: {ref[k]:.4f} vs {p[k]:.4f} m): RASAero II takes one fin set")
+            if gap > 0.01:
+                log(f"warning: the fins differ ({k}: {ref[k]:.4f} vs {p[k]:.4f} m, {100 * gap:.1f}% of the root "
+                    "chord); RASAero II takes one fin set: their mean")
     fins = {k: sum(p[k] for p in plan) / len(plan) for k in ref}
     n_fins = len(plan)
     summary = (f"nose {shape} (RMS of r/R: " + ", ".join(f"{k} {v:.3f}" for k, v in rms.items()) +

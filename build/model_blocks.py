@@ -15,8 +15,8 @@ SETS = ("Thick (panel method)", "Thin (vortex lattice)", "None (Wave and Parasit
 SET_KEYS = ("thick", "thin", "none")
 SYMMETRY = ("None", "x-z plane (left and right)", "x-y plane (top and bottom)", "x-z and x-y planes")
 SYMMETRY_KEYS = ("none", "xz", "xy", "xzxy")
-ACCOUNTING = ("Whole Wing", "Exposed Strip")
-ACCOUNTING_KEYS = ("whole", "exposed")
+ACCOUNTING = ("Whole Wing", "Exposed Strip", "Exposed Strip + Carry-over (TR 1307)")
+ACCOUNTING_KEYS = ("whole", "exposed", "carryover")
 
 
 def _r(g, op, a, b):
@@ -169,7 +169,9 @@ def wing_block():
                   "the plane through the origin normal to its span axis is used, so give the whole surface or that "
                   "half. None: each whole body is one surface.", default=d_choice(SYMMETRY, 1)),
         InputSpec("Extend Into Body", "bool", "Extend each wing inboard to the plane through the origin normal to its "
-                  "span axis (for a wing on a body centred on the x axis: to the body's axis), continuing the first "
+                  "span axis (for a wing on a body centred on the x axis: to the body's axis; it stops 0.2% of the "
+                  "root's distance short of the plane, so wings meeting there, such as crossing fins, do not touch), "
+                  "continuing the first "
                   "section's leading and trailing edges and thickness, with the root airfoil. VSPAERO then solves the "
                   "panels through the body, which removes the free root edge (and its tip-like loss of lift) that a "
                   "wing ending at the body surface has. The OpenVSP wing, and so Wave and Parasite Drag, include the "
@@ -179,7 +181,11 @@ def wing_block():
                   "which it over-predicts on a slender body). Exposed Strip: only the strips outboard of the wing "
                   "body's own root (where the given implicit starts: give the wing trimmed at the fuselage surface); "
                   "the driver takes the inboard strips' forces and moments off every case, from VSPAERO's spanwise "
-                  "loads.", default=d_choice(ACCOUNTING, 0)),
+                  "loads. Exposed Strip + Carry-over (TR 1307): as Exposed Strip, plus the lift each wing carries "
+                  "onto the body, K_B(W) times the wing's own normal force, from NACA TR 1307 (supersonic planar "
+                  "model on the body's measured width and length behind the root, or slender-body theory where its "
+                  "selection rule asks); the body must be an OpenVSP Fuselage in the model, in any Set.",
+                  default=d_choice(ACCOUNTING, 0)),
         InputSpec("Slice Spacing", "real", "Distance between nTop's section cuts, as a fraction of the body's size along "
                   "Span Axis.", default=d_real(0.01)),
         InputSpec("Contour Tolerance", "real", "Point spacing of the section contours, as a fraction of the body's "

@@ -36,6 +36,58 @@ def dot(a, b):
 
 PER_BODY = ("file", "ox", "oy", "oz", "sx", "sy", "sz")
 
+EXTEND_GAP = 0.002  # Extend Into Body stops this fraction of the root's distance short of the origin plane
+CARRY_COLS = ["Name", "Copy", "Body", "Sx", "Sy", "Sz", "Nx", "Ny", "Nz", "Qx", "Qy", "Qz", "Root", "Semispan",
+              "Root_Chord", "Tip_Chord", "LE_Slope", "Planform", "Body_Width", "Body_Length"]
+FLIPS = {"none": [(1, 1)], "xz": [(1, 1), (-1, 1)], "xy": [(1, 1), (1, -1)],
+         "xzxy": [(1, 1), (-1, 1), (1, -1), (-1, -1)]}
+
+
+def carryover_fins(name, frame, z0, stations, symmetry, fuse_fits):
+    """The geometry TR 1307's carry-over needs for each copy of a wing (``carryover.py``), from its exposed stations
+    (before any extension into the body) and the fuselage it sits on: root and tip distances from the plane through
+    the origin normal to the span axis, root and tip chords, the cotangent of the leading-edge sweep, the planform
+    area, the body's width across the span direction at the root and its length aft of the root leading edge.
+
+    The body is the fuselage with a section nearest the root's mid-chord point; its width is measured in the wing's
+    plane (section contour points within 20% of the root distance of it) over the root chord, so it need not be
+    round or centred on the origin."""
+    if not fuse_fits:
+        raise DriverError(f"{name}: Force Accounting with carry-over needs the body it sits on as an OpenVSP Fuselage "
+                          "in the model (in any Set, None included)")
+    root, tip = stations[0], stations[-1]
+    r, semispan = root.z - z0, tip.z - z0
+    x_le = frame.origin[0] + root.le[1]
+    x_tip = frame.origin[0] + tip.le[1]
+    slope = (semispan - r) / max(x_tip - x_le, 1e-3 * (semispan - r))
+    planform = sum(0.5 * (a.chord + b.chord) * (b.z - a.z) for a, b in zip(stations, stations[1:]))
+    rows = []
+    for copy, (fy, fz) in enumerate(FLIPS[symmetry], start=1):
+        m = lambda v: (v[0], fy * v[1], fz * v[2])  # noqa: E731
+        s, n = m(frame.ez), m(frame.ex)
+        q = m(frame.point(root.le[0], root.le[1], root.z))
+        mid = m(frame.point(root.le[0], root.le[1] + 0.5 * root.chord, root.z))
+        best = None
+        for body, ff in fuse_fits.items():
+            secs = [sec for sec in ff.sections if sec.loop]
+            pts = [[ff.frame.point(u, v, sec.x) for u, v in sec.loop] for sec in secs]
+            xs = [ff.frame.origin[0] + sec.x for sec in secs]
+            near = min(range(len(secs)), key=lambda i: abs(xs[i] - mid[0]))
+            gap = min(math.dist(p, mid) for p in pts[near])
+            if best is None or gap < best[0]:
+                over = [i for i, x in enumerate(xs) if x_le <= x <= x_le + root.chord] or [near]
+                # across the body in the fin's plane: section points within a band of it (all, if none are)
+                band = [dot(p, s) for i in over for p in pts[i] if abs(dot(p, n) - dot(q, n)) <= 0.2 * r]
+                low = min(band or [dot(p, s) for i in over for p in pts[i]])
+                end = max(ff.frame.origin[0] + sec.x for sec in ff.sections)
+                best = (gap, body, low, end)
+        _, body, low, end = best
+        rows.append({"Name": name, "Copy": copy, "Body": body, **{f"S{a}": v for a, v in zip("xyz", s)},
+                     **{f"N{a}": v for a, v in zip("xyz", n)}, **{f"Q{a}": v for a, v in zip("xyz", q)},
+                     "Root": r, "Semispan": semispan, "Root_Chord": root.chord, "Tip_Chord": tip.chord,
+                     "LE_Slope": slope, "Planform": planform, "Body_Width": r - low, "Body_Length": end - x_le})
+    return rows
+
 
 def parse_components(path):
     """``component = key: value; key: value; ...`` lines, in order. A component block given several bodies writes
@@ -175,7 +227,7 @@ def main(settings_path):
             log(f"note: a second component named {n} is called {n}_{seen[n]}")
             c["name"] = f"{n}_{seen[n]}"
 
-    lines, fuse_fits, fuse_tess, checks, rows, wings = [], {}, {}, [], [], []
+    lines, fuse_fits, fuse_tess, checks, rows, wings, carry = [], {}, {}, [], [], [], []
     for k, c in enumerate(comps):
         name, kind = M.clean_name(c["name"]), c["kind"]
         set_name = c.get("set", "thick")
@@ -207,11 +259,15 @@ def main(settings_path):
                                num(c, "section_tolerance", 0.01), num(c, "min_section_span", 0.04))
                 z0 = -dot(frame.origin, frame.ez)  # the plane through the origin normal to the span axis
                 root_span = f.stations[0].z - z0  # from that plane to where the wing body starts
+                exposed_stations = list(f.stations)
                 if int(num(c, "extend", 0)):
-                    F.extend_wing(f, z0)
+                    # stop just short of the origin plane: wings meeting there (crossing fins) must not touch
+                    F.extend_wing(f, z0 + EXTEND_GAP * root_span)
                 accounting = c.get("accounting", "whole")
-                if accounting not in ("whole", "exposed"):
-                    raise DriverError(f"{name}: accounting '{accounting}': expected whole or exposed")
+                if accounting not in ("whole", "exposed", "carryover"):
+                    raise DriverError(f"{name}: accounting '{accounting}': expected whole, exposed or carryover")
+                if accounting == "carryover":
+                    carry.append((name, frame, z0, exposed_stations, symmetry))
                 st0 = f.stations[0]
                 wings.append({"Name": name, "Accounting": accounting, "Extended": int(num(c, "extend", 0)),
                               "Symmetry": symmetry, "Root_Span": root_span,
@@ -269,6 +325,13 @@ def main(settings_path):
     wing_cols = ["Name", "Accounting", "Extended", "Symmetry", "Root_Span", "Sx", "Sy", "Sz", "Nx", "Ny", "Nz", "Qx",
                  "Qy", "Qz"]
     write_csv(os.path.join(work, case + ".ntvsp.wings.csv"), wing_cols, [[w[c] for c in wing_cols] for w in wings])
+    fins = [row for item in carry for row in carryover_fins(*item, fuse_fits)]
+    for r in fins:
+        log(f"{r['Name']} copy {r['Copy']} (TR 1307 carry-over): root {r['Root'] * 1000:.1f} mm and tip "
+            f"{r['Semispan'] * 1000:.1f} mm from the origin plane, chords {r['Root_Chord'] * 1000:.1f} / "
+            f"{r['Tip_Chord'] * 1000:.1f} mm, body {r['Body_Width'] * 1000:.1f} mm across, running "
+            f"{r['Body_Length'] * 1000:.1f} mm aft of the root leading edge ({r['Body']})")
+    write_csv(os.path.join(work, case + ".ntvsp.carryover.csv"), CARRY_COLS, [[r[c] for c in CARRY_COLS] for r in fins])
     for p in (stage1, stage2):
         os.remove(p)
     log("done")

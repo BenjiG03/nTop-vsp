@@ -66,7 +66,9 @@ with Export Text.
 * `validation/wave_drag_mach.py` — the wave drag study below (results in `validation/results/`);
   `validation/newtonian/` — the Modified Newtonian and viscous-correction validation report from `ntop_newtonian`;
   `validation/rasaero/` — which combination of these analyses best reproduces RASAero II on a finned rocket (Mach
-  1.5 to 5, alpha -15 to 15, beta -4 to 4 degrees): `validation/rasaero/REPORT.md`.
+  1.5 to 5, alpha -15 to 15, beta -4 to 4 degrees): `validation/rasaero/REPORT.md`;
+  `validation/noncircular/` — the same rocket with a trapezoid-section body, against inviscid SU2: where methods built
+  for round bodies fail (`validation/noncircular/REPORT.md`).
 
 ## Setup
 
@@ -172,17 +174,113 @@ that VSPAERO's wake leaves one edge. OpenVSP marks every wing trailing edge as a
 
 **Wings in a body.** **Extend Into Body** continues each wing inboard to the plane through the origin normal to its
 span axis (for fins on a body along the x axis: to the axis), with the first section's leading- and trailing-edge
-lines, thickness and root airfoil. VSPAERO then solves panels through the body, which removes the free root edge (and
+lines, thickness and root airfoil. It stops 0.2% of the root's distance short of that plane, so wings meeting there do
+not touch. Four fins touching on the axis are two crossing thin surfaces; VSPAERO then returned no finite result (at
+Mach 1.5 on a round body, at every Mach number on a trapezoid body), and its spanwise loads lost a strip of the merged
+pair. VSPAERO then solves panels through the body, which removes the free root edge (and
 its tip-like loss of lift) of a wing that ends at the body surface. **Force Accounting** says which of those loads
 count: Whole Wing (every strip: the inboard part's lift stands for the body's carry-over, and over-predicts it on a
 slender body), or Exposed Strip (only outboard of the wing body's own root: give the wing trimmed at the fuselage
 surface). For Exposed Strip, OpenVSP Model records each wing's root (`<case>.ntvsp.wings.csv`) and VSPAERO Analysis
 takes the inboard strips' forces and moments off every case from VSPAERO's spanwise loads (`.lod`; the whole-wing
 polar is kept as `.ntvsp.polar_whole.csv`). On a cruciform rocket (`validation/rasaero/REPORT.md`) the exposed strips'
-lift is within -6% to +11% of SU2's fin lift, where fins ending at the body give 59 to 76% of it; Whole Wing puts 30 to
-38% of the lift on the inboard strips, 2 to 6 times SU2's carry-over. Opposite wings that meet at the origin plane
-become one continuous wing in VSPAERO, and four fins meeting on the axis are two crossing thin surfaces: VSPAERO
-returned no finite result at Mach 1.5 for them (Mach 2 to 5 converged).
+lift is 10% under to 5% over SU2's fin lift (Mach 2 to 5), where fins ending at the body give 59 to 76% of it; Whole
+Wing puts 30 to 38% of the lift on the inboard strips, 2 to 6 times SU2's carry-over.
+
+**Exposed Strip + Carry-over (TR 1307)** is Exposed Strip plus the lift each wing carries onto the body. It is
+implemented in `vsp_ntop/carryover.py`, after W. C. Pitts, J. N. Nielsen and G. E. Kaattari, *Lift and Center of
+Pressure of Wing-Body-Tail Combinations at Subsonic, Transonic, and Supersonic Speeds*, NACA Report 1307 (1957).
+
+TR 1307 writes a wing-body combination's lift as factors on the lift $L_W$ of the wing alone (the exposed panels
+joined at the root). $K_B(W)$ is the share the wing puts on the body:
+
+$$L_{B(W)} = K_{B(W)}\,L_W$$
+
+The driver takes $L_W$ to be each wing's own normal force $F_n$ from its exposed VSPAERO strips. It adds
+
+$$\Delta\mathbf{F} = K_{B(W)}\,F_n\,\hat{\mathbf{n}}$$
+
+along the wing's normal $\hat{\mathbf{n}}$, at the centre of the carried load. That force is added to every force and
+moment column of the polar (totals and the inviscid part).
+
+*Supersonic: the planar model* (TR 1307's Figure 4). The body is flattened into a strip of width $d$ beside the wing
+root. The wing's pressure reaches the strip between the Mach lines from the root's leading and trailing edges. With
+$\xi$ aft of the root leading edge and $\eta$ across the strip from the root, TR 1307's equations 23 and 25 give the
+lifting pressure there, in units of the two-dimensional value $4\alpha/\beta$:
+
+$$
+\hat p(\xi,\eta) =
+\begin{cases}
+\dfrac{\beta m}{\pi\sqrt{\beta^2m^2-1}}\,\cos^{-1}\!\left(\dfrac{\xi/\beta+\beta m\,\eta}{\eta+m\,\xi}\right), & \beta m>1 \text{ (supersonic leading edge)}\\[3ex]
+\dfrac{2(\beta m)^{3/2}}{\pi(\beta m+1)}\sqrt{\dfrac{\xi/\beta-\eta}{m\,\xi+\eta}}, & \beta m<1 \text{ (subsonic leading edge)}
+\end{cases}
+$$
+
+The two are blended linearly over $|\beta m-1|<0.02$. The pressure is integrated numerically (48 × 48 Gauss points)
+over
+
+$$0\le\eta\le d,\qquad \beta\eta\le\xi\le\min(c_r+\beta\eta,\ \ell)$$
+
+That gives
+
+$$
+K_{B(W)}=\frac{1}{S_W}\iint\hat p\,d\xi\,d\eta,\qquad
+\bar\xi=\frac{\iint\hat p\,\xi}{\iint\hat p},\qquad
+\bar\eta=\frac{\iint\hat p\,\eta}{\iint\hat p}
+$$
+
+The load acts at the root leading edge $+\,\bar\xi$ aft and $\bar\eta$ across the body. Integrating to $\ell$ covers
+both of TR 1307's closed forms: a body that runs on behind the wing (equations 24, 26) and one that ends at its
+trailing edge (equations 30, 31).
+
+*Slender-body theory*, TR 1307's equation 21, is used instead subsonic, and where TR 1307's selection rule says the
+wing's tip would reach the strip:
+
+$$\beta A(1+\lambda)\left(\frac{1}{\beta m}+1\right)\le 4$$
+
+It gives
+
+$$K_{B(W)}=(1+\tau)^2-K_{W(B)}$$
+
+$$K_{W(B)}=\frac{2}{\pi(1-\tau)^2}\left[(1+\tau^4)\left(\tfrac12\tan^{-1}\!\tfrac12\!\left(\tfrac1\tau-\tau\right)+\tfrac\pi4\right)-\tau^2\left(\tfrac1\tau-\tau+2\tan^{-1}\tau\right)\right]$$
+
+That is equation 14. The load is still placed where the planar model puts it (subsonic: at the root mid-chord and the
+body's middle).
+
+| Symbol | Meaning | Where it comes from |
+|---|---|---|
+| $M$, $\beta=\sqrt{M^2-1}$ | freestream Mach number, Prandtl-Glauert factor | flight condition |
+| $\alpha$ | the wing's incidence (it cancels: only $F_n$ is used) | |
+| $r$ | root's distance from the plane through the origin normal to the span axis (the body axis) | first exposed station |
+| $s$ | tip's distance from that plane (the semispan) | last station |
+| $\tau=r/s$ | body-to-semispan ratio | |
+| $c_r$, $c_t$, $\lambda=c_t/c_r$ | root and tip chords, taper ratio | first and last stations |
+| $m=\cot\Lambda_{LE}$ | cotangent of the leading-edge sweep, $(s-r)/(x_{LE,tip}-x_{LE,root})$ | stations |
+| $S_W$ | one wing's exposed planform area | stations (trapezoidal rule) |
+| $A=4(s-r)/(c_r+c_t)$ | aspect ratio of the exposed pair joined at the root | |
+| $d$ | body width across the wing's plane at the root: root distance plus the body's extent on the far side, from fuselage contour points within $0.2r$ of the plane over the root chord | fuselage sections |
+| $\ell$ | body length from the root leading edge to the body's end | fuselage sections |
+| $\xi$, $\eta$ | distance aft of the root leading edge, distance across the body from the root | |
+| $F_n$ | the wing's normal force from its exposed VSPAERO strips (along $\hat{\mathbf n}$) | `.lod` |
+
+These are measured per wing and mirror copy (`<case>.ntvsp.carryover.csv`). The body is the OpenVSP Fuselage with a
+section nearest the root's mid-chord point, so it must be in the model (Set None is enough).
+
+*Assumptions and limits:*
+- Linear supersonic theory: thin wings at small incidence, no shocks, no viscous effects.
+- The body is flat (TR 1307's planar model). Only its width $d$ and length $\ell$ enter: not its section shape, or how
+  its crossflow changes the wing's upwash. Nothing assumes a round body, but a noncircular body's own effect on the
+  interference is not modelled (`validation/noncircular`).
+- The strip pressure is that of the root leading edge's conical flow. Tip effects are left out when the selection
+  rule keeps the planar model, and the wing is taken as trapezoidal: only its root and tip chords and leading-edge
+  sweep enter.
+- The $4\alpha/\beta$ of linear theory stands for the wing's own mean lifting pressure, $F_n/S_W$ from VSPAERO. That
+  keeps the wing and the carried load consistent, but it carries everything in $F_n$, including lift from camber or
+  deflection, at the incidence factor. TR 1307 gives control deflection its own, smaller factor $k_{B(W)}$, which is
+  not modelled.
+- Each wing carries onto the body independently. Fin-fin interference is only what VSPAERO itself solves.
+- Only $K_{B(W)}$ is applied. TR 1307's $K_{W(B)}$, the wing's own lift raised by the body's upwash, is not, because
+  it assumes the wing-alone lift already includes tip and root losses.
 
 **Tessellation.** Wings: **Tess U** spanwise points (shared between sections by span), **Tess W** around the
 airfoil, OpenVSP's leading- and trailing-edge clustering, root and tip clustering. Fuselages: **Tess W** around each
@@ -328,10 +426,40 @@ rings at planes normal to x (OpenVSP's fuselage sections are such planes), givin
 Slender-body (Munk) potential lift puts dCN/dx = (dS/dx / Sref) sin(2 alpha) cos(alpha / 2) where the area grows (the
 nose); optional Allen and Perkins viscous crossflow adds eta Cdn (2 r / Sref) sin^2(alpha) along the body, with
 Jorgensen's (NASA TR R-474) Cdn against crossflow Mach number and eta against fineness. Both act along the crossflow at
-the total angle of attack, so sideslip is included; no axial force. It is meant to go with Exposed Strip wings. On the
-cruciform rocket, Exposed Strip fins with Body Lift (slender body and crossflow) put the centre of pressure within 21
-mm of inviscid SU2's at Mach 2 to 5 (CN 6 to 12% low: the carry-over onto the body between the fins is in no block).
-OpenVSP's tessellation-based Planar Slice was not usable for S(x): 80% off near a nose.
+the total angle of attack, so sideslip is included; no axial force. It is meant to go with Exposed Strip wings.
+
+On the cruciform rocket, with Exposed Strip + Carry-over (TR 1307) fins and Body Lift (slender body and crossflow), the
+results against inviscid SU2 at Mach 2 to 5 are:
+- CN within −8% to +4%;
+- the centre of pressure within 4 mm at three of five conditions, and 25 and 38 mm aft at Mach 4 and 5, alpha 4.
+
+OpenVSP's tessellation-based Planar Slice was not usable for S(x): it was 80% off near a nose. OpenVSP's end caps are several rings in
+one plane, sweeping across the cap. A cap at the front counts as a point; one further aft (a flat base) is left out,
+so the body does not seem to shrink before its base.
+
+**Potential Lift: Slender Body (Section Shape)** replaces the area with each section's crossflow apparent mass, which
+is what slender-body theory actually uses:
+
+$$\frac{d\mathbf{C}}{dx}=\frac{1}{S_{ref}}\,\frac{d(\mathbf{M}\,\hat{\mathbf e})}{dx}\,\sin 2\alpha_t\cos\frac{\alpha_t}{2}$$
+
+Here $\hat{\mathbf e}$ is the crossflow direction in the y-z plane. $\mathbf M(x)$ is the section's 2×2 apparent-mass
+tensor per unit fluid density, $M_{jk}=-\oint\phi_j\,n_k\,ds$, where $\phi_j$ is the exterior potential flow of the
+section moving with unit velocity along $j$. The driver solves that flow on each OpenVSP ring with constant-strength
+source panels, Richardson-extrapolated from the ring's edges and each edge split in two (the panels converge to first
+order).
+
+Checks:
+- a circle gives its area to 0.02%, so round bodies are unchanged;
+- an ellipse gives πa² and πb² across its axes to 0.2%;
+- a flat plate gives πw²/4.
+
+A section wide across the crossflow then lifts more. One not symmetric about the crossflow also gets a side component.
+Several fuselages add their tensors, with no interference between them. The crossflow term still uses the radius of
+the circle of equal area.
+
+On the trapezoid-section rocket of `validation/noncircular`, the section's vertical-crossflow apparent mass is 1.37
+times its area. That moves the forebody's lift and centre of pressure towards SU2's, but SU2's nose lifts 1.7 times
+the round one's, so part of the gap is beyond slender-body theory (the report has the numbers).
 
 **RASAero II (VSP)** runs RASAero II (Rogers Aeroscience; `RASAERO_PATH`) on a rocket's OpenVSP model, with no rocket
 description of its own: `vsp_ntop.run_rasaero` fits a RASAero II design to the model's surfaces (nose: the closest

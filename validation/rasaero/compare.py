@@ -199,7 +199,7 @@ def candidates(data: Data, base=True):
                  "Parasite (Roughness Schlichting Avg Compressible)": data.source("parasite", f"{W}/parasite_cf19", "drag"),
                  "no friction": zero}
     lifts = {"no VSPAERO": zero}
-    for model in ("thin_exposed", "thin_axis", "thin_exposed_body", "thick_exposed", "thick_body", "thin_extend_exposed",
+    for model in ("thin_exposed", "thin_axis", "thin_exposed_body", "thick_exposed", "thick_body", "thin_extend_exposed", "thin_extend_carry",
                   "thin_extend_whole"):
         for wake in sweep.WAKES:
             for use in ("all", "nodrag"):

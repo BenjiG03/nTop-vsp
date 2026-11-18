@@ -247,8 +247,8 @@ def wave_areas_block():
 
 # --- Body lift -------------------------------------------------------------------------------------------------
 
-BODY_POTENTIAL = ("Slender Body", "Off")
-BODY_POTENTIAL_KEYS = ("slender", "off")
+BODY_POTENTIAL = ("Slender Body", "Off", "Slender Body (Section Shape)")
+BODY_POTENTIAL_KEYS = ("slender", "off", "shape")
 BODY_CROSSFLOW = ("Viscous Crossflow (Allen-Perkins, Jorgensen)", "Off")
 BODY_CROSSFLOW_KEYS = ("jorgensen", "off")
 
@@ -264,7 +264,11 @@ def body_lift_block():
                   default=lambda g: g.block("core.list<text>", "list<text>", [g.text("")], top=False)),
         InputSpec("Potential Lift", "choice", "Slender Body: Munk's slender-body lift, dCN/dx = (dS/dx / Sref) "
                   "sin(2 alpha) cos(alpha / 2), on the section area S(x): the nose (where the area grows) carries "
-                  "it, a constant section none, a boattail a negative share. Off: none.",
+                  "it, a constant section none, a boattail a negative share. Slender Body (Section Shape): the same "
+                  "with each section's crossflow apparent mass M(x) in place of its area, dC/dx = (d(M e)/dx / Sref) "
+                  "sin(2 alpha) cos(alpha / 2) with e the crossflow direction, from a 2D potential-flow solve on each "
+                  "OpenVSP section (equal to the area for a circle; larger for a section wide across the crossflow, "
+                  "and a side force where the section is not symmetric about it). For noncircular bodies. Off: none.",
                   default=d_choice(BODY_POTENTIAL, 0)),
         InputSpec("Viscous Crossflow", "choice", "Allen and Perkins' viscous crossflow, dCN/dx = eta Cdn (2 r / Sref) "
                   "sin^2(alpha), with Cdn against the crossflow Mach number and eta against fineness (Jorgensen, "

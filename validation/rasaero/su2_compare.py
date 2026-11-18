@@ -97,6 +97,12 @@ def main():
     parts["Body Lift (slender + crossflow)"] = data.source("coefficients", f"{W}/bodylift")
     parts["Exposed Strip + Newtonian body"] = parts["VSPAERO extended, Exposed Strip"] + parts["Newtonian body (Modified)"]
     parts["Exposed Strip + Body Lift (slender + crossflow)"] = parts["VSPAERO extended, Exposed Strip"] +         parts["Body Lift (slender + crossflow)"]
+    parts["VSPAERO extended, Exposed Strip + Carry-over"] = data.source("vspaero",
+                                                                        cmp.vsp_bases("thin_extend_carry", "fixed"))
+    parts["Carry-over + Body Lift (slender + crossflow)"] = parts["VSPAERO extended, Exposed Strip + Carry-over"] + \
+        parts["Body Lift (slender + crossflow)"]
+    parts["Carry-over + Newtonian body"] = parts["VSPAERO extended, Exposed Strip + Carry-over"] + \
+        parts["Newtonian body (Modified)"]
     parts["fins to axis + Newtonian body"] = parts["VSPAERO thin, fins to axis"] + parts["Newtonian body (Modified)"]
     parts["fins from body + Newtonian body"] = parts["VSPAERO thin, fins from body"] + parts["Newtonian body (Modified)"]
     out = {}

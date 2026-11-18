@@ -243,6 +243,79 @@ area distribution too; it is a fit issue (section placement and skinning near th
 0.270 m; fins 159.4 / 59.8 mm chords, 70.0 mm span, 100.0 mm sweep, 4.0 mm thick) gives CA within 1%, CN within 2% and
 the moments within 1.5% of the runs made from hypanel's hand-written design, in 50 s (start, 10 Run Tests, close).
 
+## Round 3: TR 1307 carry-over, and a correction to round 2's Exposed Strip numbers
+
+New: Force Accounting **Exposed Strip + Carry-over (TR 1307)**, `vsp_ntop/carryover.py` (README). Extend Into Body now
+stops 0.2% of the root distance short of the origin plane, for two reasons:
+- Fins extended exactly to the axis cross there. VSPAERO returned non-finite results at Mach 1.5 here, and at every
+  Mach number on the trapezoid-body rocket (`validation/noncircular`).
+- Touching at the axis, VSPAERO merges the two horizontal fins and drops the −y fin's innermost strip from its spanwise
+  loads (19 strips, not 20). That strip's lift was never subtracted, so **round 2's Exposed Strip fin lift was about
+  4% too high**: at Mach 3, alpha 4 it is 0.673, not 0.703.
+
+With the gap every fin has its 20 strips and Mach 1.5 solves. The gap itself costs little: at Mach 3, alpha 4 the
+whole-fin lift is 1.030 touching, 1.026 with a 0.05% gap and 1.013 with 0.2%. Round 2's tables are left as they were
+run.
+
+K_B(W) on this rocket is 0.164 at Mach 2, 0.126 at Mach 3, 0.099 at Mach 4 and 0.082 at Mach 5 (planar model
+throughout). That is 5 to 7% under hypanel's mesh-measured values (0.173, 0.135, 0.106, 0.088). The carried load acts
+at x = 1.14 m.
+
+Against SU2 (CN; centre of pressure in mm, positive aft; Cm about x = 0.7 m):
+
+| Mach, alpha | SU2 CN, x_cp | carry-over / SU2 tube at fins | exposed fins / SU2 fins | **Carry-over + Body Lift** | Carry-over + Newtonian body | RASAero II |
+|---|---|---|---|---|---|---|
+| 2, 2 | 0.680, 1.014 | 0.084 / 0.103 | 0.517 / 0.491 | **+4%, −4 mm, Cm +2%** | +1%, +14 mm, +6% | 0%, −27 mm, −9% |
+| 3, 4 | 1.022, 0.938 | 0.084 / 0.104 | 0.673 / 0.698 | **0%, +4 mm, +2%** | −1%, +24 mm, +8% | +2%, +3 mm, +3% |
+| 4, 4 | 0.834, 0.865 | 0.049 / 0.058 | 0.491 / 0.527 | **−3%, +25 mm, +11%** | −5%, +46 mm, +22% | +2%, +36 mm, +25% |
+| 5, 4 | 0.750, 0.808 | 0.032 / 0.035 | 0.386 / 0.427 | **−8%, +38 mm, +24%** | −10%, +61 mm, +41% | +1%, +55 mm, +52% |
+| 5, 8 | 1.976, 0.788 | 0.063 / 0.138 | 0.765 / 0.835 | **−7%, +4 mm, −2%** | −18%, +51 mm, +29% | +3%, +18 mm, +24% |
+
+* **TR 1307's K_B(W) gives the body's lift between the fins**: 80 to 92% of SU2's, except at Mach 5 and 8 degrees
+  (46%), where SU2's tube lift there is nonlinear in alpha.
+* **Exposed fins + carry-over + Body Lift (slender + crossflow) is now the closest to SU2**:
+  - CN within −8% to +4%;
+  - centre of pressure within 4 mm at three conditions, 25 and 38 mm aft at Mach 4 and 5, alpha 4;
+  - Cm within −2% to +24%.
+
+  (Body Lift here is after the end-cap fix in the README: it had kept a partial base-cap ring as its last section, a
+  spurious negative lift at the base of about −0.017 CN at alpha 4.)
+  
+  The remaining Mach 4 to 5 gap is SU2's lift on the mid-tube and shoulder, forward of the fins. The fins themselves
+  run 4 to 10% under SU2 there.
+* **Against RASAero II, Mach 2 to 5**: carry-over fins + Newtonian body (Classical Cp_max) + Wave + Parasite (Cf 19)
+  score 0.076, the same as round 2's best (CA 0.071, CN 0.081, Cm 0.064). With Modified Cp_max the score is 0.086. With
+  Body Lift instead of the Newtonian body it is 0.104 (CN 0.076, Cm 0.144): RASAero's moments are less stable than
+  SU2's at Mach 4 and 5, and the carry-over moves the CP aft.
+* **Mach 1.5 now runs, but every combination with Wave Drag misses RASAero's CA there by more than 100%** (RMS over
+  mean). Wave Drag is not converged on this blunt-based body at Mach 1.5. Without a pressure-drag term the Mach 1.5
+  score is 0.20 to 0.21 (CA 0.26 to 0.29).
+
+### Newtonian fins from Mach 4?
+
+The flow tends to the Newtonian limit as the hypersonic similarity parameter K = M sin θ grows, θ the surface's
+inclination to the flow. For a thin fin at incidence alpha, θ ≈ alpha. Newtonian pressure goes as sin²θ, while linear
+theory gives 4 alpha / β, so the two meet only when K is several, not at a given Mach number. Here, at Mach 4 and 5,
+K = 0.28 to 1.29 for alpha 4 to 15:
+
+| Mach, alpha | K | fins + carry-over, VSPAERO | Newtonian fins (Modified) | Newtonian fins (Classical) |
+|---|---|---|---|---|
+| 4, 4 | 0.28 | 0.540 (SU2 fins + tube at fins: 0.585) | 0.109 | 0.122 |
+| 4, 15 | 1.04 | 1.939 | 0.919 | 1.026 |
+| 5, 4 | 0.35 | 0.418 (SU2: 0.462) | 0.110 | 0.122 |
+| 5, 8 | 0.70 | 0.827 (SU2: 0.973) | 0.321 | 0.355 |
+| 5, 15 | 1.29 | 1.501 | 0.928 | 1.026 |
+
+Against RASAero II at Mach 4 and 5, with Newtonian fins (Classical) in place of VSPAERO's:
+- with the Newtonian body, CN errors are 0.20 to 0.53 and Cm errors 0.71 to 1.22 (VSPAERO fins: 0.06 to 0.15, and 0
+  to 0.13);
+- with Body Lift they are 0.07 to 0.57 and 1.06 to 1.33 (VSPAERO fins: 0.07 to 0.12, and 0.15 to 0.45);
+- the errors fall with alpha but are largest everywhere.
+
+So on thin fins VSPAERO stays the better fin source through Mach 5. Newtonian fins would need about K ≥ 3 (Mach 5
+above about alpha 35 degrees). Between the two lie tangent-wedge and shock-expansion (hypanel), which nTop_vsp does not
+have.
+
 ## Findings outside the comparison
 
 * **OpenVSP Parasite Drag**: the block's default turbulent Cf, "Schlichting Compressible", applies no

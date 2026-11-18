@@ -87,39 +87,147 @@ def ring_script(model, names, n_u, n_w):
         '    Print( "NTVSP_OK" );', "}"]) + "\n"
 
 
-def rings(text):
-    """Per component: [(x, area, (y, z) centroid)] along the body, caps (rings at the same x) dropped."""
+def _solve(a, rhs):
+    """Gaussian elimination with partial pivoting: a (n x n) times columns = rhs columns (list of lists)."""
+    n = len(a)
+    m = [row[:] + [r[i] for r in rhs] for i, row in enumerate(a)]
+    k = len(rhs)
+    for c in range(n):
+        p = max(range(c, n), key=lambda r: abs(m[r][c]))
+        m[c], m[p] = m[p], m[c]
+        piv = m[c][c]
+        for r in range(c + 1, n):
+            f = m[r][c] / piv
+            if f:
+                rr, rc = m[r], m[c]
+                for j in range(c, n + k):
+                    rr[j] -= f * rc[j]
+    out = [[0.0] * n for _ in range(k)]
+    for j in range(k):
+        for r in range(n - 1, -1, -1):
+            s = m[r][n + j] - sum(m[r][c] * out[j][c] for c in range(r + 1, n))
+            out[j][r] = s / m[r][r]
+    return out
+
+
+def apparent_mass(pts):
+    """The section's apparent-mass tensor (``_panel_mass``), Richardson-extrapolated from the ring's own edges and
+    each edge split in two: the constant-source panels converge to first order (a 64-point circle: +2.2% on 64
+    panels, +1.1% on 128, -0.02% extrapolated)."""
+    fine = [(p[0] + (q[0] - p[0]) * j / 2, p[1] + (q[1] - p[1]) * j / 2)
+            for p, q in zip(pts, pts[1:] + pts[:1]) for j in range(2)]
+    m1, m2 = _panel_mass(pts), _panel_mass(fine)
+    return [[2.0 * m2[r][c] - m1[r][c] for c in range(2)] for r in range(2)]
+
+
+def _panel_mass(pts):
+    """The 2D apparent-mass tensor of a closed section per unit fluid density, [[m_yy, m_yz], [m_zy, m_zz]] (m^2), from
+    ``pts`` [(y, z)] around it: the exterior potential flow of the section moving with unit velocity along y and along
+    z (constant-strength source panels, ``d phi / d n = n . e`` on the contour), m_jk = -(contour integral of
+    phi_j n_k ds), n out of the body. A circle gives its area times the identity, an ellipse with semi-axes a (along
+    y) and b gives m_zz = pi a^2 and m_yy = pi b^2, a flat plate of width w moving across itself pi w^2 / 4."""
+    pts = list(pts)
+    area2 = sum(pts[i - 1][0] * pts[i][1] - pts[i][0] * pts[i - 1][1] for i in range(len(pts)))
+    if area2 < 0.0:
+        pts = pts[::-1]
+    pan = []
+    for i in range(len(pts)):
+        a, b = pts[i], pts[(i + 1) % len(pts)]
+        L = math.hypot(b[0] - a[0], b[1] - a[1])
+        if L <= 1e-15:
+            continue
+        t = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
+        pan.append((a, L, t, (t[1], -t[0]), (0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]))))  # n out of a CCW loop
+    n = len(pan)
+    if n < 3:
+        return [[0.0, 0.0], [0.0, 0.0]]
+
+    def F(u, z):
+        r2 = u * u + z * z
+        return (u * math.log(r2) if r2 > 0.0 else 0.0) - 2.0 * u + (2.0 * z * math.atan(u / z) if z != 0.0 else 0.0)
+
+    A = [[0.0] * n for _ in range(n)]
+    P = [[0.0] * n for _ in range(n)]
+    for i, (_, Li, _, ni, ci) in enumerate(pan):
+        for k, (ak, Lk, tk, nk, _) in enumerate(pan):
+            dx, dz = ci[0] - ak[0], ci[1] - ak[1]
+            x, z = dx * tk[0] + dz * tk[1], dx * nk[0] + dz * nk[1]
+            if i == k:
+                A[i][k] = 0.5
+                P[i][k] = (Lk * math.log(0.25 * Lk * Lk) - 2.0 * Lk) / (4.0 * math.pi)
+                continue
+            ux = (math.log(x * x + z * z) - math.log((x - Lk) ** 2 + z * z)) / (4.0 * math.pi)
+            w = (math.atan((Lk - x) / z) + math.atan(x / z)) / (2.0 * math.pi) if abs(z) > 1e-15 else 0.0
+            vy, vz = ux * tk[0] + w * nk[0], ux * tk[1] + w * nk[1]
+            A[i][k] = vy * ni[0] + vz * ni[1]
+            P[i][k] = (F(Lk - x, z) - F(-x, z)) / (4.0 * math.pi)
+    sig = _solve(A, [[p[3][0] for p in pan], [p[3][1] for p in pan]])
+    m = [[0.0, 0.0], [0.0, 0.0]]
+    for j in range(2):
+        phi = [sum(P[i][k] * sig[j][k] for k in range(n)) for i in range(n)]
+        for kk in range(2):
+            m[j][kk] = -sum(phi[i] * pan[i][3][kk] * pan[i][1] for i in range(n))
+    off = 0.5 * (m[0][1] + m[1][0])
+    return [[m[0][0], off], [off, m[1][1]]]
+
+
+def rings(text, shape=False):
+    """Per component: [(x, area, (y, z) centroid, apparent mass)] along the body, caps (rings at the same x) dropped;
+    the apparent-mass tensor (``apparent_mass``) only with ``shape``, else the area times the identity."""
     comps = {}
+    raw = {}
     for line in text.splitlines():
         p = line.split()
         if len(p) < 9 or p[0] != "NTVSP_RING":
             continue
         v = [float(t) for t in p[3:]]
         pts = [v[i:i + 3] for i in range(0, len(v) - 2, 3)]
-        x = sum(q[0] for q in pts) / len(pts)
-        a2 = sum(pts[i][1] * pts[i - 1][2] - pts[i - 1][1] * pts[i][2] for i in range(len(pts)))
-        area = 0.5 * abs(a2)
-        if area > 1e-30:
-            cy = sum((pts[i][1] + pts[i - 1][1]) * (pts[i][1] * pts[i - 1][2] - pts[i - 1][1] * pts[i][2])
-                     for i in range(len(pts))) / (3.0 * a2)
-            cz = sum((pts[i][2] + pts[i - 1][2]) * (pts[i][1] * pts[i - 1][2] - pts[i - 1][1] * pts[i][2])
-                     for i in range(len(pts))) / (3.0 * a2)
-        else:
-            cy, cz = (sum(q[1] for q in pts) / len(pts), sum(q[2] for q in pts) / len(pts))
-        out = comps.setdefault(p[1], [])
-        if out and x <= out[-1][0] + 1e-9:
-            continue  # an end cap: more rings at the last section's x
-        out.append((x, area, (cy, cz)))
-    return list(comps.values())
+        raw.setdefault(p[1], []).append((sum(q[0] for q in pts) / len(pts), pts))
+    comps = []
+    for rl in raw.values():
+        # OpenVSP's end caps are several rings in one plane, sweeping across the cap: partial outlines, not sections.
+        # A cap group at the front becomes a point (its area enters as the step to the first section, as for a blunt
+        # nose); one further aft (a flat base) is left out, so the body does not seem to shrink before its base.
+        groups = []
+        for x, pts in rl:
+            if groups and abs(x - groups[-1][0][0]) <= 1e-9:
+                groups[-1].append((x, pts))
+            else:
+                groups.append([(x, pts)])
+        out = []
+        for gi, grp in enumerate(groups):
+            if len(grp) > 1:
+                if gi == 0:
+                    pts = [q for _, ring in grp for q in ring]
+                    centre = (sum(q[1] for q in pts) / len(pts), sum(q[2] for q in pts) / len(pts))
+                    out.append((grp[0][0], 0.0, centre, [[0.0, 0.0], [0.0, 0.0]]))
+                continue
+            x, pts = grp[0]
+            a2 = sum(pts[i][1] * pts[i - 1][2] - pts[i - 1][1] * pts[i][2] for i in range(len(pts)))
+            area = 0.5 * abs(a2)
+            if area > 1e-30:
+                cy = sum((pts[i][1] + pts[i - 1][1]) * (pts[i][1] * pts[i - 1][2] - pts[i - 1][1] * pts[i][2])
+                         for i in range(len(pts))) / (3.0 * a2)
+                cz = sum((pts[i][2] + pts[i - 1][2]) * (pts[i][1] * pts[i - 1][2] - pts[i - 1][1] * pts[i][2])
+                         for i in range(len(pts))) / (3.0 * a2)
+            else:
+                cy, cz = (sum(q[1] for q in pts) / len(pts), sum(q[2] for q in pts) / len(pts))
+            mass = (apparent_mass([(q[1], q[2]) for q in pts]) if shape and area > 1e-30
+                    else [[area, 0.0], [0.0, area]])
+            out.append((x, area, (cy, cz), mass))
+        comps.append(out)
+    return comps
 
 
 def combine(parts, n):
-    """Several fuselages on one x grid: areas add, centroids are area-weighted."""
+    """Several fuselages on one x grid: areas and apparent-mass tensors add (no interference between fuselages),
+    centroids are area-weighted."""
     x0, x1 = min(p[0][0] for p in parts), max(p[-1][0] for p in parts)
     xs = [x0 + (x1 - x0) * i / n for i in range(n + 1)]
-    areas, centres = [], []
+    areas, centres, masses = [], [], []
     for x in xs:
         tot = cy = cz = 0.0
+        mm = [0.0, 0.0, 0.0]
         for p in parts:
             if not p[0][0] <= x <= p[-1][0]:
                 continue
@@ -128,13 +236,18 @@ def combine(parts, n):
             tot += a
             cy += a * interp(x, px, [q[2][0] for q in p])
             cz += a * interp(x, px, [q[2][1] for q in p])
+            for j, (r, c) in enumerate(((0, 0), (0, 1), (1, 1))):
+                mm[j] += interp(x, px, [q[3][r][c] for q in p])
         areas.append(tot)
         centres.append((cy / tot, cz / tot) if tot > 0 else (0.0, 0.0))
-    return xs, areas, centres
+        masses.append(((mm[0], mm[1]), (mm[1], mm[2])))
+    return xs, areas, centres, masses
 
 
-def body_loads(xs, areas, centres, conds, ref, potential, crossflow):
-    """Coefficient rows (HEADER) for each condition."""
+def body_loads(xs, areas, centres, conds, ref, potential, crossflow, masses=None):
+    """Coefficient rows (HEADER) for each condition. With ``masses`` (apparent-mass tensors per station), the potential
+    force per length follows d(M e)/dx, e the crossflow direction, instead of (dS/dx) e: the same for round sections,
+    and a force off the crossflow where the section is not symmetric about it."""
     sref, bref, cref, (xr, yr, zr) = ref
     x0, x1 = xs[0], xs[-1]
     radius = [math.sqrt(max(a, 0.0) / math.pi) for a in areas]
@@ -149,6 +262,7 @@ def body_loads(xs, areas, centres, conds, ref, potential, crossflow):
         mn = c["Mach"] * math.sin(at)
         k_v = crossflow_factor(fineness, mn) * crossflow_drag(mn) if crossflow else 0.0
         cn = my = mz = 0.0  # normal force along the crossflow, moments of it about the reference point
+        sy = sz = 0.0  # the force's y and z components (off the crossflow too, with section shapes)
         mx = 0.0
         for i in range(len(xs) - 1):
             dx = xs[i + 1] - xs[i]
@@ -158,17 +272,30 @@ def body_loads(xs, areas, centres, conds, ref, potential, crossflow):
             ym = 0.5 * (centres[i][0] + centres[i + 1][0])
             zm = 0.5 * (centres[i][1] + centres[i + 1][1])
             f = 0.0
+            fy = fz = 0.0
             if potential:
-                f += (areas[i + 1] - areas[i]) / sref * math.sin(2.0 * at) * math.cos(0.5 * at)
+                k_p = math.sin(2.0 * at) * math.cos(0.5 * at) / sref
+                if masses is None:
+                    f += (areas[i + 1] - areas[i]) * k_p
+                    fy, fz = f * ey, f * ez
+                else:
+                    (a0, b0), (_, c0) = masses[i]
+                    (a1, b1), (_, c1) = masses[i + 1]
+                    fy = ((a1 - a0) * ey + (b1 - b0) * ez) * k_p
+                    fz = ((b1 - b0) * ey + (c1 - c0) * ez) * k_p
+                    f = fy * ey + fz * ez
             if crossflow:
-                f += k_v * (radius[i] + radius[i + 1]) * dx / sref * math.sin(at) ** 2
-            fy, fz = f * ey, f * ez
+                g = k_v * (radius[i] + radius[i + 1]) * dx / sref * math.sin(at) ** 2
+                f += g
+                fy, fz = fy + g * ey, fz + g * ez
             cn += f
+            sy, sz = sy + fy, sz + fz
             rx, ry, rz = xm - xr, ym - yr, zm - zr
             mx += ry * fz - rz * fy
             my += -rx * fz
             mz += rx * fy
-        rows.append([c["Mach"], c["AoA"], c["Beta"], 0.0, cn * ey, cn * ez, mx / bref, my / cref, mz / bref,
+        fy_t, fz_t = (cn * ey, cn * ez) if masses is None else (sy, sz)
+        rows.append([c["Mach"], c["AoA"], c["Beta"], 0.0, fy_t, fz_t, mx / bref, my / cref, mz / bref,
                      sref, bref, cref, xr, yr, zr])
     return rows, fineness
 
@@ -186,7 +313,10 @@ def main(settings_path):
     if not os.path.isfile(model):
         raise DriverError(f"OpenVSP model {model} not found")
     names = [n.strip() for n in s.text("components", "").split("|") if n.strip()]
-    potential = s.text("potential", "slender") == "slender"
+    mode = s.text("potential", "slender")
+    if mode not in ("slender", "shape", "off"):
+        raise DriverError(f"potential '{mode}': expected slender, shape or off")
+    potential, shape = mode != "off", mode == "shape"
     crossflow = s.text("crossflow", "jorgensen") == "jorgensen"
     if not (potential or crossflow):
         raise DriverError("both the potential lift and the viscous crossflow are off")
@@ -196,18 +326,22 @@ def main(settings_path):
     conds = [r for r in rows if lo <= r["Mach"] < hi]
     n = s.integer("slices", 200)
     text = run_vspscript(vsp_dir, ring_script(model, names, n, 64), work, case + ".rings", log, s.real("timeout_s", 3600))
-    parts = rings(text)
+    parts = rings(text, shape)
     if not parts or max(max(q[1] for q in p) for p in parts) <= 0.0:
         raise DriverError("the chosen fuselages have no section area")
-    xs, areas, centres = combine(parts, n)
+    xs, areas, centres, masses = combine(parts, n)
     ends = (xs[0], xs[-1])
-    out, fineness = body_loads(xs, areas, centres, conds, flight.ref, potential, crossflow)
-    write_csv(os.path.join(work, case + ".ntvsp.body_sections.csv"), ["x", "Area", "Yc", "Zc"],
-              [[x, a, c[0], c[1]] for x, a, c in zip(xs, areas, centres)])
+    out, fineness = body_loads(xs, areas, centres, conds, flight.ref, potential, crossflow, masses if shape else None)
+    write_csv(os.path.join(work, case + ".ntvsp.body_sections.csv"), ["x", "Area", "Yc", "Zc", "M_yy", "M_yz", "M_zz"],
+              [[x, a, c[0], c[1], m[0][0], m[0][1], m[1][1]] for x, a, c, m in zip(xs, areas, centres, masses)])
+    if shape:
+        big = max(range(len(xs)), key=lambda i: areas[i])
+        log(f"section apparent mass at the largest section (x = {xs[big]:.4f} m): M_yy {masses[big][0][0]:.6g}, M_zz "
+            f"{masses[big][1][1]:.6g}, M_yz {masses[big][0][1]:.3g} m^2 against its area {areas[big]:.6g} m^2")
     write_csv(os.path.join(work, case + ".ntvsp.coefficients.csv"), HEADER, out)
     log(f"body lift of {', '.join(names) or 'every fuselage'}: {len(xs)} sections from x = {ends[0]:.4f} to "
         f"{ends[1]:.4f} m, largest area {max(areas):.6g} m^2, fineness {fineness:.2f}; "
-        f"{'slender-body potential lift' if potential else ''}{' + ' if potential and crossflow else ''}"
+        f"{('slender-body potential lift' + (' (section apparent mass)' if shape else '')) if potential else ''}{' + ' if potential and crossflow else ''}"
         f"{'viscous crossflow (Jorgensen)' if crossflow else ''}; {len(conds)} conditions")
     log("done")
     log.close()

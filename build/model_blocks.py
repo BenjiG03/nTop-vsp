@@ -135,6 +135,8 @@ def fuselage_block():
              "; set: ", k.pick(inp("Set"), SET_KEYS)]
     for key, v in zip(("ox", "oy", "oz"), (prop(origin, "x"), prop(origin, "y"), prop(origin, "z"))):
         parts += [f"; {key}: ", _per_body(k, v, 1.0, LENGTH)]
+    # the bounding box's x range places blunt ends between the outermost slice and the next (empty) one
+    parts += ["; bx0: ", _per_body(k, mn[0], 1.0, LENGTH), "; bx1: ", _per_body(k, mx[0], 1.0, LENGTH)]
     for key, name in (("sections", "Sections"), ("nose_cluster", "Nose Clustering"), ("tail_cluster", "Tail Clustering"),
                       ("tess_w", "Tess W"), ("panel_aspect", "Panel Aspect Ratio"),
                       ("fwd_tess_cluster", "Nose Tess Clustering"), ("aft_tess_cluster", "Tail Tess Clustering")):

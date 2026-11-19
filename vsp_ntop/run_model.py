@@ -34,7 +34,7 @@ def dot(a, b):
     return sum(p * q for p, q in zip(a, b))
 
 
-PER_BODY = ("file", "ox", "oy", "oz", "sx", "sy", "sz")
+PER_BODY = ("file", "ox", "oy", "oz", "sx", "sy", "sz", "bx0", "bx1")
 
 CARRY_COLS = ["Name", "Copy", "Body", "Sx", "Sy", "Sz", "Nx", "Ny", "Nz", "Qx", "Qy", "Qz", "Root", "Semispan",
               "Root_Chord", "Tip_Chord", "LE_Slope", "Planform", "Body_Width", "Body_Length"]
@@ -197,7 +197,7 @@ def deviation(points, layers, frame: F.Frame, skip_ends):
             continue
         rel = (x - frame.origin[0], y - frame.origin[1], z - frame.origin[2])
         u, v, h = dot(rel, frame.ex), dot(rel, frame.ey), dot(rel, frame.ez)
-        if h < zs[0] or h > zs[-1]:
+        if h <= zs[0] + 1e-7 or h >= zs[-1] - 1e-7:  # outside the slices, or on an end cap in an end slice's plane
             continue
         j = max(0, min(len(zs) - 2, next((i for i in range(len(zs) - 1) if zs[i + 1] >= h), len(zs) - 2)))
         t = (h - zs[j]) / (zs[j + 1] - zs[j]) if zs[j + 1] > zs[j] else 0.0
@@ -238,8 +238,11 @@ def main(settings_path):
             if kind == "fuselage":
                 if abs(dot(frame.ez, X) - 1.0) > 1e-9:
                     raise DriverError(f"{name}: a fuselage is sliced along +x")
+                bounds = None
+                if "bx0" in c and "bx1" in c:  # the bounding box's x range, in the slicing frame
+                    bounds = (num(c, "bx0") - frame.origin[0], num(c, "bx1") - frame.origin[0])
                 f = F.fit_fuselage(layers, frame, int(num(c, "sections", 24)), num(c, "nose_cluster", 0.5),
-                                   num(c, "tail_cluster", 0.5))
+                                   num(c, "tail_cluster", 0.5), bounds=bounds)
                 lines += M.fuselage_lines(k, name, f, set_name, int(num(c, "tess_w", 33)))
                 fuse_fits[name] = f
                 fuse_tess[name] = (int(num(c, "tess_w", 33)), num(c, "panel_aspect", 1.5),

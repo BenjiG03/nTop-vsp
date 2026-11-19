@@ -48,11 +48,11 @@ def build(tol_mm, work):
     for name, blk, extra in (
             ("si_modified", si_b, {"Body": body}),
             ("si_user", si_b, {"Body": body, "Stagnation Pressure": user, "Cp Max Field": field}),
-            ("mesh_body_modified", mesh_b, {"Mesh": body_mesh}),
-            ("mesh_body_user", mesh_b, {"Mesh": body_mesh, "Stagnation Pressure": user, "Cp Max Field": field}),
-            ("mesh_modified", mesh_b, {"Mesh": whole_mesh}),
-            ("mesh_classical", mesh_b, {"Mesh": whole_mesh, "Stagnation Pressure": classical}),
-            ("mesh_user", mesh_b, {"Mesh": whole_mesh, "Stagnation Pressure": user, "Cp Max Field": field})):
+            ("mesh_body_modified", mesh_b, {"Body": body, "Mesh": body_mesh}),
+            ("mesh_body_user", mesh_b, {"Body": body, "Mesh": body_mesh, "Stagnation Pressure": user, "Cp Max Field": field}),
+            ("mesh_modified", mesh_b, {"Body": whole, "Mesh": whole_mesh}),
+            ("mesh_classical", mesh_b, {"Body": whole, "Mesh": whole_mesh, "Stagnation Pressure": classical}),
+            ("mesh_user", mesh_b, {"Body": whole, "Mesh": whole_mesh, "Stagnation Pressure": user, "Cp Max Field": field})):
         given = {"Flight Condition": flight, "Case Name": g.text(name)}
         if blk is mesh_b:
             given["Working Directory"] = g.file_path(work)

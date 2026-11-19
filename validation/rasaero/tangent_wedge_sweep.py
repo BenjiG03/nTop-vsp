@@ -26,7 +26,7 @@ def main():
     outs = []
     for name, body, tol in (("tw_fins", rk.boolean(g, "union", rk.fins(g, inner_fraction=1.0), "Exposed Fins"), 1.0),
                             ("tw_body", rk.body(g), 2.0)):
-        outs.append(rk.call(g, blk, {"Mesh": rk.mesh(g, body, tol), "Flight Condition": flight,
+        outs.append(rk.call(g, blk, {"Body": body, "Mesh": rk.mesh(g, body, tol), "Flight Condition": flight,
                                      "Working Directory": g.file_path(sweep.WORK), "Case Name": g.text(name)}, name))
     res, log, dt = rk.run(g, [blk], g.block("core.group<any>", "group", outs, "Results"), "group",
                           os.path.join(sweep.WORK, "tangent_wedge.ntop"))

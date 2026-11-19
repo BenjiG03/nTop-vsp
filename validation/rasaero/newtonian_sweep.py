@@ -35,7 +35,7 @@ def build(tol_mm, fin_tol_mm):
     for name, body_, tol, mode in (("newt_whole_unit", whole, tol_mm, user), ("newt_body_unit", body, tol_mm, user),
                                    ("newt_fins_unit", exposed, fin_tol_mm, user),
                                    ("newt_whole_modified", whole, tol_mm, None)):
-        given = {"Mesh": rk.mesh(g, body_, tol), "Flight Condition": flight,
+        given = {"Body": body_, "Mesh": rk.mesh(g, body_, tol), "Flight Condition": flight,
                  "Working Directory": g.file_path(sweep.WORK), "Case Name": g.text(name), "Cp Max Field": unit}
         if mode is not None:
             given["Stagnation Pressure"] = mode

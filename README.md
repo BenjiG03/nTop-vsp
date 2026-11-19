@@ -152,12 +152,36 @@ extent along the span axis) and **Contour Tolerance** (a fraction of its boundin
 On the X-59 the six bodies slice in about a minute. Meshing the bodies instead was not workable: the fuselage alone
 became a 1.4 GB mesh after 6 minutes at 6 mm tolerance.
 
-**Fuselage fit** (`fit.fit_fuselage`). Stations are placed with OpenVSP's clustering function between the nose and
-tail (**Sections**, **Nose/Tail Clustering**); each takes the largest closed contour at its slice. A pointed end
-(section area tending to zero) becomes an OpenVSP point section placed by extrapolating the square root of the area;
-a blunt end keeps its last contour and gets a flat cap. Each section is the contour itself (an OpenVSP file
-cross-section, normalised by its width and height, positioned at its bounding-box centre), with free skinning
-between sections. Building 30 such sections through OpenVSP's API takes 51 s, because every change rebuilds the
+**Fuselage fit** (`fit.fit_fuselage`). Of the **Sections**, half are placed with OpenVSP's clustering function between
+the nose and tail (**Nose/Tail Clustering**); the rest go, one at a time, to the slice where interpolating the
+outline (top, bottom and side extents) between the stations already chosen misses it most, so curved noses,
+shoulders and boattails get the stations they need (a plain cylinder needs few). Each takes the largest closed
+contour at its slice: the contour itself as an OpenVSP file cross-section, normalised by its width and height and
+positioned at its bounding-box centre.
+
+Ends:
+- **Pointed** (section area tending to zero): an OpenVSP point section. Its position comes from fitting
+  √area ∝ |x − x_tip|^p to the slices nearest the tip (p = 1 for a cone or ogive, 0.5 for a sphere), held within one
+  slice spacing of the outermost slice. With p below 0.75 the tip is **rounded** and the surface meets the axis at 90°.
+- **Blunt**: the outermost slice's contour, carried out to midway between that slice and the next (empty) one, or
+  nTop's bounding box if nearer (it can be a few millimetres loose), so within half a slice spacing of the true end,
+  with a flat cap.
+
+Skinning angles are set explicitly at every section and side, from the body's own slopes in the nTop slices around it.
+Left free, OpenVSP put back its default fixed angles (45° at the first section, 0 between, −45° at the last), which
+flared every blunt end out by about a tenth of its radius and bent pointed noses.
+
+On test bodies of revolution (`validation/fuselage_ends`, 6 mm slices), the OpenVSP radius against the exact one:
+
+| Body | Before | After |
+|---|---|---|
+| cylinder, flat at both ends | +2.4 mm at both ends | exact |
+| ogive nose, flat base (the hobby rocket) | +2.4 mm (nose and base) | 0.09 mm |
+| hemisphere nose, flat base | −5.6 mm (a conical tip) | 0.5 mm past the first 1.5 mm (tip 0.8 mm aft) |
+| flat nose, conical boattail to a smaller base | +2.4 mm | 0.17 mm |
+
+The model check no longer measures end-cap points against the section outlines, which read as up to a radius of
+error (27 mm on the rocket, now 0.59 mm largest). Building 30 such sections through OpenVSP's API takes 51 s, because every change rebuilds the
 whole surface; the driver therefore makes the fuselage with the right number of sections by script and writes each
 section's points, size and position straight into the `.vsp3` XML (2 s).
 
@@ -491,16 +515,16 @@ evaluated once per flight condition through nTop's list processing.
   (Classical), or **User Defined**: the **Cp Max Field** input, a scalar field, so Cp_max may differ over the body
   (one value on the fins, another on the nose); a constant field is one number everywhere. No self-shadowing: correct
   for convex bodies, a part in another's shadow is over-loaded.
-* **Modified Newtonian on Mesh (VSP)**: the same pressure on a **Mesh** input (Mesh from Implicit Body, or a
-  remeshed or imported surface mesh, closed with outward faces), each face's pressure from its own outward normal, the
-  integrals summed over its faces instead of Surface Integrals. The block exports the mesh, the driver
-  `vsp_ntop.run_newtonian_mesh` lists the faces' centroids, nTop evaluates the Cp Max Field there (Evaluate Field,
-  Point Map, Export Point Map), and the driver sums -Cp S_f and -Cp (r_f - c) x S_f over the faces (S_f the face's
-  outward vector area) at every condition (numpy). A mesh whose faces point inward overall is turned round. On the
-  rocket body (2 mm Mesh from Implicit Body, 489,000 faces) the face normals give the same coefficients as the implicit's
-  gradient normals within 0.7% (the tangent wedge, linear in small face angles, within 9%: refine the mesh).
+* **Modified Newtonian on Mesh (VSP)**: the same pressure, on the implicit **Body** (its unit gradient at each face
+  centroid is the surface normal; the same Cp_max choices including the Cp Max Field), integrated over a **Mesh** of it
+  (Mesh from Implicit Body, or a remeshed or imported surface mesh, closed with outward faces) instead of Surface
+  Integrals. The block exports the mesh, the driver `vsp_ntop.run_newtonian_mesh` lists the faces' centroids, nTop
+  evaluates the Body's gradient and the Cp Max Field there (Evaluate Field Gradient, Evaluate Field, Point Map, Export
+  Point Map), and the driver sums -Cp S_f and -Cp (r_f - c) x S_f over the faces (S_f the face's outward vector area) at
+  every condition (numpy). A mesh whose faces point inward overall is turned round. The pressure is the implicit's,
+  the integral the mesh's: the mesh sets only the integrals' accuracy.
   It writes the same coefficient table. See the run time and accuracy below.
-* **Tangent Wedge on Mesh (VSP)**: the same mesh pipeline (a Mesh input) with a local-inclination pressure law
+* **Tangent Wedge on Mesh (VSP)**: the same pipeline (the Body's normals, the Mesh's integrals) with a local-inclination pressure law
   (`vsp_ntop/local_methods.py`, after hypanel's `methods.py`). Each face's impact angle is $\delta$, with
   $\sin\delta=-\hat n\cdot\hat V$ (positive windward). Supersonic only (Mach Min defaults above 1); $\gamma=1.4$.
   - *Windward:* the exact two-dimensional oblique shock that turns the flow through $\delta$ (the weak solution, from

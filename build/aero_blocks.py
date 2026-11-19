@@ -260,10 +260,12 @@ def _mesh_block(method):
     from ops import Ops
     from ntopfile import NONE, Ref
 
-    specs = (InputSpec("Mesh", "mesh", "The body's surface mesh (Mesh from Implicit Body, a remeshed or an imported "
-                       "mesh), closed and with outward faces. Every face's pressure comes from its own normal and the "
-                       "integrals are sums over its faces, so its resolution sets the accuracy."), FLIGHT_INPUT) +         _axes_inputs() + (
-        STAGNATION_INPUT, CP_MAX_FIELD_INPUT)
+    specs = (InputSpec("Body", "implicit", "The body (an implicit, negative inside). The pressure on each face of the "
+                       "Mesh comes from the Body's unit gradient (its surface normal) at the face's centroid."),
+             InputSpec("Mesh", "mesh", "A surface mesh of the Body (Mesh from Implicit Body, or a remeshed or imported "
+                       "mesh), closed with outward faces: the force and moment integrals are sums over its faces, so "
+                       "its resolution sets the accuracy of the integrals."), FLIGHT_INPUT)
+    specs += _axes_inputs() + (STAGNATION_INPUT, CP_MAX_FIELD_INPUT)
     if wedge:
         specs += (
             InputSpec("Expansion", "choice", "Leeward faces (turned away from the flow). Prandtl-Meyer: the isentropic "
@@ -277,8 +279,8 @@ def _mesh_block(method):
     k = Kit(g)
     o = Ops(g)
     inp = model_inputs(specs)
-    g.comment("# " + ("Tangent wedge" if wedge else "Modified Newtonian") + " on a mesh\nEach face of the Mesh takes "
-              "its pressure from its own outward normal n (" + ("the tangent wedge windward, the Expansion choice "
+    g.comment("# " + ("Tangent wedge" if wedge else "Modified Newtonian") + " on a mesh\nThe pressure is the Body's: "
+              "each face of the Mesh takes it from the Body's unit gradient n at the face centroid (" + ("the tangent wedge windward, the Expansion choice "
               "leeward" if wedge else "Cp = Cp_max max(-n.V, 0)^2") + "). The force and moment integrals are sums over "
               "its faces, -(1/Sref) sum Cp S_f and -(1/(Sref cref)) sum Cp (r_f - c) x S_f (S_f the face's outward "
               "vector area, r_f its centroid), done by a Python driver at every (Mach, alpha, beta) of the flight "
@@ -297,15 +299,21 @@ def _mesh_block(method):
                                           faces_csv, '"']))
         rc = k.run_command(command, temp, inp("Timeout"), name="List Mesh Faces")
         ok = k.check(rc, "Listing the mesh faces", name="Check Faces")
-        g.comment("**2. Cp Max Field at the faces.** nTop evaluates the Cp Max Field at every face centroid and "
-                  "exports it as a point map (`<Case Name>.ntvsp.mesh_cp_max.csv`), in the faces' order.")
+        g.comment("**2. The Body at the faces.** nTop evaluates the Body's gradient (its normal) and the Cp Max Field "
+                  "at every face centroid and exports them as point maps (`<Case Name>.ntvsp.mesh_gradient.csv`, "
+                  "`<Case Name>.ntvsp.mesh_cp_max.csv`), in the faces' order.")
         faces = g.block("import_real_point_map<file_path,unit_length_enum,real_field>", "real_point_map",
                         [k.wait(ok, faces_csv), g.unit_length("mm"), o.field("1")], "Mesh Faces")
         points = Ref(faces, ("points",))
         cp_max = g.block("evaluate_field<real_field,list<point>>", "list<real>", [inp("Cp Max Field"), points],
                          "Cp Max at Faces")
+        gradient = g.block("evaluate_field_gradient<real_field,list<point>>", "list<vector>", [inp("Body"), points],
+                           "Body Gradient at Faces")
+        gmap = g.block("point_map<list<point>,list<vector>>", "vector_point_map", [points, gradient], top=False)
         cmap = g.block("point_map<list<point>,list<real>>", "real_point_map", [points, cp_max], top=False)
-        written = [g.block("export_point_map<file_path,real_point_map,unit_length_enum>", "point_map_file",
+        written = [g.block("export_point_map<file_path,vector_point_map,unit_length_enum>", "point_map_file",
+                           [k.cat([ready, ".ntvsp.mesh_gradient.csv"]), gmap, g.unit_length("mm")], "Export Gradient"),
+                   g.block("export_point_map<file_path,real_point_map,unit_length_enum>", "point_map_file",
                            [k.cat([ready, ".ntvsp.mesh_cp_max.csv"]), cmap, g.unit_length("mm")], "Export Cp Max")]
         return written
 
@@ -327,9 +335,9 @@ def _mesh_block(method):
     if wedge:
         return make_block(
             "tangent_wedge_mesh", "Tangent Wedge on Mesh (VSP)",
-            "Local-inclination pressure forces and moments of a surface mesh at every supersonic condition of a "
-            "Flight Condition, summed over its faces (as Modified Newtonian on Mesh (VSP)). Each face's pressure "
-            "comes from its impact angle delta (sin delta = -n.V, n the face's outward normal): "
+            "Local-inclination pressure forces and moments of an implicit body at every supersonic condition of a "
+            "Flight Condition, summed over the faces of a mesh of it (as Modified Newtonian on Mesh (VSP)). Each "
+            "face's pressure comes from its impact angle delta (sin delta = -n.V, n the Body's unit gradient at the face centroid): "
             "windward, the tangent wedge, the exact two-dimensional oblique shock that turns the flow through delta "
             "(weak solution), Cp = 2/(gamma M^2) (p2/p1 - 1); above the shock-detachment angle Cp rises with sin^2 "
             "delta from the detachment value to Cp_max at 90 degrees (Stagnation Pressure, or the Cp Max Field). "
@@ -340,11 +348,11 @@ def _mesh_block(method):
             "results path for Coefficients Contribution (VSP).", specs, "text", g, out)
     return make_block(
         "modified_newtonian_mesh", "Modified Newtonian on Mesh (VSP)",
-        "Modified Newtonian (Lees) pressure forces and moments of a surface mesh at every condition of a Flight "
-        "Condition, like Modified Newtonian (VSP) on an implicit, summed over the mesh's faces instead of Surface "
-        "Integrals: each face's pressure from its outward normal and the Cp_max choice (a User Defined Cp Max Field "
-        "is evaluated at the face centroids). Much faster on detailed bodies; its accuracy is the mesh's (mesh the "
-        "implicit with Mesh from Implicit Body, or bring a remeshed or imported mesh). " + RANGE_DOC + " Outputs the "
+        "Modified Newtonian (Lees) pressure forces and moments of an implicit body at every condition of a Flight "
+        "Condition, like Modified Newtonian (VSP), with the integrals summed over the faces of a mesh of the body "
+        "instead of Surface Integrals: the pressure is the implicit's (its gradient normal at each face centroid, and "
+        "the Cp_max choice including a User Defined Cp Max Field), the areas, centroids and force directions the "
+        "Mesh's. Much faster on detailed bodies; the integrals' accuracy is the mesh's. " + RANGE_DOC + " Outputs the "
         "results path for Coefficients Contribution (VSP).\n" + newtonian.METHOD_DOC, specs, "text", g, out)
 
 

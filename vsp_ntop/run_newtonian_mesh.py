@@ -4,14 +4,16 @@
     python -m vsp_ntop.run_newtonian_mesh SETTINGS_FILE                  (step 2)
 
 The Modified Newtonian on Mesh (VSP) block exports its Mesh input as an STL in millimetres. Step 1 writes the faces'
-centroids as a point map (``x, y, z, area``, mm and mm^2) that nTop imports; nTop evaluates the Cp Max Field at those
-centroids and writes it, one row per face, as the point map ``<case>.ntvsp.mesh_cp_max.csv``. Step 2 does the sums
-at every (Mach, AoA, Beta) of the flight condition within Mach Min to Mach Max:
+centroids as a point map (``x, y, z, area``, mm and mm^2) that nTop imports; nTop evaluates the Body's gradient and
+the Cp Max Field at those centroids and writes them, one row per face, as point maps ``<case>.ntvsp.mesh_gradient.csv``
+and ``<case>.ntvsp.mesh_cp_max.csv``. Step 2 does the sums at every (Mach, AoA, Beta) of the flight condition within
+Mach Min to Mach Max:
 
-    Cp = Cp_max max(-n . V, 0)^2,  n the face's unit outward normal
+    Cp = Cp_max max(-n . V, 0)^2,  n = grad f / |grad f| at the face centroid (the implicit Body's own normal)
     C_F = -(1 / Sref) sum Cp S_f,   C_M = -(1 / (Sref cref)) sum Cp (r_f - c) x S_f
 
-with S_f the face's vector area (outward) and r_f its centroid. Cp_max: Modified (behind a normal shock above Mach 1, Rayleigh pitot; isentropic below),
+with S_f the face's vector area (outward, from the Mesh) and r_f its centroid: the pressure is the implicit's, the
+integral the mesh's. Cp_max: Modified (behind a normal shock above Mach 1, Rayleigh pitot; isentropic below),
 Classical (2) or User Defined (the Cp Max Field at each face).
 
 With ``method = tangent_wedge`` (the Tangent Wedge on Mesh (VSP) block) the face pressure is the tangent wedge's,
@@ -143,21 +145,41 @@ def coefficients(centroids, vector_areas, normals, cp_max_field, conditions, mod
     return rows
 
 
-def read_cp_max(base, centroids_mm):
-    """nTop's Cp Max Field at the face centroids, from its point-map export (x, y, z in mm, then the value), checked
-    to list the faces in order."""
+def read_values(base, centroids_mm):
+    """nTop's values at the face centroids: (Cp Max Field, gradient (n, 3)), from its point-map exports
+    (x, y, z in mm, then the value or vector), checked to list the faces in order."""
     np = _np()
-    path = f"{base}.ntvsp.mesh_cp_max.csv"
-    if not os.path.isfile(path):
-        raise DriverError(f"{path} not found (nTop's Cp Max Field at the face centroids)")
-    v = np.loadtxt(path, delimiter=",", ndmin=2)
-    if v.shape != (len(centroids_mm), 4):
-        raise DriverError(f"{path}: {v.shape[0]} rows of {v.shape[1]} values, expected {len(centroids_mm)} rows of 4 "
-                          "(one per face)")
-    gap = np.abs(v[:, :3] - centroids_mm).max()
-    if gap > 1e-3 * max(1.0, np.abs(centroids_mm).max()):
-        raise DriverError(f"{path} does not list the faces in the mesh's order (points {gap:.3g} mm apart)")
-    return v[:, 3]
+    out = []
+    for suffix, width in (("cp_max", 4), ("gradient", 6)):
+        path = f"{base}.ntvsp.mesh_{suffix}.csv"
+        if not os.path.isfile(path):
+            raise DriverError(f"{path} not found (nTop's evaluation of the body at the face centroids)")
+        v = np.loadtxt(path, delimiter=",", ndmin=2)
+        if v.shape != (len(centroids_mm), width):
+            raise DriverError(f"{path}: {v.shape[0]} rows of {v.shape[1]} values, expected {len(centroids_mm)} rows of "
+                              f"{width} (one per face)")
+        gap = np.abs(v[:, :3] - centroids_mm).max()
+        if gap > 1e-3 * max(1.0, np.abs(centroids_mm).max()):
+            raise DriverError(f"{path} does not list the faces in the mesh's order (points {gap:.3g} mm apart)")
+        out.append(v[:, 3] if width == 4 else v[:, 3:6])
+    return out
+
+
+def unit_normals(gradients, vector_areas, log):
+    """The implicit's unit normals; where its gradient vanishes or is not finite, the face's own normal."""
+    np = _np()
+    g = np.where(np.isfinite(gradients), gradients, 0.0)
+    norm = np.linalg.norm(g, axis=1)
+    bad = norm < 1e-9
+    face = vector_areas / np.linalg.norm(vector_areas, axis=1)[:, None]
+    n = np.where(bad[:, None], face, g / np.where(bad, 1.0, norm)[:, None])
+    if bad.any():
+        log(f"note: {int(bad.sum())} faces had no usable gradient; their mesh normals are used")
+    flipped = (n * face).sum(axis=1) < 0.0
+    if flipped.mean() > 0.5:
+        raise DriverError("the body's gradient points against the mesh's outward normals on most faces; is the body "
+                          "an implicit that is negative inside?")
+    return n
 
 
 def face_normals(vector_areas, centroids):
@@ -198,12 +220,13 @@ def main(settings_path):
             raise DriverError(f"the tangent wedge needs a supersonic freestream: the flight condition has Mach "
                               f"{', '.join(f'{m:g}' for m in sub)} in [Mach Min, Mach Max); set Mach Min above 1")
     c_mm, s_mm2 = faces(base + ".ntvsp.mesh.stl")
-    cp_max_field = read_cp_max(base, c_mm)
+    cp_max_field, gradient = read_values(base, c_mm)
     centroids, vector_areas = c_mm * MM, s_mm2 * MM * MM
-    normals, flipped = face_normals(vector_areas, centroids)
+    _, flipped = face_normals(vector_areas, centroids)
     if flipped:
         vector_areas = -vector_areas
         log("note: the mesh's faces point inward (negative enclosed volume); they are turned round")
+    normals = unit_normals(gradient, vector_areas, log)
     closure = np.linalg.norm(vector_areas.sum(axis=0)) / np.linalg.norm(vector_areas, axis=1).sum()
     law = ("Modified Newtonian" if method == "newtonian" else
            f"tangent wedge + {'Prandtl-Meyer' if expansion == 'prandtl_meyer' else 'Newtonian shadow'}"

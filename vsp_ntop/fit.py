@@ -81,6 +81,8 @@ class FuseSection:
     points: list = field(default_factory=list)   # [(u/width, v/height)] about the centre, closed (first = last);
     params: list = field(default_factory=list)   # curve parameter 0..1 of each point
     loop: list = field(default_factory=list)     # the source contour (frame u, v), for the deviation check
+    tip_angle: float = None   # a rounded point's skinning angle (degrees from the axis: 90 nose, -90 tail)
+    slopes: tuple = None      # d(extent)/dx of the top, right, bottom and left sides, from the slices
 
     @property
     def is_point(self):
@@ -172,24 +174,68 @@ def _section_curve(loop, per_quarter):
     return uc, vc, w, h, points, params
 
 
-def _end(layers, areas, at_start, spacing):
-    """Where the body ends beyond its first (or last) layer, and whether it ends in a point.
+ROUND_TIP = 0.75  # a tip whose sqrt(area) grows as (x - x_tip)^p with p below this is rounded (sphere: 0.5)
 
-    The square root of the section area is taken as linear in x near a pointed end; the end is clamped to within
-    one layer spacing. An end whose last section is still a large part of the largest one is blunt."""
+
+def _tip(layers, areas, order, spacing):
+    """Tip position and shape of a pointed end from the slices nearest it: sqrt(area) = c |x - x_tip|^p fitted over
+    the slices with less than a quarter of the largest area (3 to 8 of them), p searched from 0.35 to 1.3. The tip is
+    held within one slice spacing of the outermost slice."""
+    big = max(areas)
+    idx = [i for i in order[:8] if areas[i] < 0.25 * big] or list(order[:3])
+    if len(idx) < 3:
+        idx = list(order[:3])
+    z = [layers[i].z for i in idx]
+    r = [math.sqrt(areas[i]) for i in idx]
+    best = None
+    for k in range(96):
+        p = 0.35 + 0.01 * k
+        y = [ri ** (1.0 / p) for ri in r]
+        n = len(z)
+        mz, my = sum(z) / n, sum(y) / n
+        szz = sum((a - mz) ** 2 for a in z)
+        if szz <= 0.0:
+            continue
+        slope = sum((a - mz) * (b - my) for a, b in zip(z, y)) / szz
+        if slope == 0.0:
+            continue
+        tip = mz - my / slope
+        # residual in sqrt(area), relative to its size
+        res = sum((abs(slope * (a - tip)) ** p - ri) ** 2 for a, ri in zip(z, r))
+        if best is None or res < best[0]:
+            best = (res, tip, p)
+    z0 = layers[order[0]].z
+    at_start = order[0] < order[-1]
+    lo, hi = (z0 - spacing, z0) if at_start else (z0, z0 + spacing)
+    if best is None:
+        return min(hi, max(lo, z0)), 1.0
+    return min(hi, max(lo, best[1])), best[2]
+
+
+def _end(layers, areas, at_start, spacing, bound=None):
+    """Where the body ends beyond its first (or last) layer, whether it ends in a point, and the point's shape
+    exponent p (sqrt(area) ~ distance^p: 1 for a cone or ogive, 0.5 for a sphere).
+
+    An end whose outermost slice is still a large part of the largest one is blunt: its flat end lies between that
+    slice and the next (empty) one: it is put midway between that slice and the nearer of the next slice and the
+    body's bounding box (``bound``; nTop's boxes can be a few millimetres loose), so within half a slice spacing."""
     order = list(range(len(layers))) if at_start else list(range(len(layers) - 1, -1, -1))
     i0, i1 = order[0], order[min(3, len(order) - 1)]
     r0, r1 = math.sqrt(areas[i0]), math.sqrt(areas[i1])
-    z0, z1 = layers[i0].z, layers[i1].z
+    z0 = layers[i0].z
     blunt = areas[i0] > 0.03 * max(areas) and not r1 > 1.6 * r0
     if blunt or r1 <= r0:
-        return z0, False
-    tip = z0 - r0 * (z1 - z0) / (r1 - r0)
-    lo, hi = (z0 - spacing, z0) if at_start else (z0, z0 + spacing)
-    return min(hi, max(lo, tip)), True
+        sign = -1.0 if at_start else 1.0
+        reach = spacing  # the next slice out is empty: the end is within one spacing
+        if bound is not None and 0.0 <= sign * (bound - z0) < reach:
+            reach = sign * (bound - z0)  # nTop's bounding box contains the body (it may be loose)
+        return z0 + sign * 0.5 * reach, False, None
+    tip, p = _tip(layers, areas, order, spacing)
+    return tip, True, p
 
 
-def fit_fuselage(layers, frame: Frame, n_sections=24, nose_cluster=0.5, tail_cluster=0.5, per_quarter=10):
+def fit_fuselage(layers, frame: Frame, n_sections=24, nose_cluster=0.5, tail_cluster=0.5, per_quarter=10, bounds=None):
+    """``bounds``: the body's bounding-box extent along the slicing direction (frame z), if known."""
     notes = []
     used = []
     for l in layers:
@@ -203,28 +249,85 @@ def fit_fuselage(layers, frame: Frame, n_sections=24, nose_cluster=0.5, tail_clu
         raise FitError(f"only {len(used)} sections cut the body; use more slices")
     spacing = (used[-1].z - used[0].z) / (len(used) - 1)
     areas = [abs(S.area(l.loops[0])) for l in used]
-    x_start, pointed_start = _end(used, areas, True, spacing)
-    x_end, pointed_end = _end(used, areas, False, spacing)
+    b0, b1 = bounds if bounds else (None, None)
+    x_start, pointed_start, p_start = _end(used, areas, True, spacing, b0)
+    x_end, pointed_end, p_end = _end(used, areas, False, spacing, b1)
     n_sections = max(4, int(n_sections))
-    targets = [x_start + (x_end - x_start) * cluster(k / (n_sections - 1), nose_cluster, tail_cluster)
-               for k in range(n_sections)]
-    sections, last = [], -1
-    for k, x in enumerate(targets):
-        end_point = (k == 0 and pointed_start) or (k == n_sections - 1 and pointed_end)
-        i = min(range(len(used)), key=lambda j: abs(used[j].z - x))
-        if end_point:
-            j = 0 if k == 0 else len(used) - 1
-            u0, u1, v0, v1 = S.bounds(used[j].loops[0])
-            sections.append(FuseSection(x, 0.5 * (u0 + u1), 0.5 * (v0 + v1)))
-            continue
-        if i <= last:
-            i = last + 1
-        if i >= len(used):
-            continue
-        last = i
-        loop = used[i].loops[0]
-        uc, vc, w, h, pts, params = _section_curve(loop, per_quarter)
-        sections.append(FuseSection(used[i].z, uc, vc, w, h, pts, params, loop))
+    n = len(used)
+    zs = [l.z for l in used]
+    ext = []
+    for l in used:
+        u0, u1, v0, v1 = S.bounds(l.loops[0])
+        ext.append((v1, u1, -v0, -u0))  # top, right, bottom, left: distances out from the frame's axis
+
+    def slope(i):
+        a, b = max(i - 1, 0), min(i + 1, n - 1)
+        return tuple((ext[b][k] - ext[a][k]) / (zs[b] - zs[a]) for k in range(4)) if zs[b] > zs[a] else (0.0,) * 4
+
+    def centre(i):
+        u0, u1, v0, v1 = S.bounds(used[i].loops[0])
+        return 0.5 * (u0 + u1), 0.5 * (v0 + v1)
+
+    # End nodes: a pointed end is a point at the tip; a blunt one carries the outermost slice out to the end.
+    def end_node(at_start):
+        i = 0 if at_start else n - 1
+        x, pointed, p_tip = (x_start, pointed_start, p_start) if at_start else (x_end, pointed_end, p_end)
+        if not pointed:
+            return x, ext[i], None
+        uc, vc = centre(i)
+        return x, (vc, uc, -vc, -uc), p_tip
+
+    nodes = {-1: end_node(True), n: end_node(False)}  # virtual indices for the two ends
+    blunt0, blunt1 = not pointed_start, not pointed_end
+    candidates = [i for i in range(n) if not (blunt0 and i == 0) and not (blunt1 and i == n - 1)]
+    budget = n_sections - 2
+    # half the stations as before, clustered toward the ends ...
+    chosen = set()
+    for k in range(1, budget // 2 + 1):
+        x = x_start + (x_end - x_start) * cluster(k / (budget // 2 + 1), nose_cluster, tail_cluster)
+        chosen.add(min(candidates, key=lambda j: abs(zs[j] - x)))
+
+    def node(j):
+        return (nodes[j][0], nodes[j][1]) if j in nodes else (zs[j], ext[j])
+
+    # ... and the rest where interpolating the outline between the chosen stations misses it most
+    while len(chosen) < min(budget, len(candidates)):
+        order = sorted(chosen | {-1, n}, key=lambda j: node(j)[0])
+        worst, pick = 0.0, None
+        for a, b in zip(order, order[1:]):
+            (xa, ea), (xb, eb) = node(a), node(b)
+            for j in candidates:
+                if j in chosen or not xa < zs[j] < xb:
+                    continue
+                t = (zs[j] - xa) / (xb - xa)
+                err = max(abs(ext[j][q] - (ea[q] + t * (eb[q] - ea[q]))) for q in range(4))
+                if err > worst:
+                    worst, pick = err, j
+        if pick is None:
+            break
+        chosen.add(pick)
+    sections = []
+    x0, e0, p0 = nodes[-1]
+    if pointed_start:
+        uc, vc = centre(0)
+        rounded = p0 < ROUND_TIP
+        tip_slopes = tuple((ext[0][q] - e0[q]) / max(zs[0] - x0, 1e-12) for q in range(4))
+        sections.append(FuseSection(x0, uc, vc, tip_angle=90.0 if rounded else None, slopes=tip_slopes))
+    else:
+        uc, vc, w, h, pts, params = _section_curve(used[0].loops[0], per_quarter)
+        sections.append(FuseSection(x0, uc, vc, w, h, pts, params, used[0].loops[0], slopes=slope(0)))
+    for i in sorted(chosen):
+        uc, vc, w, h, pts, params = _section_curve(used[i].loops[0], per_quarter)
+        sections.append(FuseSection(zs[i], uc, vc, w, h, pts, params, used[i].loops[0], slopes=slope(i)))
+    x1, e1, p1 = nodes[n]
+    if pointed_end:
+        uc, vc = centre(n - 1)
+        rounded = p1 < ROUND_TIP
+        tip_slopes = tuple((e1[q] - ext[n - 1][q]) / max(x1 - zs[n - 1], 1e-12) for q in range(4))
+        sections.append(FuseSection(x1, uc, vc, tip_angle=-90.0 if rounded else None, slopes=tip_slopes))
+    else:
+        uc, vc, w, h, pts, params = _section_curve(used[-1].loops[0], per_quarter)
+        sections.append(FuseSection(x1, uc, vc, w, h, pts, params, used[-1].loops[0], slopes=slope(n - 1)))
     # stations must increase; drop any section that a pointed end has overtaken
     clean = [sections[0]]
     for s in sections[1:]:
@@ -232,8 +335,10 @@ def fit_fuselage(layers, frame: Frame, n_sections=24, nose_cluster=0.5, tail_clu
             clean.append(s)
     if len(clean) < 3:
         raise FitError("fewer than 3 usable sections")
+    def kind(sec):
+        return "blunt" if not sec.is_point else ("rounded" if sec.tip_angle is not None else "pointed")
     notes.append(f"{len(clean)} sections from x = {clean[0].x:.4f} to {clean[-1].x:.4f} m "
-                 f"({'pointed' if clean[0].is_point else 'blunt'} nose, {'pointed' if clean[-1].is_point else 'blunt'} tail); "
+                 f"({kind(clean[0])} nose, {kind(clean[-1])} tail); "
                  f"{len(used)} slices {spacing * 1000:.1f} mm apart")
     return FuselageFit(frame, clean, notes)
 

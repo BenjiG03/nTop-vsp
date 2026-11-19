@@ -67,7 +67,7 @@ def build(work=WORK):
                                 "Case Name": g.text("body_lift")}, "Body Lift"),
             rk.call(g, ras_b, {"OpenVSP Model": vsp_model, "Flight Condition": fc, **run,
                                "Case Name": g.text("rasaero")}, "RASAero II"),
-            rk.call(g, newt, {"Mesh": rk.mesh(g, body, 1.0), "Flight Condition": fc, **run,
+            rk.call(g, newt, {"Body": body, "Mesh": rk.mesh(g, body, 1.0), "Flight Condition": fc, **run,
                               "Case Name": g.text("newtonian_body")}, "Newtonian Body")]
     return g, blocks, g.block("core.group<any>", "group", outs, "Results")
 

@@ -90,6 +90,34 @@ def axial_points(secs, tess_w, aspect):
     return out
 
 
+def skin_angles(secs):
+    """Skinning angle (degrees, from the x axis, positive where the side moves away from the axis going aft) of the
+    top, right, bottom and left sides at every section: the body's own slopes from the nTop slices around it (the fit's
+    ``slopes``), or else central differences of the sections' extents; a rounded point (``tip_angle``) meets the axis
+    square.
+
+    Every angle is set explicitly: OpenVSP put back its default fixed angles (45 degrees at the first section, -45 at
+    the last) when they were left free, which flared every blunt end out by about a tenth of its radius."""
+    def sides(s):
+        if s.is_point:
+            return (s.zc, s.yc, -s.zc, -s.yc)
+        return (s.zc + 0.5 * s.height, s.yc + 0.5 * s.width, -(s.zc - 0.5 * s.height), -(s.yc - 0.5 * s.width))
+    ext = [sides(s) for s in secs]
+    n = len(secs)
+    out = []
+    for i, s in enumerate(secs):
+        if s.is_point and s.tip_angle is not None:
+            out.append((s.tip_angle,) * 4)
+            continue
+        if s.slopes is not None:  # the body's own slopes, from the nTop slices around the section
+            out.append(tuple(math.degrees(math.atan(v)) for v in s.slopes))
+            continue
+        a, b = (i - 1 if i > 0 else i), (i + 1 if i < n - 1 else i)
+        dx = secs[b].x - secs[a].x
+        out.append(tuple(math.degrees(math.atan2(ext[b][k] - ext[a][k], dx)) if dx > 0 else 0.0 for k in range(4)))
+    return out
+
+
 def set_fuselage_sections(vsp3_in, vsp3_out, fits, tess):
     """Write the fitted sections of each fuselage into a ``.vsp3`` made by ``fuselage_lines``.
 
@@ -112,15 +140,19 @@ def set_fuselage_sections(vsp3_in, vsp3_out, fits, tess):
             raise ValueError(f"OpenVSP model: {name} has {len(xsecs)} sections, expected {len(secs)}")
         x0, length = secs[0].x, secs[-1].x - secs[0].x
         u_pts = axial_points(secs, tess_w, aspect)
+        angles = skin_angles(secs)
         for i, (xe, s) in enumerate(zip(xsecs, secs)):
             g = xe.find("ParmContainer/XSec")
             _parm(g, "XLocPercent", (s.x - x0) / length)
             _parm(g, "YLocPercent", s.yc / length)
             _parm(g, "ZLocPercent", s.zc / length)
             _parm(g, "AllSym", 1)
-            for side in ("Top", "Right", "Bottom", "Left"):  # free skinning: slopes follow the neighbours
-                for what in ("Angle", "Strength", "Slew", "Curve"):
-                    _parm(g, f"{side}L{what}Set", 0)
+            for side, angle in zip(("Top", "Right", "Bottom", "Left"), angles[i]):
+                for lr in ("L", "R"):
+                    _parm(g, f"{side}{lr}AngleSet", 1)
+                    _parm(g, f"{side}{lr}Angle", angle)
+                    for what in ("Strength", "Slew", "Curve"):
+                        _parm(g, f"{side}{lr}{what}Set", 0)
             if i > 0:
                 _parm(g, "SectTess_U", u_pts[i - 1])
                 _parm(g, "FwdCluster", fwd if i == 1 else 1.0)

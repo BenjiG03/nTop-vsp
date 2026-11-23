@@ -273,10 +273,151 @@ def wing_block():
         "for VSPAERO, so no wake input is needed.", specs, "text", g, out)
 
 
+# --- Duct ---------------------------------------------------------------------------------------------------------------
+
+WALLS = ("Outer", "Inner")
+WALL_KEYS = ("outer", "inner")
+DUCT_INSET = 0.002  # end cuts this fraction of the way inside the body (a cut on an end face is degenerate)
+
+
+def _vadd(g, a, b, s=None):
+    """a + s b, component lists (s may be a list)."""
+    return [_r(g, "add", x, _r(g, "multiply", y, s) if s is not None else y) for x, y in zip(a, b)]
+
+
+def _dot(g, a, b):
+    return _sum(g, [_r(g, "multiply", x, y) for x, y in zip(a, b)])
+
+
+def _unit(g, a):
+    n = _sqrt(g, _dot(g, a, a))
+    return [_r(g, "divide", x, n) for x in a]
+
+
+def _plane(g, plane):
+    o = prop(plane, "origin")
+    n = prop(plane, "normal")
+    return [prop(o, c) for c in "xyz"], [prop(n, c) for c in "xyz"]
+
+
+def _vector(g, comps):
+    return g.block("vector<real,real,real>", "vector", comps, top=False)
+
+
+def duct_block():
+    specs = (
+        InputSpec("Body", "implicit", "The duct as a closed body: a flow passage, or a tube with a wall. Its two ends "
+                  "are planar and lie in Inlet Plane and Outlet Plane (which need not be parallel). The OpenVSP "
+                  "surface is the body's side wall between them; the end faces are left out."),
+        InputSpec("Name", "text", "Component name in OpenVSP.", default=d_text("Duct")),
+        InputSpec("Inlet Plane", "plane", "The plane the body's inlet end lies in. The duct may run along any direction except y (the cuts' in-plane axes come from n x y)."),
+        InputSpec("Outlet Plane", "plane", "The plane the body's outlet end lies in."),
+        InputSpec("Wall", "choice", "Which wall becomes the surface: Outer (the body's outside, the only one of a "
+                  "solid flow passage) or Inner (the hole of a tube: its inside wall).", default=d_choice(WALLS, 0)),
+        InputSpec("Set", "choice", "How VSPAERO sees the duct (as OpenVSP Fuselage). Default None: only Wave Drag, "
+                  "Parasite Drag and CAD export use it.", default=d_choice(SETS, 2)),
+        InputSpec("Sections", "integer", "Cross-sections, the two ends included. nTop cuts the body with planes that "
+                  "turn gradually from the inlet plane to the outlet plane; each cut becomes one OpenVSP section.",
+                  default=d_int(24)),
+        InputSpec("Inlet Clustering", "real", "Section spacing at the inlet: 1 even, smaller is finer there "
+                  "(OpenVSP's clustering function).", default=d_real(1.0)),
+        InputSpec("Outlet Clustering", "real", "Section spacing at the outlet, as Inlet Clustering.",
+                  default=d_real(1.0)),
+        InputSpec("Contour Tolerance", "real", "Point spacing of the section contours, as a fraction of the body's "
+                  "bounding-box diagonal.", default=d_real(1e-4)),
+        InputSpec("Tess W", "integer", "Tessellation points around each cross-section (OpenVSP Tess_W).",
+                  default=d_int(33)),
+        InputSpec("Panel Aspect Ratio", "real", "Panel length along the duct over its width around it; sets the "
+                  "points between sections (OpenVSP SectTess_U).", default=d_real(1.5)),
+    )
+    g = Graph()
+    k = Kit(g)
+    inp = model_inputs(specs)
+    body = inp("Body")
+    g.comment("**OpenVSP duct from an implicit body.** The side wall of a body whose two planar ends lie in the inlet "
+              "and outlet planes, as an OpenVSP Fuselage open at both ends (no caps). nTop cuts the body with "
+              "Sections planes that turn gradually from the inlet plane to the outlet plane, so every section is a "
+              "closed curve and the ends land exactly in their planes even when the planes are not parallel.")
+    mn, mx, centre, size, diag = _box(g, body)
+    o_in, n_in = _plane(g, inp("Inlet Plane"))
+    o_out, n_out = _plane(g, inp("Outlet Plane"))
+    g.comment("**End points and normals.** The centre of the body's bounding box projected onto each plane; each "
+              "plane's normal turned to point from the inlet towards the outlet.")
+    neg = g.real(-1.0)
+    p_in = _vadd(g, centre, n_in, _r(g, "multiply", _dot(g, _vadd(g, centre, o_in, neg), n_in), neg))
+    p_out = _vadd(g, centre, n_out, _r(g, "multiply", _dot(g, _vadd(g, centre, o_out, neg), n_out), neg))
+    d = _vadd(g, p_out, p_in, neg)
+
+    def towards(n):
+        dn = _dot(g, d, n)
+        sign = _r(g, "divide", dn, _sqrt(g, _sq(g, dn)))
+        return [_r(g, "multiply", c, sign) for c in n]
+
+    n_in, n_out = towards(n_in), towards(n_out)
+    g.comment("**Cutting planes.** s from 0 to 1 by OpenVSP's clustering function (Inlet and Outlet Clustering), the "
+              "end cuts a little inside the body; plane s passes through (1 - s) inlet point + s outlet point with "
+              "the normal (1 - s) inlet normal + s outlet normal.")
+    t = g.block("sequence_from_bounds<real,real,integer>", "list<real>", [g.real(0.0), g.real(1.0), inp("Sections")],
+                top=False)
+    mt = _r(g, "subtract", g.real(1.0), t)
+    s = _sum(g, [_r(g, "multiply", _r(g, "multiply", _sq(g, mt), t), inp("Inlet Clustering")),
+                 _r(g, "multiply", _r(g, "multiply", mt, _sq(g, t)), _r(g, "subtract", g.real(3.0),
+                                                                           inp("Outlet Clustering"))),
+                 _r(g, "multiply", _sq(g, t), t)])
+    s = _r(g, "add", g.real(DUCT_INSET), _r(g, "multiply", s, g.real(1.0 - 2.0 * DUCT_INSET)))
+    origin_c = _vadd(g, p_in, d, s)
+    normal_c = _unit(g, _vadd(g, n_in, _vadd(g, n_out, n_in, neg), s))
+    # in-plane axes of every cut: y axis = n x (world y), x axis = y axis x n. nTop writes a cut on a plane that is
+    # not normal to a world axis in exactly these axes, whatever frame it is given (found on this block's test duct:
+    # the axes of the frame passed in were ignored), so the frame is built to match them. A duct along y has none.
+    nvec = _vector(g, normal_c)
+    ey = g.block("cross_product<vector,vector>", "vector", [nvec, g.vector(0, 1, 0)], top=False)
+    ey_c = _unit(g, [prop(ey, c) for c in "xyz"])
+    eyv = _vector(g, ey_c)
+    ex = g.block("cross_product<vector,vector>", "vector", [eyv, nvec], top=False)
+    ex_c = [prop(ex, c) for c in "xyz"]
+    exv = _vector(g, ex_c)
+    origin = g.block("point<real,real,real>", "point", origin_c, "Cut Origins")
+    frame = g.block("frame<point,vector,vector>", "frame", [origin, exv, eyv], "Cutting Frames")
+    g.comment("**Cuts.** One Slice Body per plane, with a slice spacing larger than the body so that each holds only "
+              "its cut through the frame origin, exported to a temporary CLI file each.")
+    stack = g.block("slice_implicit<implicit,real,real,bool,frame,implicit>[3.0.0]", "slice_stack",
+                    [body, _r(g, "multiply", diag, g.real(2.0)), _r(g, "multiply", diag, inp("Contour Tolerance")),
+                     g.boolean(False), frame, Ref(0)], "Cuts")
+    temp = g.block("temporary_directory<list_interface>[5.21.0]", "temporary_directory", [inp("Name")],
+                   "Temporary Folder")
+    index = g.block("sequence<real,real,integer>", "list<real>", [g.real(1.0), g.real(1.0), inp("Sections")],
+                    top=False)
+    path = k.ecat([prop(temp, "path"), "/", inp("Name"), ".", k.num(index), ".duct.cli"])
+    written = g.block("export_slices_to_cli<file_path,slice_stack,ascii_or_binary_enum>", "cli_slice_data",
+                      [path, stack, g.enum("ascii_or_binary_enum", 0)], "Export Cuts")
+    cli = k.wait(written, path, name="Cut Files")
+    g.comment("**Component line** for OpenVSP Model: the cut files and their frames (`|`-separated, one per section, "
+              "metres), the end planes, and the OpenVSP settings.")
+    parts = ["component = kind: duct; name: ", inp("Name"), "; cuts: ", k.join(cli, "|"),
+             "; wall: ", k.pick(inp("Wall"), WALL_KEYS), "; set: ", k.pick(inp("Set"), SET_KEYS)]
+    for key, comps, units in (("p", origin_c, LENGTH), ("u", ex_c, None), ("v", ey_c, None)):
+        for c, v in zip("xyz", comps):
+            parts += [f"; {key}{c}: ", _per_body(k, v, 1.0, units)]
+    for key, comps, units in (("inlet_p", p_in, LENGTH), ("inlet_n", n_in, None), ("outlet_p", p_out, LENGTH),
+                              ("outlet_n", n_out, None)):
+        parts += [f"; {key}: ", k.cat([_num(k, comps[0], 1.0, units), ",", _num(k, comps[1], 1.0, units), ",",
+                                       _num(k, comps[2], 1.0, units)])]
+    for key, name in (("tess_w", "Tess W"), ("panel_aspect", "Panel Aspect Ratio")):
+        parts += [f"; {key}: ", k.num(inp(name))]
+    out = k.cat(parts, name="Component")
+    return make_block(
+        "openvsp_duct", "OpenVSP Duct (VSP)",
+        "An OpenVSP **duct**: the side wall of an implicit body whose ends are planar and lie in the given inlet and "
+        "outlet planes (not necessarily parallel), as an OpenVSP Fuselage open at both ends, for **OpenVSP Model "
+        "(VSP)**. nTop cuts the body on planes turning from the inlet plane to the outlet plane; each cut's outer "
+        "contour (or, for a tube, its inner one) becomes a section in that plane.", specs, "text", g, out)
+
+
 # --- Model ----------------------------------------------------------------------------------------------------------------
 
 def model_block():
-    own = (InputSpec("Components", "list<text>", "Outputs of OpenVSP Fuselage and OpenVSP Wing blocks, in a List.",
+    own = (InputSpec("Components", "list<text>", "Outputs of OpenVSP Fuselage, OpenVSP Wing and OpenVSP Duct blocks, in a List.",
                      default=lambda g: g.block("core.list<text>", "list<text>", [g.text("")], top=False)),)
     specs = own + run_inputs("model")
     g = Graph()

@@ -98,9 +98,12 @@ blocks.
 |---|---|---|
 | OpenVSP Fuselage (VSP) | text | a list of implicit bodies as OpenVSP Fuselages: names, slicing, sections, clustering, tessellation, set |
 | OpenVSP Wing (VSP) | text | a list of implicit lifting surfaces as OpenVSP Wings: names, span axes (one per body), symmetry (none, x-z, x-y, both), extension into the body, force accounting (whole wing or exposed strips), sections, airfoils, tessellation, clustering, set |
+| OpenVSP Duct (VSP) | text | the side wall of an implicit body with planar ends in two given planes (not necessarily parallel), as an open OpenVSP Fuselage: outer or inner wall, sections, clustering, tessellation, set |
 | OpenVSP Model (VSP) | model path | builds `<case>.vsp3` from a list of component lines |
 | OpenVSP Model Check (VSP) | list of reals | per component: largest and mean distance from the OpenVSP surface to the nTop contours, sections, slices |
 | OpenVSP Model Mesh (VSP) | mesh | OpenVSP's tessellation of the model, to view against the bodies |
+| OpenVSP CAD Export (VSP) | file path | the model as STEP or IGES by OpenVSP's own CAD export: trimmed and intersected (one BREP solid), stitched (one BREP per component) or untrimmed surfaces; optional planar end caps |
+| Lofted CAD Export (VSP) | file path | bodies (from OpenVSP Fuselage blocks) as STEP solids fitted straight to their nTop slices, without OpenVSP's skinning: smoother and closer than OpenVSP's export on non-round bodies; sharp chines kept |
 | Flight Condition (VSP) | results path | Mach numbers paired with altitudes (US Standard Atmosphere 1976), angles of attack, sideslips; reference area, span, chord, moment point |
 | VSPAERO Solver Settings (VSP) | text | threads, wake model and nodes, far field, ground effect, freezing, implicit wake, convergence factors, preconditioners, quad tree, restart file, convergence check |
 | VSPAERO Analysis (VSP) | results path | model, flight condition, Mach range, body wakes, solver settings |
@@ -169,7 +172,13 @@ Ends:
 
 Skinning angles are set explicitly at every section and side, from the body's own slopes in the nTop slices around it.
 Left free, OpenVSP put back its default fixed angles (45° at the first section, 0 between, −45° at the last), which
-flared every blunt end out by about a tenth of its radius and bent pointed noses.
+flared every blunt end out by about a tenth of its radius and bent pointed noses. Each side keeps its own angle:
+OpenVSP's AllSym ("all sides like the top"), on until 2026-11-20, made the right, bottom and left sides copy the top's
+slope. On a body whose sides have different slopes (`validation/fuselage_sides`: elliptic sections, rounded in plan,
+conical in side view, a drooped nose and a top-only boattail; exact surface from an nTop field expression) the
+independent sides cut the error against the exact surface from 0.210 to 0.066 mm mean (0.80 to 0.37 mm largest) on
+the boattail, 0.025 to 0.009 mm along the middle and 0.129 to 0.086 mm on the nose. Round bodies are unchanged
+(`validation/fuselage_ends`).
 
 On test bodies of revolution (`validation/fuselage_ends`, 6 mm slices), the OpenVSP radius against the exact one:
 
@@ -334,6 +343,153 @@ or +z, where they come in the world's cyclic axes (y-z, z-x, x-y), and along exa
 (z, y), (x, z) and (y, x) (again world axes whose cross product is the slicing direction; found on the four fins of a
 cruciform rocket, whose -y fin was mis-fitted before). The driver handles all of them; the blocks place the frame
 origin outside the body.
+
+## Ducts
+
+**OpenVSP Duct (VSP)** takes one closed implicit body whose two ends are planar and lie in two given nTop Planes (an
+inlet and an outlet plane, which need not be parallel), and makes its side wall an OpenVSP Fuselage **open at both
+ends** (no caps, no inner/outer subtraction): only the surface. **Wall** picks the body's outside (a solid flow
+passage) or, for a tube, its hole (the inside wall); for both walls of a tube use two Duct blocks.
+
+**Cuts on turning planes.** nTop cuts the body with **Sections** planes that turn gradually from the inlet plane to
+the outlet plane: plane s (0 to 1, OpenVSP's clustering function) passes through (1 - s) p_in + s p_out, the
+centre of the body's bounding box projected onto each end plane, with the normal (1 - s) n_in + s n_out. Each cut
+is one OpenVSP file cross-section in its own plane (XRotate 0; YRotate and ZRotate from the normal: OpenVSP turns a
+section by Rx Ry Rz about its centre). The end cuts are made 0.2% of the way inside the body (a cut on an end face
+is degenerate) and moved along the duct's axis onto their end plane, so the open ends lie in the given planes.
+Slicing normal to one axis instead leaves pieces next to a tilted end that are very short on one side and long on
+the other, where OpenVSP's skinning spline overshot (5 cm on a 1 m tube with a 25 degree end).
+
+**Skinning.** Every side of every section is left free (no angles, slews or strengths) with OpenVSP's top/bottom and
+left/right symmetries and its left/right equalities switched off. OpenVSP's defaults tie the sides together; on a
+round tube with tilted ends they bowed the surface out by 0.1 m on a 1 m radius, while uncoupled it came back within
+0.2 mm, and the open surface's area within 1 ppm of 2 pi R L. A waisted duct (15% contraction, tilted ends) with
+12 sections: 0.8 mm worst on 1 m (`validation/cad_export/duct_tube.py`).
+
+**nTop's in-plane axes.** For a cut plane that is not normal to a world axis, nTop's Slice Body writes the contour
+in its own axes, v = n x y (normalised) and u = v x n, whatever frame it is given (found on the test duct: the
+frame's axes were ignored). The block builds its frames in exactly those axes. A duct running along y has no such
+axes: not supported.
+
+## From OpenVSP to CAD
+
+**OpenVSP CAD Export (VSP)** writes the OpenVSP model with OpenVSP 3.56's own CAD export (`vsp_ntop/run_cad.py`):
+
+| Method | OpenVSP | Result |
+|---|---|---|
+| Trimmed (intersected, one solid) | Surface Intersection | components intersected, parts inside other components trimmed away; closed surfaces become one BREP solid (STEP, Representation BREP), open ones (duct walls) stay surfaces |
+| Stitched (one solid per component) | File > Export, split and stitch | each component's patches stitched into its own watertight BREP (an open shell for a duct); not intersected |
+| Untrimmed Surfaces | File > Export, STEP / IGES | each component's surface patches, no topology |
+
+**Units.** OpenVSP's CAD length unit does not scale the model, it declares the unit of its numbers (a pod 10 long
+written as LEN_M reads as 10 m, with the default LEN_FT as 10 ft). OpenVSP Model builds in metres, so the files are
+always declared in metres and the CAD program converts on import. The plain export reads the unit from OpenVSP's
+STEP/IGES settings, the stitched and trimmed ones from its Surface Intersection settings; the driver sets both.
+
+**Test** (`validation/cad_export/test_cad.py`, results in `validation/cad_export/results.txt`): the hobby rocket's body as a
+Fuselage (24 sections, 6 mm slices), its +y fin as a Wing, and a waisted tube (inner radius 60 mm narrowing to 51 mm,
+6 mm wall, 300 mm long) cut by an inlet plane turned 15 degrees about y and an outlet plane turned 25 degrees about
+z, as two Ducts (outer and inner wall). Each CAD file is read back with OpenCASCADE (gmsh); CAD -> implicit is nTop's
+own field at points on the CAD faces, implicit -> CAD the distance from nTop mesh vertices to the nearest CAD face.
+
+| | Trimmed STEP | Stitched STEP | Untrimmed STEP | Trimmed IGES |
+|---|---|---|---|---|
+| solids / faces | 1 / 22 | 2 / 30 | 0 / 30 | 0 / 22 |
+| body, CAD -> implicit p99 / max (mm) | 2.94 / 2.94 | 2.94 / 2.94 | 2.94 / 2.94 | 2.94 / 2.94 |
+| fin, CAD -> implicit p99 / max (mm) | 1.33 / 2.94 | 1.33 / 2.94 | 1.31 / 2.93 | 1.32 / 2.94 |
+| fin, implicit -> CAD p99 / max (mm) | 0.43 / 0.49 | 0.43 / 0.49 | 0.43 / 0.49 | 0.43 / 0.49 |
+| duct, CAD -> implicit mean / max (mm) | 0.004 / 0.13 | 0.004 / 0.13 | 0.004 / 0.13 | 0.004 / 0.13 |
+| duct, implicit -> CAD mean / max (mm) | inner wall dropped | 0.004 / 0.14 | 0.004 / 0.14 | inner wall dropped |
+
+- The CAD is OpenVSP's surface: the stitched body solid is 2442.5 cm3 against OpenVSP's own 2438.1 cm3 (CompGeom).
+  What separates it from the implicit is the OpenVSP fit: the body is 0.7% under the exact 2460.6 cm3 (the model
+  check's mean of 0.13 mm over its surface) and its flat base sits 2.9 mm short of the body's (a blunt end is placed
+  midway to the next, empty, slice: half the 6 mm Slice Spacing; finer slices bring it closer).
+- Trimmed drops the duct's inner wall: Surface Intersection treats it as inside the outer wall's tube and trims it
+  away. For both walls of a tube, use Stitched or Untrimmed, or export them separately.
+- The four exports took 4 s each; the duct block's 24 cuts about 70 s in nTop.
+- **Degenerate geometry** (nTop's import warning). Where OpenVSP closes a surface to a point, its patches have a
+  control-net row collapsed to that point (the surface's derivative vanishes along it): the tip of a pointed nose, the
+  centre of a flat end cap, and the leading and trailing edges of a wing's root and tip caps. Parasolid (nTop's CAD
+  kernel) reports these as degenerate geometry: 2 on the rocket body (nose tip, base centre), 4 on the fin. The open
+  duct walls have none. They are in every export method. nTop still reads the files: Import Part, then CAD Body to
+  Implicit, gave the stitched body back within 0.05 mm (mean) of the original implicit and the fin within 0.5 mm
+  (`validation/cad_export/ntop_round_trip.py`; singular points located with
+  `validation/cad_export/singular_points.py`).
+- **Planar End Caps** (CAD Export option, STEP; `vsp_ntop/step_caps.py`) edits the STEP file: each flat cap's patches
+  become one ADVANCED_FACE on a PLANE bounded by the cap's rim edges (shared with the side surfaces, kept as they are),
+  with holes where another part passes through the cap (trimmed export). OpenVSP's cap patches are not oriented
+  consistently with each other (two of them run a shared edge the same way), so each rim loop takes its direction
+  from a side face that shares one of its edges, and the plane's normal from that loop. Everything else in the file
+  is kept (shells, names, units); OpenVSP's own file stays as `<Case Name>.openvsp.stp`. On the test, all three caps
+  (body base, fin root and tip) were rebuilt in both the stitched and trimmed files; only the nose tip's collapsed
+  patches are left, and the deviations above are unchanged (base face area 2290.0 mm2 as before, = pi 27^2).
+  Rebuilding the file with gmsh/OpenCASCADE instead worked too, but split each open duct wall into one sheet body
+  per face and dropped OpenVSP's surface names.
+- **Trimmed export in nTop.** OpenCASCADE reads the trimmed STEP solid within 0.03 mm of the bodies, but nTop's CAD
+  Body to Implicit of it was 2.8 mm mean and 20 mm at the 99th percentile off the original body (with planar caps
+  nTop split it into more bodies). The stitched export round-trips cleanly (0.05 mm), so use Stitched for nTop.
+
+## Lofted CAD: STEP straight from the slices
+
+OpenVSP's fuselage skinning can't follow a flattened section. OpenVSP 3.56 sets a section's surface slope only at
+four points (top, bottom and the two sides; the angles' "Set" flags can't be turned off) and interpolates it in
+between. On a flattened nose the real slope drops from the side value to the top or bottom value almost at once. The
+diagonals come out about 3 degrees too steep at every section, which shades as a ripple. More sections, more
+contour points, exact or least-squares angles, lower tangent strength, and OpenVSP's own Fit Model (Levenberg-
+Marquardt on the angles: 9 minutes for the nose alone, rms slope error 1.38 to 1.32 degrees) don't remove it.
+
+**Lofted CAD Export (VSP)** skips OpenVSP for the CAD (`vsp_ntop/loft.py`, `vsp_ntop/step_write.py`, driver
+`run_loft.py`; numpy only). It takes the same OpenVSP Fuselage blocks and fits each body's nTop slices directly:
+
+- **Surface.** One bicubic B-spline surface through every slice (about 400 at Slice Spacing 0.0025), least squares
+  with a light curvature penalty. Around the body it is periodic, Points Around (48) control points. Each contour is
+  split where it crosses the horizontal and vertical lines through its centre (right, bottom, left, top), and each
+  quarter is sampled evenly by arc length. Splitting at the widest point instead (as OpenVSP Model's sections do) made
+  the seams between faces wander on the flat sides of the blob body (0.22 mm rms, visibly wavy in nTop); the
+  centre-line crossings move smoothly (0.055 mm, the same as its top and bottom seams). Along the body its parameter is the distance travelled by the sections' centres and equivalent radii,
+  so a rounded nose that closes up at almost constant x is still followed. There is one control row per two slices
+  (Slices per Control Point).
+- **Ends.** A pointed end is a pole (the first row of control points is the tip). A blunt end carries the last slice
+  out to the end plane (placed as OpenVSP Model places it) and is closed by a flat face.
+- **Sharp edges.** Where the contours turn a corner at the sides, top or bottom (more than 30 degrees, median over
+  the middle 80% of slices), that split point's knot is made triple, so the surface keeps the edge (a chine). A side
+  with a chine is split at its widest point, which is the chine.
+- **CAD.** The periodic surface is cut exactly (knot insertion) into clamped patches: four at the split points, or
+  Faces Around 8, 12, 16 ... (each quarter cut evenly; a multiple of 4 dividing Points Around). Each is a B-spline
+  face; neighbours share their edge curves exactly and join as smoothly as the uncut surface. One closed solid per
+  body (the side faces, plus a flat cap per blunt end), all bodies in one STEP file, AP214, millimetres. `docs/STEP_FORMAT.md` walks through the format
+  with records from these files.
+
+Tests (`validation/loft_cad/test_loft.py`, results in `validation/loft_cad/results.txt`). Each body is one nTop
+expression, also evaluated in numpy as the exact field. The lofted surface and OpenVSP's (24 sections, default
+skinning) are scored on distance |f|/|grad f| and on the angle between the surface normal and grad f, over the body
+between 2% and 98% of its length:
+
+| Body | What it tests | Loft: mean / max distance, rms normal error | OpenVSP |
+|---|---|---|---|
+| sides | flattened elliptic nose, drooped, top-only boattail, flat base | 0.001 / 0.05 mm, 0.30 deg | 0.038 / 0.36 mm, 1.25 deg |
+| canopy | round fuselage with a canopy smoothly blended on (concave sections) | 0.001 / 0.03 mm, 0.17 deg | 0.023 / 0.33 mm, 0.58 deg |
+| blob | rounded-square sections on a curved centreline, poles at both ends | 0.000 / 0.003 mm, 0.20 deg | 0.030 / 0.31 mm, 0.71 deg |
+| chine | lens sections, sharp chines the whole length | 0.000 / 0.001 mm, 0.01 deg | 0.016 / 0.24 mm, 3.8 deg (0.85 clear of the chines) |
+
+- Without the sharp-edge knots, the chine body was rounded by up to 0.20 mm along its edges.
+- On the sides body's nose, where OpenVSP had a +-0.2 mm wave between sections on the diagonals, the loft is a smooth
+  offset of at most 0.013 mm.
+- The worst remaining normal errors are on the sides body's own creases (x = 150 and 450 mm, where its exact surface
+  has a slope break) and at its flattened rounded tip (4.7 degrees rms in the first 2%, against OpenVSP's 11).
+
+Every file reads in OpenCASCADE as one closed solid, and the lofted surface's points lie on the CAD faces to 1e-13 mm.
+nTop imports them with no warnings (pointed tips included). CAD Body to Implicit of each sits 0.013 to 0.020 mm mean and at most 0.073 mm from the
+exact surface (OpenVSP's stitched file of the sides body: 0.041 mean, 0.354 max); the same with 16 faces round each
+body. End to end in nTop (two bodies in one
+Fuselage block into the Lofted CAD block): 27 s.
+
+Limits: one closed contour per slice (the largest is used if a slice has several), bodies sliced along x (no wings or
+ducts yet). Only the four split points can hold a sharp edge; an edge elsewhere on the section is rounded over about
+one control-point spacing, as is a slope break along the body. Files are about 1.2 MB per body at the defaults.
+OpenCASCADE's own volume of these solids reads 0.26% low on the sides body (1511.1 cm3), while integrating the
+surface directly gives 1515.2 against the exact 1515.1.
 
 ## VSPAERO defaults, and why
 

@@ -10,6 +10,7 @@ analysis hands to VSPAERO as its thick (panel) and thin (vortex lattice) sets. S
 from __future__ import annotations
 
 import math
+import os
 import xml.etree.ElementTree as ET
 
 from . import fit as F
@@ -146,7 +147,14 @@ def set_fuselage_sections(vsp3_in, vsp3_out, fits, tess):
             _parm(g, "XLocPercent", (s.x - x0) / length)
             _parm(g, "YLocPercent", s.yc / length)
             _parm(g, "ZLocPercent", s.zc / length)
-            _parm(g, "AllSym", 1)
+            # each side keeps its own angle: AllSym (OpenVSP's "all sides like the top") made the sides and bottom copy
+            # the top's slope; on a body with different slopes per side (validation/fuselage_sides) the boattail's
+            # mean error was 3x larger with it. NTVSP_SKIN_SIDES=allsym restores it, for comparison.
+            sym = 1 if os.environ.get("NTVSP_SKIN_SIDES", "independent") == "allsym" else 0
+            _parm(g, "AllSym", sym)
+            if not sym:
+                _parm(g, "TBSym", 0)
+                _parm(g, "RLSym", 0)
             for side, angle in zip(("Top", "Right", "Bottom", "Left"), angles[i]):
                 for lr in ("L", "R"):
                     _parm(g, f"{side}{lr}AngleSet", 1)
@@ -171,6 +179,27 @@ def set_fuselage_sections(vsp3_in, vsp3_out, fits, tess):
     missing = set(fits) - done
     if missing:
         raise ValueError(f"OpenVSP model: fuselage(s) {', '.join(sorted(missing))} not found in {vsp3_in}")
+    tree.write(vsp3_out, encoding="utf-8", xml_declaration=True)
+
+
+def set_duct_sections(vsp3_in, vsp3_out, fits):
+    """Write each duct's fitted sections (``duct.write_sections``) into a ``.vsp3`` made by ``duct.duct_lines``.
+    ``fits``: {component name: (DuctFit, tess_w, panel aspect ratio)}."""
+    from . import duct as D
+    tree = ET.parse(vsp3_in)
+    done = set()
+    for geom in tree.getroot().iter("Geom"):
+        pc = geom.find("ParmContainer")
+        if pc is None or geom.find("FuselageGeom") is None:
+            continue
+        name = (pc.findtext("Name") or "").strip()
+        if name in fits:
+            f, tess_w, aspect = fits[name]
+            D.write_sections(geom, f, tess_w, aspect, parm=_parm)
+            done.add(name)
+    missing = set(fits) - done
+    if missing:
+        raise ValueError(f"OpenVSP model: duct(s) {', '.join(sorted(missing))} not found in {vsp3_in}")
     tree.write(vsp3_out, encoding="utf-8", xml_declaration=True)
 
 

@@ -1,0 +1,28 @@
+sides: loft 7.7 s, 401 rows, fit residual rms 0.003 max 0.053 mm; ends pointed/blunt at x = 0.04, 600.17 mm; STEP 5 faces, 1.2 MB
+   loft     body: dist mean 0.001 p99 0.012 max 0.051 mm, normal rms 0.30 p99 1.21 deg | ends: dist mean 0.005 p99 0.073 max 0.173 mm, normal rms 4.66 p99 28.51 deg
+   OpenVSP  body: dist mean 0.038 p99 0.269 max 0.363 mm, normal rms 1.25 p99 5.15 deg | ends: dist mean 0.036 p99 0.391 max 0.627 mm, normal rms 11.03 p99 47.41 deg
+chine: loft 9.2 s, 399 rows, fit residual rms 0.000 max 0.004 mm; ends pointed/blunt at x = -0.02, 499.53 mm; STEP 5 faces, 1.2 MB; sharp edge along the body at the right (78 deg), left (78 deg)
+   loft     body: dist mean 0.000 p99 0.000 max 0.001 mm, normal rms 0.01 p99 0.04 deg | ends: dist mean 0.001 p99 0.003 max 0.004 mm, normal rms 0.11 p99 0.46 deg
+   OpenVSP  body: dist mean 0.016 p99 0.231 max 0.236 mm, normal rms 3.83 p99 35.03 deg | ends: dist mean 0.101 p99 0.475 max 0.578 mm, normal rms 12.95 p99 90.00 deg
+   away from the sharp edges (1.5 mm):
+   loft     body: dist mean 0.000 p99 0.000 max 0.001 mm, normal rms 0.01 p99 0.02 deg | ends: dist mean 0.001 p99 0.003 max 0.003 mm, normal rms 0.09 p99 0.31 deg
+   OpenVSP  body: dist mean 0.009 p99 0.050 max 0.070 mm, normal rms 0.85 p99 3.98 deg | ends: dist mean 0.120 p99 0.475 max 0.578 mm, normal rms 11.24 p99 90.00 deg
+canopy: loft 9.0 s, 402 rows, fit residual rms 0.002 max 0.014 mm; ends pointed/blunt at x = 0.00, 600.28 mm; STEP 5 faces, 1.2 MB
+   loft     body: dist mean 0.001 p99 0.008 max 0.032 mm, normal rms 0.17 p99 0.67 deg | ends: dist mean 0.002 p99 0.016 max 0.016 mm, normal rms 0.20 p99 0.81 deg
+   OpenVSP  body: dist mean 0.023 p99 0.190 max 0.327 mm, normal rms 0.58 p99 2.41 deg | ends: dist mean 0.030 p99 0.122 max 0.122 mm, normal rms 2.10 p99 6.80 deg
+blob: loft 7.6 s, 401 rows, fit residual rms 0.001 max 0.008 mm; ends pointed/pointed at x = 0.04, 600.03 mm; STEP 4 faces, 1.2 MB
+   loft     body: dist mean 0.000 p99 0.003 max 0.003 mm, normal rms 0.20 p99 0.36 deg | ends: dist mean 0.004 p99 0.061 max 0.090 mm, normal rms 1.17 p99 6.12 deg
+   OpenVSP  body: dist mean 0.030 p99 0.194 max 0.307 mm, normal rms 0.71 p99 2.16 deg | ends: dist mean 0.036 p99 0.165 max 0.180 mm, normal rms 2.80 p99 8.68 deg
+
+nTop round trip (Import Part -> CAD Body to Implicit, 0.1 mm), |field| at 3000 points on the exact surface:
+   sides  mean 0.015 p99 0.044 max 0.073 mm   (OpenVSP stitched + planar caps: 0.041 / 0.245 / 0.354)
+   chine  mean 0.018 p99 0.051 max 0.070 mm
+   canopy mean 0.020 p99 0.051 max 0.064 mm
+   blob   mean 0.013 p99 0.040 max 0.050 mm
+OpenCASCADE (gmsh) reads every file as one closed solid; surface points from the loft lie on the CAD faces to 1e-13 mm.
+
+Seams between faces (split points at the centre-line crossings; before: the widest point), short-wavelength wander
+(the seam minus itself smoothed over ~10 mm, rms; ~0.05 mm is real curvature the smoothing removes):
+   blob side seams 0.22 mm -> 0.055 mm (top and bottom seams 0.043-0.056 both ways); other bodies unchanged.
+Faces Around 8 and 16 (all four bodies in one file): OpenCASCADE reads 4 closed solids (35 and 67 faces); nTop round
+trip with 16 faces: chine 0.017, canopy 0.024, sides 0.015, blob 0.017 mm mean (nTop lists the bodies in its own order).

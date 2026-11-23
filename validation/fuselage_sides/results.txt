@@ -1,0 +1,8 @@
+allsym: Sides: OpenVSP surface vs nTop contours: mean 0.11 mm, largest 0.64 mm (0.11% of length) over 4224 points
+   exact surface, nose x<200: mean 0.129 mm, max 1.837 mm at (0.5, 2.7, -11.7)
+   exact surface, mid 200-450: mean 0.025 mm, max 0.170 mm at (440.7, -32.4, -14.9)
+   exact surface, boattail 450-600: mean 0.210 mm, max 0.799 mm at (538.1, 32.6, -16.2)
+independent: Sides: OpenVSP surface vs nTop contours: mean 0.07 mm, largest 0.61 mm (0.10% of length) over 4224 points
+   exact surface, nose x<200: mean 0.086 mm, max 1.426 mm at (0.5, 2.0, -11.7)
+   exact surface, mid 200-450: mean 0.009 mm, max 0.160 mm at (440.7, -0.0, 25.2)
+   exact surface, boattail 450-600: mean 0.066 mm, max 0.370 mm at (538.2, 30.7, 6.7)

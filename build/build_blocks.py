@@ -18,6 +18,7 @@ sys.path.insert(0, HERE)
 
 import aero_blocks as a  # noqa: E402
 import buildup_blocks as b  # noqa: E402
+import cad_blocks as c  # noqa: E402
 import drag_blocks as d  # noqa: E402
 import model_blocks as m  # noqa: E402
 import vspaero_blocks as v  # noqa: E402
@@ -31,9 +32,12 @@ def blocks():
     return [
         ("OpenVSP Fuselage (VSP)", m.fuselage_block()),
         ("OpenVSP Wing (VSP)", m.wing_block()),
+        ("OpenVSP Duct (VSP)", m.duct_block()),
         ("OpenVSP Model (VSP)", m.model_block()),
         ("OpenVSP Model Check (VSP)", m.model_check_block()),
         ("OpenVSP Model Mesh (VSP)", m.model_mesh_block()),
+        ("OpenVSP CAD Export (VSP)", c.cad_block()),
+        ("Lofted CAD Export (VSP)", c.loft_block()),
         ("Flight Condition (VSP)", a.flight_block()),
         ("VSPAERO Solver Settings (VSP)", v.solver_block()),
         ("VSPAERO Analysis (VSP)", v.analysis_block()),

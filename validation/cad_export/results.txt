@@ -1,0 +1,33 @@
+build: 139 s, output yes
+[    0.5s] Body: 24 sections from x = 0.0116 to 1.2085 m (pointed nose, blunt tail); 199 slices 6.0 mm apart
+[    0.9s] Fin: 1 sections over span stations 0.0560 to 0.1320 m; 100 slices 0.8 mm apart
+[    5.0s] DuctOuter: duct of 24 sections (outer wall), centre line 300.3 mm, open at both ends
+[    8.8s] DuctInner: duct of 24 sections (inner wall), centre line 300.2 mm, open at both ends
+[    8.8s] OpenVSP: build 4 components
+[    8.8s] run: C:\Users\Benji\Documents\nTop_playground\nTop_vsp\OpenVSP-3.56.0-win64\vspscript.exe -script C:\Users\Benji\Documents\nTop_playground\nTop_vsp\runs\cad_export\parts.build.vspscript
+[   14.4s] run: C:\Users\Benji\Documents\nTop_playground\nTop_vsp\OpenVSP-3.56.0-win64\vspscript.exe -script C:\Users\Benji\Documents\nTop_playground\nTop_vsp\runs\cad_export\parts.finish.vspscript
+[   19.6s] DuctOuter: OpenVSP section outlines vs nTop cuts: mean 0.001 mm, largest 0.002 mm over 1152 points
+[   23.1s] DuctInner: OpenVSP section outlines vs nTop cuts: mean 0.001 mm, largest 0.002 mm over 1152 points
+[   25.6s] Body: OpenVSP surface vs nTop contours: mean 0.13 mm, largest 0.59 mm (0.05% of length) over 4384 points
+[   25.8s] Fin: OpenVSP surface vs nTop contours: mean 0.05 mm, largest 0.55 mm (0.33% of root chord) over 256 points
+[   25.8s] done
+nTop evaluation: 6 s
+case                         solids faces   area m2  CAD->implicit by body: mean / p99 / max (mm)
+parts_trimmed_step                1    22   0.32060  Body 1.001/2.943/2.943 Fin 0.214/1.334/2.939 Duct 0.004/0.076/0.133
+                             solid volumes (cm3): [2469.32]
+parts_stitched_step               2    30   0.42878  Body 1.002/2.943/2.943 Fin 0.255/1.327/2.937 Duct 0.004/0.076/0.133
+                             solid volumes (cm3): [2442.48, 31.28]
+parts_surfaces_step               0    30   0.42878  Body 1.000/2.943/2.943 Fin 0.253/1.307/2.928 Duct 0.004/0.075/0.133
+parts_trimmed_iges                0    22   0.32062  Body 1.007/2.943/2.943 Fin 0.214/1.324/2.939 Duct 0.004/0.077/0.133
+parts_trimmed_step_caps           1    17   0.32060  Body 0.426/2.943/2.943 Fin 0.158/0.432/2.907 Duct 0.004/0.076/0.133
+                             solid volumes (cm3): [2469.54]
+parts_stitched_step_caps          2    25   0.42877  Body 0.433/2.943/2.943 Fin 0.184/0.432/2.905 Duct 0.004/0.075/0.133
+                             solid volumes (cm3): [2443.22, 31.23]
+implicit -> CAD (nTop vertices to the nearest CAD face): mean / p99 / max (mm)
+parts_trimmed_step           Body 0.033/1.214/2.943 Fin 0.046/0.432/0.498 Duct 2.856/6.019/6.190
+parts_stitched_step          Body 0.033/1.214/2.943 Fin 0.052/0.432/0.498 Duct 0.004/0.077/0.141
+parts_surfaces_step          Body 0.033/1.214/2.943 Fin 0.052/0.432/0.498 Duct 0.004/0.077/0.141
+parts_trimmed_iges           Body 0.033/1.214/2.943 Fin 0.046/0.432/0.498 Duct 2.856/6.019/6.190
+parts_trimmed_step_caps      Body 0.032/1.214/2.943 Fin 0.046/0.432/0.498 Duct 2.735/6.019/6.190
+parts_stitched_step_caps     Body 0.032/1.214/2.943 Fin 0.052/0.432/0.498 Duct 0.004/0.077/0.141
+nTop mesh vertices vs nTop field (reference noise): Body 0.0044/0.0420 Fin 0.0002/0.0306 Duct 0.0005/0.0033

@@ -22,6 +22,7 @@ import math
 import os
 
 
+from . import duct as D
 from . import fit as F
 from . import slices as S
 from . import vspmodel as M
@@ -102,6 +103,12 @@ def parse_components(path):
             k, sep, v = item.partition(":")
             if sep:
                 c[k.strip()] = v.strip()
+        if c.get("kind") == "duct":  # one body, per-section lists
+            for need in ("name", "cuts"):
+                if need not in c:
+                    raise DriverError(f"duct line without '{need}': {line.strip()}")
+            out.append(c)
+            continue
         if "files" in c:
             files = [x.strip() for x in c.pop("files").split("|") if x.strip()]
             names = [x.strip() for x in c.pop("names", "").split("|") if x.strip()] or [c.get("kind", "Component").capitalize()]
@@ -158,6 +165,71 @@ def contours(c, frame: F.Frame):
         for l in layers:
             l.loops = [[(m[0][0] * u + m[0][1] * v, m[1][0] * u + m[1][1] * v) for u, v in loop] for loop in l.loops]
     return [l for l in layers if l.loops]
+
+
+def _vec(c, key):
+    v = [x.strip() for x in c[key].split(",")]
+    if len(v) != 3:
+        raise DriverError(f"component {c.get('name')}: {key} = '{c[key]}' is not x, y, z")
+    return tuple(float(x) for x in v)
+
+
+def duct_cuts(c):
+    """The chosen contour of each cut of a duct, in world coordinates, with its cutting plane. Each cut is a CLI
+    file sliced in its own frame (origin p, x axis u, y axis v, normal u x v); the layer nearest the frame origin is
+    the cut."""
+    files = [x.strip() for x in c["cuts"].split("|") if x.strip()]
+    per = {k: [float(x) for x in c[k].split("|")] for k in ("px", "py", "pz", "ux", "uy", "uz", "vx", "vy", "vz")}
+    for k, v in per.items():
+        if len(v) != len(files):
+            raise DriverError(f"duct {c['name']}: {len(v)} values of {k} for {len(files)} cuts")
+    wall = c.get("wall", "outer")
+    cuts = []
+    for i, path in enumerate(files):
+        if not os.path.isfile(path):
+            raise DriverError(f"duct {c['name']}: section file {path} not found")
+        o = (per["px"][i], per["py"][i], per["pz"][i])
+        ex = F.unit((per["ux"][i], per["uy"][i], per["uz"][i]))
+        ey = F.unit((per["vx"][i], per["vy"][i], per["vz"][i]))
+        n = F.cross(ex, ey)
+        bu, bv = slicer_basis(n, ex, ey)
+        layers = [l for l in S.read_cli(path) if l.loops]
+        if not layers:
+            raise DriverError(f"duct {c['name']}: cut {i + 1} of {len(files)} is empty (the cutting plane misses the "
+                              "body: do the inlet and outlet planes lie on its ends?)")
+        layer = min(layers, key=lambda l: abs(l.z))
+        try:
+            loop = D.pick_loop(layer.loops, wall)
+        except F.FitError as e:
+            raise DriverError(f"duct {c['name']}, cut {i + 1}: {e}")
+        pts = [tuple(o[j] + u * bu[j] + v * bv[j] + layer.z * n[j] for j in range(3)) for u, v in loop]
+        cuts.append((pts, (o, n)))
+    return cuts
+
+
+def duct_deviation(points, f):
+    """Distance from OpenVSP's surface at each section (grid rows at the section parameters) to that section's nTop
+    contour, in 3D."""
+    n_u = max((a for a, *_ in points), default=0)
+    per = n_u // max(1, len(f.sections) - 1) if n_u else 1
+    out = []
+    for a, b, x, y, z in points:
+        if a % per:
+            continue
+        loop = f.sections[a // per].loop3d
+        loop = loop[::max(1, len(loop) // 720)]  # at most ~720 points: the check stays fast on fine contours
+        q = (x, y, z)
+        best = 1e300
+        for i in range(len(loop)):
+            p0, p1 = loop[i - 1], loop[i]
+            d = tuple(b1 - b0 for b0, b1 in zip(p0, p1))
+            l2 = sum(c * c for c in d)
+            t = 0.0 if l2 == 0 else max(0.0, min(1.0, sum((qq - pp) * dd for qq, pp, dd in zip(q, p0, d)) / l2))
+            best = min(best, math.dist(q, tuple(pp + t * dd for pp, dd in zip(p0, d))))
+        out.append(best)
+    if not out:
+        return float("nan"), float("nan"), 0
+    return sum(out) / len(out), max(out), len(out)
 
 
 def frame_of(c):
@@ -227,11 +299,29 @@ def main(settings_path):
             c["name"] = f"{n}_{seen[n]}"
 
     lines, fuse_fits, fuse_tess, checks, rows, wings, carry = [], {}, {}, [], [], [], []
+    duct_fits, duct_checks = {}, []
     for k, c in enumerate(comps):
         name, kind = M.clean_name(c["name"]), c["kind"]
         set_name = c.get("set", "thick")
         if set_name not in ("thick", "thin", "none"):
             raise DriverError(f"{name}: set '{set_name}': expected thick, thin or none")
+        if kind == "duct":
+            try:
+                ends = ((_vec(c, "inlet_p"), _vec(c, "inlet_n")), (_vec(c, "outlet_p"), _vec(c, "outlet_n")))
+                cuts = duct_cuts(c)
+                f = D.fit_duct(cuts, ends, int(num(c, "per_quarter", 24)))
+            except F.FitError as e:
+                raise DriverError(f"{name}: {e}")
+            tess_w = int(num(c, "tess_w", 33))
+            lines += D.duct_lines(k, name, f, set_name, tess_w, M._sets)
+            duct_fits[name] = (f, tess_w, num(c, "panel_aspect", 1.5))
+            duct_checks.append(name)
+            length = sum(math.dist(a.centre, b.centre) for a, b in zip(f.sections, f.sections[1:]))
+            rows.append({"Name": name, "Type": "Duct", "Set": set_name.capitalize(), "Sections": len(f.sections),
+                         "Slices": len(cuts), "Size": length})
+            log(f"{name}: duct of {len(f.sections)} sections ({c.get('wall', 'outer')} wall), centre line "
+                f"{length * 1000:.1f} mm, open at both ends")
+            continue
         frame = frame_of(c)
         layers = contours(c, frame)
         try:
@@ -305,6 +395,8 @@ def main(settings_path):
     stage2 = os.path.join(work, case + ".sections.vsp3")
     try:
         M.set_fuselage_sections(stage1, stage2, fuse_fits, fuse_tess)
+        if duct_fits:
+            M.set_duct_sections(stage2, stage2, duct_fits)
     except (ValueError, OSError) as e:
         raise DriverError(str(e))
     model = os.path.join(work, case + ".vsp3")
@@ -313,7 +405,9 @@ def main(settings_path):
         if os.path.exists(p):
             os.remove(p)
     text = run_vspscript(vsp_dir, M.finish_script(vsp_path(stage2), vsp_path(model), vsp_path(stl),
-                                                  [(n, nu, nw) for n, _, _, _, nu, nw in checks]),
+                                                  [(n, nu, nw) for n, _, _, _, nu, nw in checks]
+                                                  + [(n, (len(duct_fits[n][0].sections) - 1) * 4, 48)
+                                                     for n in duct_checks]),
                          work, case + ".finish", log, timeout)
     if not os.path.isfile(model):
         raise DriverError("OpenVSP wrote no model file")
@@ -322,7 +416,14 @@ def main(settings_path):
         v = line.split()
         if len(v) == 7 and v[0] == "NTVSP_PT":
             pts.setdefault(v[1], []).append((int(v[2]), int(v[3]), float(v[4]), float(v[5]), float(v[6])))
-    for row, (name, layers, frame, skip, _, _) in zip(rows, checks):
+    by_name = {r["Name"]: r for r in rows}
+    for name in duct_checks:
+        mean, worst, n = duct_deviation(pts.get(name, []), duct_fits[name][0])
+        by_name[name].update({"Mean_Deviation": mean, "Max_Deviation": worst, "Check_Points": n,
+                              "Max_Deviation_Fraction": worst / by_name[name]["Size"]})
+        log(f"{name}: OpenVSP section outlines vs nTop cuts: mean {mean * 1000:.3f} mm, largest {worst * 1000:.3f} mm "
+            f"over {n} points")
+    for row, (name, layers, frame, skip, _, _) in zip([r for r in rows if r["Type"] != "Duct"], checks):
         mean, worst, n = deviation(pts.get(name, []), layers, frame, skip)
         row.update({"Mean_Deviation": mean, "Max_Deviation": worst, "Max_Deviation_Fraction": worst / row["Size"],
                     "Check_Points": n})

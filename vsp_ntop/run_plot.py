@@ -17,7 +17,7 @@ import os
 import subprocess
 import sys
 
-from .common import DriverError, Log, Settings
+from .common import DriverError, Log, Settings, conda_dll_dirs
 
 AXIS_LABELS = {"AoA": "angle of attack (deg)", "Beta": "sideslip (deg)", "Mach": "Mach number", "Altitude": "altitude (m)",
                "L_over_D": "L/D"}
@@ -34,24 +34,6 @@ def RAMP(t):
     """Blue ramp, t from 0 (light) to 1 (dark): #86b6ef -> #0d366b."""
     a, b = (0x86, 0xb6, 0xef), (0x0d, 0x36, 0x6b)
     return "#" + "".join(f"{round(p + (q - p) * t):02x}" for p, q in zip(a, b))
-
-
-def conda_dll_dirs():
-    """A conda Python started directly (as nTop does, without activating its environment) does not find the DLLs
-    in its environment's Library folders, and numpy's linear algebra then crashes the process. Put them on PATH."""
-    dirs = [os.path.join(sys.prefix, *p) for p in (("Library", "mingw-w64", "bin"), ("Library", "usr", "bin"),
-                                                   ("Library", "bin"), ("Scripts",))]
-    base = getattr(sys, "base_prefix", sys.prefix)
-    if base != sys.prefix:  # a venv made from a conda Python
-        dirs += [os.path.join(base, *p) for p in (("Library", "mingw-w64", "bin"), ("Library", "bin"))]
-    dirs = [d for d in dirs if os.path.isdir(d)]
-    if os.name == "nt" and dirs:
-        os.environ["PATH"] = os.pathsep.join(dirs + [os.environ.get("PATH", "")])
-        for d in dirs:
-            try:
-                os.add_dll_directory(d)
-            except (AttributeError, OSError):
-                pass
 
 
 def table(path):

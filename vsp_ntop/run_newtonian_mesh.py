@@ -3,11 +3,10 @@
     python -m vsp_ntop.run_newtonian_mesh faces STL_FILE FACES_CSV      (step 1, from the block)
     python -m vsp_ntop.run_newtonian_mesh SETTINGS_FILE                  (step 2)
 
-The Modified Newtonian on Mesh (VSP) block exports its Mesh input as an STL in millimetres. Step 1 writes the faces'
-centroids as a point map (``x, y, z, area``, mm and mm^2) that nTop imports; nTop evaluates the Body's gradient and
-the Cp Max Field at those centroids and writes them, one row per face, as point maps ``<case>.ntvsp.mesh_gradient.csv``
-and ``<case>.ntvsp.mesh_cp_max.csv``. Step 2 does the sums at every (Mach, AoA, Beta) of the flight condition within
-Mach Min to Mach Max:
+The block exports its Mesh input as an STL in millimetres. Step 1 writes the faces' centroids as a point map
+(``x, y, z, area``, mm and mm^2). nTop evaluates the Body's gradient there (``<case>.ntvsp.mesh_gradient.csv``) and,
+only when Cp_max is User Defined, the Cp Max Field (``<case>.ntvsp.mesh_cp_max.csv``). Step 2 does the sums at every
+(Mach, AoA, Beta) of the flight condition within Mach Min to Mach Max:
 
     Cp = Cp_max max(-n . V, 0)^2,  n = grad f / |grad f| at the face centroid (the implicit Body's own normal)
     C_F = -(1 / Sref) sum Cp S_f,   C_M = -(1 / (Sref cref)) sum Cp (r_f - c) x S_f
@@ -16,9 +15,12 @@ with S_f the face's vector area (outward, from the Mesh) and r_f its centroid: t
 integral the mesh's. Cp_max: Modified (behind a normal shock above Mach 1, Rayleigh pitot; isentropic below),
 Classical (2) or User Defined (the Cp Max Field at each face).
 
-With ``method = tangent_wedge`` (the Tangent Wedge on Mesh (VSP) block) the face pressure is the tangent wedge's,
-with Prandtl-Meyer or Newtonian-shadow leeward faces (``local_methods.py``); Cp_max then sets the pressure above shock
-detachment.
+With ``method = tangent_wedge`` (the Tangent Wedge on Mesh (VSP) block) the face pressure is the tangent wedge's or,
+with ``impact = cone``, the tangent cone's, with Prandtl-Meyer or Newtonian-shadow leeward faces
+(``local_methods.py``); Cp_max then sets the pressure above shock detachment.
+
+With ``export_pressure = 1`` it also writes the static pressure p = p_inf + q Cp at the face centroids for every flight
+condition case it computed (``pressure.py``: ``<case>.ntvsp.pressure.<Case>.csv``, metres and pascals).
 
 Writes ``<case>.ntvsp.coefficients.csv`` with the Modified Newtonian (VSP) block's layout (Mach, AoA, Beta, CA, CY,
 CN, Cl, Cm, Cn about x = Aft Axis, z = Up Axis made normal to it, y = z x x, every moment over Sref cref, and the
@@ -31,17 +33,19 @@ import os
 import struct
 import sys
 
-from .common import DriverError, Log, Settings, main_wrapper, write_csv
+from . import pressure
+from .common import DriverError, Log, Settings, conda_dll_dirs, main_wrapper, write_csv
 from .flight import Flight, _rows
 
 MM = 0.001
+ALIGNED_DEG = 25.0  # a face is aligned when the Body's normal at its centroid is within this of its own normal
+ALIGNED_COS = math.cos(math.radians(ALIGNED_DEG))
+MIN_ALIGNED_SHARE = 0.5  # below this share of the mesh area aligned, the Mesh is not a mesh of the Body
 CP_MAX_MODES = ("modified", "classical", "user")
 HEADER = ("Mach", "AoA", "Beta", "CA", "CY", "CN", "Cl", "Cm", "Cn", "Sref", "Bref", "Cref", "Xref", "Yref", "Zref")
 
 
 def _np():
-    from .run_plot import conda_dll_dirs
-    conda_dll_dirs()  # a conda Python started by nTop needs its DLL folders for numpy
     try:
         import numpy
     except ImportError:  # pragma: no cover
@@ -114,10 +118,12 @@ def frame(aft, up):
 
 
 def coefficients(centroids, vector_areas, normals, cp_max_field, conditions, mode, axes, ref, gamma=1.4,
-                 method="newtonian", expansion="prandtl_meyer", separated="freestream"):
+                 method="newtonian", expansion="prandtl_meyer", separated="freestream", impact="wedge",
+                 on_cp=None):
     """Rows of HEADER for each condition (dict with Mach, AoA, Beta). Lengths in metres, areas in m^2. ``method``:
-    newtonian (Cp_max sin^2 windward, 0 leeward) or tangent_wedge (``local_methods``, with ``expansion`` and
-    ``separated`` for the leeward faces; Cp_max sets its pressure above shock detachment)."""
+    newtonian (Cp_max sin^2 windward, 0 leeward) or tangent_wedge (``local_methods``: windward the tangent wedge or,
+    with ``impact = cone``, the tangent cone; ``expansion`` and ``separated`` for the leeward faces; Cp_max sets the
+    pressure above shock detachment). ``on_cp(condition, cp)``, when given, gets every condition's face Cp."""
     np = _np()
     x, y, z = axes
     sref, _, cref, centre = ref
@@ -134,10 +140,12 @@ def coefficients(centroids, vector_areas, normals, cp_max_field, conditions, mod
         if method == "tangent_wedge":
             from . import local_methods as lm
             delta = np.arcsin(np.clip(-(normals @ v), -1.0, 1.0))
-            cp = lm.tangent_wedge_cp(delta, c["Mach"], cpm, gamma, expansion, separated)
+            cp = lm.tangent_wedge_cp(delta, c["Mach"], cpm, gamma, expansion, separated, impact=impact)
         else:
             sine = np.maximum(-(normals @ v), 0.0)
             cp = cpm * sine * sine
+        if on_cp is not None:
+            on_cp(c, cp)
         force = -(cp[:, None] * vector_areas).sum(axis=0) / sref
         moment = -(cp[:, None] * moment_area).sum(axis=0) / (sref * cref)
         rows.append([c["Mach"], c["AoA"], c["Beta"], force @ x, force @ y, force @ z, moment @ x, moment @ y,
@@ -145,13 +153,17 @@ def coefficients(centroids, vector_areas, normals, cp_max_field, conditions, mod
     return rows
 
 
-def read_values(base, centroids_mm):
-    """nTop's values at the face centroids: (Cp Max Field, gradient (n, 3)), from its point-map exports
-    (x, y, z in mm, then the value or vector), checked to list the faces in order."""
+def read_values(base, centroids_mm, user_cp_max):
+    """nTop's values at the face centroids: (Cp Max Field or None, gradient (n, 3)), from its point-map exports
+    (x, y, z in mm, then the value or vector), checked to list the faces in order. The Cp Max Field is exported (and
+    read) only when Stagnation Pressure is User Defined."""
     np = _np()
     out = []
     for suffix, width in (("cp_max", 4), ("gradient", 6)):
         path = f"{base}.ntvsp.mesh_{suffix}.csv"
+        if suffix == "cp_max" and not user_cp_max:
+            out.append(None)
+            continue
         if not os.path.isfile(path):
             raise DriverError(f"{path} not found (nTop's evaluation of the body at the face centroids)")
         v = np.loadtxt(path, delimiter=",", ndmin=2)
@@ -175,10 +187,25 @@ def unit_normals(gradients, vector_areas, log):
     n = np.where(bad[:, None], face, g / np.where(bad, 1.0, norm)[:, None])
     if bad.any():
         log(f"note: {int(bad.sum())} faces had no usable gradient; their mesh normals are used")
-    flipped = (n * face).sum(axis=1) < 0.0
+    cos = (n * face).sum(axis=1)
+    flipped = cos < 0.0
     if flipped.mean() > 0.5:
         raise DriverError("the body's gradient points against the mesh's outward normals on most faces; is the body "
                           "an implicit that is negative inside?")
+    area = np.linalg.norm(vector_areas, axis=1)
+    alignment = float((cos * area).sum() / area.sum())
+    aligned = float(area[cos >= ALIGNED_COS].sum() / area.sum())
+    log(f"Body normals against Mesh faces: area-weighted mean cosine {alignment:.6f}; {100 * (1 - aligned):.1f}% of "
+        f"the mesh area has normals more than {ALIGNED_DEG:g} degrees off the Body's")
+    if aligned < MIN_ALIGNED_SHARE:
+        raise DriverError(
+            f"the Body's normals at the face centroids do not match the Mesh's faces ({100 * aligned:.0f}% of the mesh "
+            f"area within {ALIGNED_DEG:g} degrees, mean cosine {alignment:.3f}): the Mesh is not a mesh of the Body "
+            "where it is, for example an imported mesh in other length units, a moved or scaled body, or face "
+            "centroids that nTop read or wrote in other units than millimetres")
+    if aligned < 0.99:
+        log("note: faces whose normals disagree with the Body's are often parts of the mesh inside the Body (OpenVSP's "
+            "wing extensions into the fuselage, overlapping components); their pressure is still summed")
     return n
 
 
@@ -207,10 +234,14 @@ def main(settings_path):
     if mode not in CP_MAX_MODES:
         raise DriverError(f"stagnation = {mode}: expected one of {', '.join(CP_MAX_MODES)}")
     method = s.text("method", "newtonian").strip().lower()
+    impact = s.text("impact", "wedge").strip().lower()
+    export = s.integer("export_pressure", 0) != 0
     expansion = s.text("expansion", "prandtl_meyer").strip().lower()
     separated = s.text("separated", "freestream").strip().lower()
     if method not in ("newtonian", "tangent_wedge"):
         raise DriverError(f"method = {method}: expected newtonian or tangent_wedge")
+    if impact not in ("wedge", "cone"):
+        raise DriverError(f"impact = {impact}: expected wedge or cone")
     if expansion not in ("prandtl_meyer", "shadow") or separated not in ("freestream", "gabeaud"):
         raise DriverError(f"expansion = {expansion}, separated = {separated}: expected prandtl_meyer or shadow, and "
                           "freestream or gabeaud")
@@ -219,8 +250,11 @@ def main(settings_path):
         if sub:
             raise DriverError(f"the tangent wedge needs a supersonic freestream: the flight condition has Mach "
                               f"{', '.join(f'{m:g}' for m in sub)} in [Mach Min, Mach Max); set Mach Min above 1")
+    stale = base + ".ntvsp.mesh_cp_max.csv"
+    if mode != "user" and os.path.isfile(stale):  # left by an earlier User Defined run of this case
+        os.remove(stale)
     c_mm, s_mm2 = faces(base + ".ntvsp.mesh.stl")
-    cp_max_field, gradient = read_values(base, c_mm)
+    cp_max_field, gradient = read_values(base, c_mm, mode == "user")
     centroids, vector_areas = c_mm * MM, s_mm2 * MM * MM
     _, flipped = face_normals(vector_areas, centroids)
     if flipped:
@@ -229,15 +263,29 @@ def main(settings_path):
     normals = unit_normals(gradient, vector_areas, log)
     closure = np.linalg.norm(vector_areas.sum(axis=0)) / np.linalg.norm(vector_areas, axis=1).sum()
     law = ("Modified Newtonian" if method == "newtonian" else
-           f"tangent wedge + {'Prandtl-Meyer' if expansion == 'prandtl_meyer' else 'Newtonian shadow'}"
+           f"tangent {impact} + {'Prandtl-Meyer' if expansion == 'prandtl_meyer' else 'Newtonian shadow'}"
            + (f" (separated faces: {separated})" if expansion == "prandtl_meyer" else ""))
     log(f"{law} on mesh: {len(c_mm)} faces, wetted area {np.linalg.norm(vector_areas, axis=1).sum():.6g} "
         f"m^2, closure {closure:.1e}; {len(conds)} of {len(rows)} conditions in Mach [{lo:g}, {hi:g}); Cp_max {mode}")
     if closure > 1e-3:
         log("note: the mesh is not closed (its vector areas do not sum to zero)")
     axes = frame([s.real(f"aft_{c}") for c in "xyz"], [s.real(f"up_{c}") for c in "xyz"])
+    removed = pressure.clear(base)
+    on_cp = None
+    if export:
+        written = []
+
+        def on_cp(c, cp):  # every flight condition (any altitude) at this Mach, alpha, beta: p = p_inf + q Cp
+            for row in pressure.cases_at(fl, c["Mach"], c["AoA"], c["Beta"]):
+                pressure.write(base, row["Case"], centroids, row["Pressure"] + row["Dynamic_Pressure"] * cp)
+                written.append(int(row["Case"]))
     out = coefficients(centroids, vector_areas, normals, cp_max_field, conds, mode, axes, fl.ref, method=method,
-                       expansion=expansion, separated=separated)
+                       expansion=expansion, separated=separated, impact=impact, on_cp=on_cp)
+    if export:
+        log(f"pressures (Pa) at the {len(centroids)} face centroids of flight condition cases "
+            f"{', '.join(str(n) for n in sorted(written))}: {os.path.basename(base)}.ntvsp.pressure.<Case>.csv")
+    elif removed:
+        log(f"removed {removed} pressure files of an earlier run (Export Pressures is off)")
     write_csv(base + ".ntvsp.coefficients.csv", HEADER, out)
     log("done")
     log.close()
@@ -247,6 +295,7 @@ def _faces_main():
     if len(sys.argv) != 4:
         sys.stderr.write("usage: python -m vsp_ntop.run_newtonian_mesh faces STL_FILE FACES_CSV\n")
         sys.exit(2)
+    conda_dll_dirs()
     try:
         n = write_faces(sys.argv[2], sys.argv[3])
         print(f"{n} faces")

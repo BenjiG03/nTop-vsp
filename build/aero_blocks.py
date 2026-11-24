@@ -13,6 +13,8 @@ from __future__ import annotations
 import math
 
 import newtonian
+import pressure_blocks as pb
+from ops import Ops
 import viscous
 from ntopfile import Graph, InputSpec
 
@@ -202,34 +204,35 @@ def newtonian_block():
 
 def newtonian_pressure_block():
     specs = (InputSpec("Body", "implicit", "The body (an implicit)."), FLIGHT_INPUT,
-             InputSpec("Condition Number", "integer", "Row of the flight condition's distinct (Mach, angle of attack, "
-                       "sideslip) combinations, counted from 1 (`.ntvsp.inviscid.csv`).", default=d_int(1))) + \
+             InputSpec("Case Number", "integer", pb.CASE_DOC, default=d_int(1))) + \
         _axes_inputs() + (STAGNATION_INPUT, CP_MAX_FIELD_INPUT)
     g = Graph()
     k = Kit(g)
+    o = Ops(g)
     inp = model_inputs(specs)
-    g.comment("**Modified Newtonian pressure** of one condition, as a scalar field to show on the body.")
-    table = k.table(k.cat([inp("Flight Condition"), ".ntvsp.inviscid.csv"]), name="Flight Conditions")
-    index = g.block("add<integer,integer>", "integer", [inp("Condition Number"), g.integer(-1)], top=False)
+    g.comment("**Modified Newtonian surface pressure** of one flight condition case, as a scalar field to show on the "
+              "body: the static pressure p = p_inf + q Cp in pascals, with p_inf and q of the case's altitude and Mach "
+              "number (`<Flight Condition>.ntvsp.flight.csv`).")
+    table = k.table(k.cat([inp("Flight Condition"), ".ntvsp.flight.csv"]), name="Flight Conditions")
+    index = g.block("add<integer,integer>", "integer", [inp("Case Number"), g.integer(-1)], top=False)
 
-    def at(c, units=None):
-        v = g.block("core.list_element<list_interface,integer>", "real", [k.column(table, c), index], top=False)
-        return g.block("multiply<real,real>", "real", [v, g.real(1.0, units)], top=False) if units else v
+    def at(c):
+        return g.block("core.list_element<list_interface,integer>", "real", [k.column(table, c), index], top=False)
 
-    zero = g.real(0.0)
-    values = {"Body": inp("Body"), "Mach": at("Mach"), "Angle of Attack": g.block("multiply<real,real>", "real",
-                                                                                  [at("AoA"), g.real(DEG, ANGLE)], top=False),
-              "Sideslip": g.block("multiply<real,real>", "real", [at("Beta"), g.real(DEG, ANGLE)], top=False),
+    def angle(c):
+        return g.block("multiply<real,real>", "real", [at(c), g.real(DEG, ANGLE)], top=False)
+
+    values = {"Body": inp("Body"), "Mach": at("Mach"), "Angle of Attack": angle("AoA"), "Sideslip": angle("Beta"),
               "Gamma": g.real(GAMMA), "Aft Axis": inp("Aft Axis"), "Up Axis": inp("Up Axis"),
               "Reference Area": g.real(1.0, AREA), "Reference Length": g.real(1.0, LENGTH),
               "Moment Center": g.point(0, 0, 0), "Stagnation Pressure": inp("Stagnation Pressure"),
-              "Cp Max Field": inp("Cp Max Field"),
-              "Integration Tolerance": zero}
+              "Cp Max Field": inp("Cp Max Field"), "Integration Tolerance": g.real(0.0)}
     sol = newtonian.build(g, values.__getitem__, with_moments=False, integrate_forces=False)
-    out = g.block("core.var<real_field>", "real_field", [sol.cp], "Cp")
+    out = o.fadd(o.fmul(sol.cp, at("Dynamic_Pressure")), at("Pressure"), name="Pressure")
     return make_block("modified_newtonian_pressure", "Modified Newtonian Pressure (VSP)",
-                      "The Modified Newtonian pressure coefficient of one flight condition as a scalar field, to show on "
-                      "the body (Field Viewer) or evaluate at points.", specs, "real_field", g, out)
+                      "The Modified Newtonian static surface pressure (Pa, p_inf + q Cp) of one flight condition case as "
+                      "a scalar field, to show on the body (Field Viewer) or evaluate at points.", specs, "real_field",
+                      g, out)
 
 
 # --- Modified Newtonian on a mesh ----------------------------------------------------------------------------------------
@@ -237,6 +240,8 @@ def newtonian_pressure_block():
 MESH_CP_MAX_KEYS = ("modified", "classical", "user")
 
 
+TW_IMPACT = ("Tangent Wedge (oblique shock)", "Tangent Cone (Taylor-Maccoll)")
+TW_IMPACT_KEYS = ("wedge", "cone")
 TW_EXPANSION = ("Prandtl-Meyer", "Newtonian Shadow")
 TW_EXPANSION_KEYS = ("prandtl_meyer", "shadow")
 TW_SEPARATED = ("Freestream (Cp 0)", "Gabeaud Base Pressure (-1/M^2)")
@@ -268,12 +273,18 @@ def _mesh_block(method):
     specs += _axes_inputs() + (STAGNATION_INPUT, CP_MAX_FIELD_INPUT)
     if wedge:
         specs += (
+            InputSpec("Impact Method", "choice", "Windward faces. Tangent Wedge: the exact oblique shock through the "
+                      "face's angle (fins, wings, flat surfaces). Tangent Cone: the exact Taylor-Maccoll cone of "
+                      "that half angle (bodies of revolution, noses). Above shock detachment both rise with "
+                      "sin^2 delta to Cp_max.",
+                      default=d_choice(TW_IMPACT, 0)),
             InputSpec("Expansion", "choice", "Leeward faces (turned away from the flow). Prandtl-Meyer: the isentropic "
                       "expansion from the freestream through the face's angle, limited at vacuum. Newtonian Shadow: "
                       "Cp 0.", default=d_choice(TW_EXPANSION, 0)),
             InputSpec("Separated Faces", "choice", "With Prandtl-Meyer, faces turned more than 30 degrees away blend "
                       "(by 60 degrees) to a separated-flow pressure. Freestream: Cp 0, so a flat base adds no base "
                       "drag. Gabeaud Base Pressure: Cp = -1/M^2 (base drag).", default=d_choice(TW_SEPARATED, 0)))
+    specs += (pb.export_input(pb.EXPORT_DOC + " The points are the Mesh's face centroids."),)
     specs += _range_inputs(1.0 if not wedge else 1.0001) + run_inputs("tangent_wedge_mesh" if wedge else "newtonian_mesh")
     g = Graph()
     k = Kit(g)
@@ -299,31 +310,38 @@ def _mesh_block(method):
                                           faces_csv, '"']))
         rc = k.run_command(command, temp, inp("Timeout"), name="List Mesh Faces")
         ok = k.check(rc, "Listing the mesh faces", name="Check Faces")
-        g.comment("**2. The Body at the faces.** nTop evaluates the Body's gradient (its normal) and the Cp Max Field "
-                  "at every face centroid and exports them as point maps (`<Case Name>.ntvsp.mesh_gradient.csv`, "
-                  "`<Case Name>.ntvsp.mesh_cp_max.csv`), in the faces' order.")
+        g.comment("**2. The Body at the faces.** nTop evaluates the Body's gradient (its normal) at every face "
+                  "centroid and exports it (`<Case Name>.ntvsp.mesh_gradient.csv`), in the faces' order. With "
+                  "Stagnation Pressure User Defined it exports the Cp Max Field there too "
+                  "(`<Case Name>.ntvsp.mesh_cp_max.csv`; otherwise the path list is empty and nothing is written).")
         faces = g.block("import_real_point_map<file_path,unit_length_enum,real_field>", "real_point_map",
                         [k.wait(ok, faces_csv), g.unit_length("mm"), o.field("1")], "Mesh Faces")
         points = Ref(faces, ("points",))
-        cp_max = g.block("evaluate_field<real_field,list<point>>", "list<real>", [inp("Cp Max Field"), points],
-                         "Cp Max at Faces")
         gradient = g.block("evaluate_field_gradient<real_field,list<point>>", "list<vector>", [inp("Body"), points],
                            "Body Gradient at Faces")
         gmap = g.block("point_map<list<point>,list<vector>>", "vector_point_map", [points, gradient], top=False)
+        user = o.select(inp("Stagnation Pressure"), [o.real(0.0), o.real(0.0), o.real(1.0)])
+        cp_max_path = g.block("core.list<text>", "list<text>", [k.cat([ready, ".ntvsp.mesh_cp_max.csv"])], top=False)
+        cp_max_paths = k.keep(cp_max_path, g.block("core.list<real>", "list<real>", [user], top=False), "==",
+                              g.real(1.0))
+        cp_max = g.block("evaluate_field<real_field,list<point>>", "list<real>", [inp("Cp Max Field"), points],
+                         "Cp Max at Faces")
         cmap = g.block("point_map<list<point>,list<real>>", "real_point_map", [points, cp_max], top=False)
         written = [g.block("export_point_map<file_path,vector_point_map,unit_length_enum>", "point_map_file",
                            [k.cat([ready, ".ntvsp.mesh_gradient.csv"]), gmap, g.unit_length("mm")], "Export Gradient"),
-                   g.block("export_point_map<file_path,real_point_map,unit_length_enum>", "point_map_file",
-                           [k.cat([ready, ".ntvsp.mesh_cp_max.csv"]), cmap, g.unit_length("mm")], "Export Cp Max")]
+                   g.block("export_point_map<file_path,real_point_map,unit_length_enum>", "list<point_map_file>",
+                           [cp_max_paths, cmap, g.unit_length("mm")], "Export Cp Max (User Defined only)")]
         return written
 
     aft, up = inp("Aft Axis"), inp("Up Axis")
     lines = [k.line("flight", inp("Flight Condition")),
              k.line("mach_min", k.num(inp("Mach Min"))), k.line("mach_max", k.num(inp("Mach Max"))),
              k.line("stagnation", k.pick(inp("Stagnation Pressure"), MESH_CP_MAX_KEYS)),
-             k.line("method", k.t(method))]
+             k.line("method", k.t(method)),
+             k.line("export_pressure", k.pick(inp("Export Pressures"), pb.EXPORT_KEYS))]
     if wedge:
-        lines += [k.line("expansion", k.pick(inp("Expansion"), TW_EXPANSION_KEYS)),
+        lines += [k.line("impact", k.pick(inp("Impact Method"), TW_IMPACT_KEYS)),
+                  k.line("expansion", k.pick(inp("Expansion"), TW_EXPANSION_KEYS)),
                   k.line("separated", k.pick(inp("Separated Faces"), TW_SEPARATED_KEYS))]
     lines += [k.line(f"aft_{c}", k.num(_prop(aft, c))) for c in "xyz"]
     lines += [k.line(f"up_{c}", k.num(_prop(up, c))) for c in "xyz"]
@@ -337,14 +355,13 @@ def _mesh_block(method):
             "tangent_wedge_mesh", "Tangent Wedge on Mesh (VSP)",
             "Local-inclination pressure forces and moments of an implicit body at every supersonic condition of a "
             "Flight Condition, summed over the faces of a mesh of it (as Modified Newtonian on Mesh (VSP)). Each "
-            "face's pressure comes from its impact angle delta (sin delta = -n.V, n the Body's unit gradient at the face centroid): "
-            "windward, the tangent wedge, the exact two-dimensional oblique shock that turns the flow through delta "
-            "(weak solution), Cp = 2/(gamma M^2) (p2/p1 - 1); above the shock-detachment angle Cp rises with sin^2 "
-            "delta from the detachment value to Cp_max at 90 degrees (Stagnation Pressure, or the Cp Max Field). "
-            "Leeward, the Expansion choice. In the linear limit the windward and leeward faces of a thin surface give "
-            "its 4 alpha / beta; unlike Newtonian it holds at moderate hypersonic similarity K = M sin(delta) (thin "
-            "fins, wedges, flat plates), and tends to Newtonian as K grows. Faces are independent (no shock-expansion "
-            "marching, no interference); gamma 1.4. Needs Mach > 1 (Mach Min). " + RANGE_DOC + " Outputs the "
+            "face's pressure comes from its impact angle delta (sin delta = -n.V, n the Body's unit gradient at the "
+            "face centroid): windward, by the Impact Method, the tangent wedge (exact oblique shock, weak solution) or "
+            "the tangent cone (exact Taylor-Maccoll cone); above shock detachment Cp rises with sin^2 delta to Cp_max "
+            "at 90 degrees (Stagnation Pressure, or the Cp Max Field). Leeward, the Expansion choice. Unlike Newtonian "
+            "it holds at moderate hypersonic similarity K = M sin(delta) (thin fins, wedges, plates) and tends to "
+            "Newtonian as K grows. Faces are independent (no shock-expansion marching, no interference); gamma 1.4. "
+            "Needs Mach > 1 (Mach Min). " + RANGE_DOC + " Outputs the "
             "results path for Coefficients Contribution (VSP).", specs, "text", g, out)
     return make_block(
         "modified_newtonian_mesh", "Modified Newtonian on Mesh (VSP)",

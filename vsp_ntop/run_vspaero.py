@@ -12,9 +12,9 @@ Steps (each logged to ``<case>.ntvsp.log``):
 3. ``vspaero.exe`` solves all Mach x alpha x beta x Re_cref combinations in one run.
 4. Convergence check of every case (``convergence``; ``<case>.ntvsp.convergence.csv``): an unconverged case stops
    the run with an error unless ``convergence_check`` is 0 (warn only).
-5. Results for nTop: ``<case>.ntvsp.polar.csv`` (one row per case, with a Converged column), the centre of pressure of each case and the
-   aerodynamic centre of each alpha sweep (``pressure_centers``), per-case surface pressure point maps (on thin
-   components, the pressure jump across the sheet) and the panels' points and areas (``.ntvsp.faces.{1,4}.csv``).
+5. Results for nTop: ``<case>.ntvsp.polar.csv`` (one row per case, with a Converged column), centres of pressure
+   (``pressure_centers``), the panels' points and areas (``.ntvsp.faces.{1,4}.csv``) and, with Export Pressures,
+   surface pressure point maps per flight condition case (``pressure.py``).
 
 Settings (``key = value``; lengths in metres, angles in degrees, SI elsewhere) are listed in the blocks. The flight
 conditions and reference come from ``flight`` (a Flight Condition's results): VSPAERO runs its distinct Mach
@@ -29,6 +29,7 @@ import re
 
 
 from . import adb
+from . import pressure
 from . import vspgeom
 from .common import (openvsp_dir, DriverError, Log, Settings, fmt, main_wrapper, run, run_vspscript, vsp_path,
                      write_csv, write_point_map)
@@ -252,21 +253,16 @@ def clean(name):
     return name.replace("/", "_over_").replace("Re_over_1e6", "Re_1e6")
 
 
-def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, log, flight=None):
-    """Per-case Cp and pressure difference point maps at the panel triangles' centroids and nodes, and the panels'
-    points and areas (``<case>.ntvsp.faces.{1,4}.csv``, thick components only) for the viscous correction.
+PRESSURE_POINTS = ("off", "centroids", "nodes", "both")
 
-    On thin (vortex lattice) components the values are the pressure jump across the sheet: Cp on the side the
-    panel normals point to minus Cp on the other side."""
+
+def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, log, flight=None):
+    """The panels' points and areas (``<case>.ntvsp.faces.{1,4}.csv``, thick components only) for the viscous
+    correction, and, with ``export_pressure`` (off, centroids, nodes or both), surface pressure point maps per flight
+    condition case (``pressure.py``): p = p_inf + q Cp on thick components; on thin (vortex lattice) components only
+    the jump across the sheet, q (Cp on the side the panel normals point to - Cp on the other side). Node values are
+    area-weighted averages of the panels of the same kind around each node."""
     tris = vspgeom.level0(g)
-    cases = adb.read_cases(os.path.join(work, case + ".adb.cases"))
-    try:
-        blocks, n_tri = adb.read_cp(os.path.join(work, case + ".adb"), cases, len(tris))
-        err = adb.check_against_tecplot(blocks, os.path.join(work, case + ".tec.dat"))
-    except ValueError as e:
-        raise DriverError(f"surface pressures: {e}")
-    log(f"surface pressures: {len(cases)} conditions, {n_tri} loops with the wakes (check against Tecplot output: "
-        f"{err:.1e})")
     thin = vspgeom.thin_parts(os.path.join(work, case + ".vkey"))
     faces = [t for t, _ in tris]
     is_thin = [g.parts[i] in thin for _, i in tris]
@@ -292,32 +288,68 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, l
     if one_pts:
         write_point_map(os.path.join(work, case + ".ntvsp.faces.1.csv"), one_pts, one_areas)
         write_point_map(os.path.join(work, case + ".ntvsp.faces.4.csv"), four_pts, four_areas)
-    used = sorted({i for f in faces for i in f})
+    mode = s.text("export_pressure", "off").strip().lower()
+    if mode not in PRESSURE_POINTS:
+        raise DriverError(f"export_pressure = {mode}: expected one of {', '.join(PRESSURE_POINTS)}")
+    base = os.path.join(work, case)
+    removed = pressure.clear(base)
+    if mode == "off":
+        if removed:
+            log(f"removed {removed} pressure files of an earlier run (Export Pressures is off)")
+        return
+    if flight is None:
+        raise DriverError("pressure export needs the flight condition")
+    cases = adb.read_cases(os.path.join(work, case + ".adb.cases"))
+    try:
+        blocks, n_tri = adb.read_cp(os.path.join(work, case + ".adb"), cases, len(tris))
+        err = adb.check_against_tecplot(blocks, os.path.join(work, case + ".tec.dat"))
+    except ValueError as e:
+        raise DriverError(f"surface pressures: {e}")
+    log(f"surface pressures: {len(cases)} conditions, {n_tri} loops with the wakes (check against Tecplot output: "
+        f"{err:.1e})")
     i_mach, i_aoa, i_beta = header.index("Mach"), header.index("AoA"), header.index("Beta")
     i_re = header.index("Re/1e6")
-    for row_number, row in enumerate(data, start=1):
-        point = flight.point_at(row[i_mach], row[i_re] * 1e6) if flight else None
-        q = point["Dynamic_Pressure"] if point else 0.5 * s.real("rho") * s.real("vinf") ** 2
+    kinds = {"pressure": [k for k in range(nf) if not is_thin[k]], "pressure_jump": [k for k in range(nf) if is_thin[k]]}
+    nodes = {kind: sorted({i for k in sel for i in faces[k]}) for kind, sel in kinds.items()}
+
+    def solution(row):
         # VSPAERO solves Mach 0 as Mach 0.001 and lists it so in .adb.cases; the case list has 7 decimals.
         cond = (max(row[i_mach], 0.001), row[i_aoa], row[i_beta])
         match = [k for k, c in enumerate(cases) if all(abs(a - b) < 1e-5 for a, b in zip(c, cond))]
         if not match:
-            raise DriverError(f"case {row_number}: no surface solution for Mach {cond[0]}, alpha {cond[1]}, beta {cond[2]}")
-        cp = blocks[match[0]][:nf]
-        node_sum, node_w = {}, {}
-        for f, a, v in zip(faces, areas, cp):
-            for i in f:
-                node_sum[i] = node_sum.get(i, 0.0) + a * v
-                node_w[i] = node_w.get(i, 0.0) + a
-        node_cp = [node_sum[i] / node_w[i] for i in used]
-        node_pts = [g.nodes[i] for i in used]
-        for quantity, scale in (("cp", 1.0), ("dp", q)):
-            write_point_map(os.path.join(work, f"{case}.ntvsp.{quantity}.centroids.{row_number}.csv"), centroids,
-                            [v * scale for v in cp])
-            write_point_map(os.path.join(work, f"{case}.ntvsp.{quantity}.nodes.{row_number}.csv"), node_pts,
-                            [v * scale for v in node_cp])
-            write_point_map(os.path.join(work, f"{case}.ntvsp.{quantity}.both.{row_number}.csv"), centroids + node_pts,
-                            [v * scale for v in cp] + [v * scale for v in node_cp])
+            raise DriverError(f"no surface solution for Mach {cond[0]}, alpha {cond[1]}, beta {cond[2]}")
+        return blocks[match[0]][:nf]
+
+    written = []
+    for fc in flight.conditions:
+        rows = [r for r in data if abs(r[i_mach] - fc["Mach"]) < 1e-6 and abs(r[i_aoa] - fc["AoA"]) < 1e-6
+                and abs(r[i_beta] - fc["Beta"]) < 1e-6]
+        if not rows:
+            continue  # outside the Mach numbers this run solved (Mach Min / Mach Max)
+        row = min(rows, key=lambda r: abs(math.log(max(r[i_re] * 1e6, 1.0)) - math.log(max(fc["Re_cref"], 1.0))))
+        cp = solution(row)
+        q, p_inf = fc["Dynamic_Pressure"], fc["Pressure"]
+        for kind, sel in kinds.items():
+            if not sel:
+                continue
+            offset = p_inf if kind == "pressure" else 0.0  # the jump is q Delta Cp: no freestream pressure in it
+            pts, vals = [], []
+            if mode in ("centroids", "both"):
+                pts += [centroids[k] for k in sel]
+                vals += [offset + q * cp[k] for k in sel]
+            if mode in ("nodes", "both"):
+                node_sum, node_w = {}, {}
+                for k in sel:
+                    for i in faces[k]:
+                        node_sum[i] = node_sum.get(i, 0.0) + areas[k] * cp[k]
+                        node_w[i] = node_w.get(i, 0.0) + areas[k]
+                pts += [g.nodes[i] for i in nodes[kind]]
+                vals += [offset + q * node_sum[i] / node_w[i] for i in nodes[kind]]
+            pressure.write(base, fc["Case"], pts, vals, kind)
+        written.append(int(fc["Case"]))
+    which = " and ".join(k for k, sel in kinds.items() if sel)
+    where = {"centroids": "centroids", "nodes": "nodes", "both": "centroids and nodes"}[mode]
+    log(f"{which} (Pa) at the panels' {where} of flight condition cases {', '.join(map(str, written))}")
 
 
 def pressure_centers(work, case, header, data, s: Settings, log):

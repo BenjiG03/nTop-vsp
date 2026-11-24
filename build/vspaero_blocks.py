@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from ntopfile import Graph, InputSpec
 
+import pressure_blocks as pb
 from kit import (default_text, LENGTH, F_choice, F_int, F_length, F_real, F_switch, Kit, analysis, d_choice, d_int,
                  d_text, make_block, model_inputs, run_inputs)
 
@@ -82,6 +83,15 @@ def solver_block():
 
 # --- Analysis --------------------------------------------------------------------------------------------------------
 
+PRESSURE_EXPORT = ("Off", "Panel centroids", "Nodes", "Centroids and nodes")
+PRESSURE_EXPORT_KEYS = ("off", "centroids", "nodes", "both")
+PRESSURE_EXPORT_DOC = (
+    "Off: no pressure files. Otherwise, per flight condition case, at the chosen points: Thick-set components' "
+    "static pressure p = p_inf + q Cp (Pa) for **Surface Pressure (VSP)**, Thin-set components' jump q Delta Cp (Pa) "
+    "for **Surface Pressure Jump (VSP)**. Centroids carry VSPAERO's own values, nodes area-weighted averages. Each "
+    "run first removes the pressure files of an earlier run.")
+
+
 def analysis_block(solver=SOLVER_FIELDS):
     own = (
         InputSpec("OpenVSP Model", "text", "Output of OpenVSP Model (VSP): the model whose Thick set VSPAERO solves "
@@ -96,6 +106,7 @@ def analysis_block(solver=SOLVER_FIELDS):
         InputSpec("Solver Settings", "text", "From VSPAERO Solver Settings (VSP).", default=d_text(default_text(solver))),
         InputSpec("Body Wakes", "choice", "OpenVSP's FindBodyWakesFlag: also shed wakes from the bases of thick "
                   "fuselages. Wing trailing edges always shed wakes.", default=d_choice(("Off", "On"))),
+        pb.export_input(PRESSURE_EXPORT_DOC, PRESSURE_EXPORT),
     )
     specs = own + run_inputs("vspaero")
     g = Graph()
@@ -113,6 +124,7 @@ def analysis_block(solver=SOLVER_FIELDS):
         k.line("mach_min", k.num(inp("Mach Min"))),
         k.line("mach_max", k.num(inp("Mach Max"))),
         k.line("find_body_wakes", k.pick(inp("Body Wakes"), ("0", "1"))),
+        k.line("export_pressure", k.pick(inp("Export Pressures"), PRESSURE_EXPORT_KEYS)),
         k.cat(["\n", inp("Solver Settings"), "\n"]),
     ]
     out = analysis(g, k, inp, "run_vspaero", lambda base: [], lines, "VSPAERO")
@@ -171,42 +183,6 @@ def coefficient_block():
     return make_block("vspaero_coefficient", "VSPAERO Coefficient (VSP)",
                       "One force or moment coefficient (or a case condition) of every case of a VSPAERO run, as a list "
                       "in case order.", specs, "list<real>", g, out)
-
-
-SURFACE_QUANTITIES = ("Pressure coefficient Cp", "Pressure difference p - p_inf")
-SURFACE_POINTS = ("Panel centroids", "Nodes", "Centroids and nodes")
-
-
-def surface_block():
-    specs = (
-        InputSpec("Results", "text", "Output of VSPAERO Analysis (VSP)."),
-        InputSpec("Case Number", "integer", "Case, counted from 1 in the order of VSPAERO Coefficient's lists.",
-                  default=d_int(1)),
-        InputSpec("Quantity", "choice", "Cp, or p - p_inf = 0.5 Rho Vinf^2 Cp in pascals (Flow Condition's velocity and "
-                  "density). On Thin-set components: the jump across the sheet instead, Cp on the side the panel "
-                  "normals point to minus Cp on the other side, or the same jump in pascals.",
-                  default=d_choice(SURFACE_QUANTITIES)),
-        InputSpec("Sample Points", "choice", "Panel centroids carry VSPAERO's own values; node values are area-weighted "
-                  "averages of the panels around each node; both together give the densest colouring.",
-                  default=d_choice(SURFACE_POINTS, 2)),
-    )
-    g = Graph()
-    k = Kit(g)
-    inp = model_inputs(specs)
-    g.comment("**Surface pressure as a Scalar Point Map.** The driver reads every case's panel pressures from "
-              "VSPAERO's `.adb` file and writes them as `x, y, z, value` files (metres). This block picks the file "
-              "for the case, quantity and sample points and imports it. Show the point map to see the contours; "
-              "Field from Point Map turns it into a field.")
-    qty = k.pick(inp("Quantity"), ("cp", "dp"))
-    pts = k.pick(inp("Sample Points"), ("centroids", "nodes", "both"))
-    path = k.cat([inp("Results"), ".ntvsp.", qty, ".", pts, ".", k.num(inp("Case Number")), ".csv"], name="Point Map File")
-    scale = g.leaf("real_field", {"expression": "1", "units": {}})
-    out = g.block("import_real_point_map<file_path,unit_length_enum,real_field>", "real_point_map",
-                  [path, g.unit_length("m"), scale], "Surface Pressure")
-    return make_block("vspaero_surface", "VSPAERO Surface Pressure (VSP)",
-                      "Surface pressure of one VSPAERO case as a **Scalar Point Map** for contour plots in nTop: Cp or "
-                      "p - p_inf (Pa), at panel centroids, nodes, or both. On Thin-set components these are the "
-                      "pressure jump across the sheet.", specs, "real_point_map", g, out)
 
 
 FACE_POINTS = ("4 per face (each face split in four)", "1 per face (face centroids)")

@@ -209,6 +209,114 @@ def _input_section(name, spec: InputSpec, block_key, index) -> nc.Section:
                    graph.leaves)
 
 
+# nTop's own output types of blocks the builders annotate loosely: a variable checks its block's type, a plain block
+# does not (Export Text's output is a Text File, "text_file", not a path).
+OUTPUT_TYPES = {"export_text": "text_file"}
+LIST_PROPERTIES = {"points", "values"}  # properties that are lists (of a point map)
+
+
+def _params(func):
+    """Parameter types of a block function from its signature, ``name<a,b<c,d>,e>[version]``."""
+    if "<" not in func:
+        return []
+    inner = func[func.index("<") + 1:func.rindex(">")]
+    out, depth, cur = [], 0, ""
+    for ch in inner:
+        if ch == "," and depth == 0:
+            out.append(cur)
+            cur = ""
+            continue
+        depth += ch == "<"
+        depth -= ch == ">"
+        cur += ch
+    return out + ([cur] if cur else [])
+
+
+def _takes_list(param):
+    return param.startswith("list") or param in ("any", "list_interface")
+
+
+def list_outputs(code, input_types):
+    """Ids of the instances whose value is a list in a custom block's graph, by nTop's list processing: a block
+    whose input takes one value but is given a list runs once per item. ``input_types``: the block's input types."""
+    by_id = {inst["id"]: inst for inst in code}
+    known = {}
+
+    def is_list(conn):
+        if conn["modelInputIdx"] >= 0:
+            base = input_types[conn["modelInputIdx"]].startswith("list<")
+            chain = conn["propchain"]
+            return base and not (chain and chain[-1] == "size") or bool(set(chain) & LIST_PROPERTIES)
+        target = conn["instanceId"]
+        if target not in by_id:
+            return False
+        if set(conn["propchain"]) & LIST_PROPERTIES:
+            return True
+        if conn["propchain"] and conn["propchain"][-1] == "size":
+            return False
+        return value_is_list(target)
+
+    def value_is_list(iid):
+        if iid in known:
+            return known[iid]
+        known[iid] = False  # no cycles in a graph; guards recursion
+        inst = by_id[iid]
+        if not inst["func"]:
+            result = inst["type"].startswith("list<")
+        elif inst["func"].startswith(("core.var<", "await<")):
+            result = is_list(inst["inputs"][-1])  # a variable or an Await passes its (last) input through
+        elif inst["type"].startswith("list<") or inst["func"].startswith("core.group<"):
+            result = inst["type"].startswith("list<")
+        else:
+            params = _params(inst["func"])
+            result = any(is_list(c) and not _takes_list(p) for c, p in zip(inst["inputs"], params))
+        known[iid] = result
+        return result
+
+    return {iid for iid in by_id if value_is_list(iid)}
+
+
+def as_variables(top, code, output, input_types=()):
+    """Every top-level block of a custom block's graph made a variable, as nTop shows them: each is wrapped in a
+    ``core.var<type>`` that takes the block's name and its place at the top level, the block moves inside it, and
+    every connection to the block (properties included) and the block's output go through the variable. A block run
+    once per item of a list (``list_outputs``) gets a ``list<type>`` variable. Variables and floating comments stay
+    as they are. Returns (top, code, output) without changing the graph."""
+    code = [dict(inst, type=OUTPUT_TYPES.get(inst["func"].split("<")[0], inst["type"])) if inst["func"] else inst
+            for inst in code]
+    by_id = {inst["id"]: inst for inst in code}
+    targets = [t for t in top if not by_id[t].get("isFloatingComment") and not by_id[t]["func"].startswith("core.var<")]
+    if not targets:
+        return list(top), list(code), output
+    lists = list_outputs(code, list(input_types))
+    next_id = max(by_id) + 1
+    var_of, variables = {}, []
+    for t in targets:
+        block = by_id[t]
+        typ = block["type"]
+        if t in lists and not typ.startswith("list<"):
+            typ = f"list<{typ}>"
+        var_of[t] = next_id
+        var = _instance(next_id, f"core.var<{typ}>", typ, [Ref(t)], block["name"], units=block.get("units") or None)
+        variables.append(var)
+        next_id += 1
+    new_code = []
+    for inst in code:
+        inst = dict(inst)
+        if inst["id"] in var_of:
+            inst["name"] = f"{inst['name']} (block)"
+        inputs = []
+        for conn in inst["inputs"]:
+            if conn["instanceId"] in var_of:
+                conn = dict(conn, instanceId=var_of[conn["instanceId"]])
+            inputs.append(conn)
+        inst["inputs"] = inputs
+        new_code.append(inst)
+        if inst["id"] in var_of:  # the variable right after its block
+            new_code.append(variables[targets.index(inst["id"])])
+    return [var_of.get(t, t) for t in top], new_code, var_of.get(output, output)
+
+
 @dataclass(frozen=True)
 class CustomBlock:
     """A complete custom block, ready to save alone or embed in a notebook."""
@@ -240,12 +348,13 @@ class CustomBlock:
             for s in self.inputs
         ]
         definition = _definition(self.display, self.description, self.signature, inputs, self.output_type, self.side_effects)
+        top, code, output = as_variables(self.graph.top, self.graph.code, self.output, [s.typ for s in self.inputs])
         return {
-            "code": [_root(self.graph.top)] + self.graph.code,
+            "code": [_root(top)] + code,
             "def": definition,
             "dependencies": list(self.dependencies),
             "fninf": None,
-            "output": self.output,
+            "output": output,
         }
 
     def sections(self, prefix="") -> list:

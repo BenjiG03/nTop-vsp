@@ -16,3 +16,7 @@ packages = ["vsp_ntop"]
 
 [tool.setuptools.package-data]
 vsp_ntop = ["rasaero_ui/*.cs", "rasaero_ui/*.ps1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["e2e: runs nTop blocks through ntopcl (needs nTop, signed in)"]

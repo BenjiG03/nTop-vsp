@@ -21,6 +21,7 @@ import buildup_blocks as b  # noqa: E402
 import cad_blocks as c  # noqa: E402
 import drag_blocks as d  # noqa: E402
 import model_blocks as m  # noqa: E402
+import pressure_blocks as pb  # noqa: E402
 import vspaero_blocks as v  # noqa: E402
 from ntopfile import save_block  # noqa: E402
 
@@ -42,7 +43,6 @@ def blocks():
         ("VSPAERO Solver Settings (VSP)", v.solver_block()),
         ("VSPAERO Analysis (VSP)", v.analysis_block()),
         ("VSPAERO Coefficient (VSP)", v.coefficient_block()),
-        ("VSPAERO Surface Pressure (VSP)", v.surface_block()),
         ("Wave Drag (VSP)", d.wave_block()),
         ("Wave Drag Result (VSP)", d.wave_result_block()),
         ("Wave Drag Area Distribution (VSP)", d.wave_areas_block()),
@@ -56,6 +56,8 @@ def blocks():
         ("Modified Newtonian on Mesh (VSP)", a.newtonian_mesh_block()),
         ("Tangent Wedge on Mesh (VSP)", a.tangent_wedge_mesh_block()),
         ("Modified Newtonian Pressure (VSP)", a.newtonian_pressure_block()),
+        ("Surface Pressure (VSP)", pb.surface_pressure_block()),
+        ("Surface Pressure Jump (VSP)", pb.surface_pressure_jump_block()),
         ("Viscous Correction (VSP)", a.viscous_block()),
         ("Aero Coefficients (VSP)", a.coefficients_block()),
         ("Aero Contribution (VSP)", base),

@@ -7,9 +7,9 @@ sideslips, and the reference area, span, chord and moment point): OpenVSP 3.56's
 **Viscous Correction** (skin friction). **Aero Database (VSP)** sums any mix of them, each over its own Mach range,
 into a **six-degree-of-freedom aero database** (CL, CD, CY, Cl, Cm, Cn against Mach, altitude, alpha and beta);
 **Center of Pressure (VSP)** gives its centers of pressure and aerodynamic centers as positions, and **Polar Plot
-(VSP)** plots it with matplotlib. Because the geometry stays parametric in nTop, its
-inputs can be independent variables of the database too: `examples/x59_doe.py` runs a design of experiments over
-the wing span and sweep of an X-59-style aircraft.
+(VSP)** plots it with matplotlib. Because the geometry stays parametric in nTop, its inputs can be independent
+variables of the database too: `examples/x59_doe.py` runs a design of experiments over the wing span and sweep of an
+X-59-style aircraft.
 
 Test geometry: the X-59 hackathon starter in `../x59-hackathon-starter` (MIT License, Copyright (c) 2026
 matthewmuellernTop; notice in `examples/X-59_STARTER_LICENSE.txt`), a parametric nTop model whose fuselage, wing,
@@ -54,10 +54,10 @@ with Export Text.
   from Mach 2.5 and the Viscous Correction in place of Parasite Drag, on three flight points at three altitudes.
 * `vsp_ntop/` — the drivers, an installable package (`pyproject.toml`; Python 3.8+; `ambiance` for the standard
   atmosphere, matplotlib for the plots): `run_flight.py` and `flight.py` (the flight condition), `run_model.py` with
-  `slices.py` (contour reader),
-  `fit.py` (section fitting) and `vspmodel.py` (OpenVSP script and `.vsp3` writing); `run_vspaero.py`,
-  `run_wave.py`, `run_parasite.py`, `run_database.py` (the buildup), `run_plot.py`; `vspgeom.py` and `adb.py` read VSPAERO's panel file and
-  binary results.
+  `slices.py` (contour reader), `fit.py` (section fitting) and `vspmodel.py` (OpenVSP script and `.vsp3` writing);
+  `run_vspaero.py`, `run_wave.py`, `run_parasite.py`, `run_database.py` (the buildup), `run_plot.py`;
+  `run_newtonian_mesh.py` with `local_methods.py` (the on-mesh blocks); `pressure.py` (pressure point maps);
+  `vspgeom.py` and `adb.py` read VSPAERO's panel file and binary results.
 * `build/` — writes the blocks and the examples (`build_blocks.py` with `model_blocks.py`, `aero_blocks.py` (flight
   condition, Newtonian, viscous, coefficients), `vspaero_blocks.py`, `drag_blocks.py`, `buildup_blocks.py`;
   `newtonian.py`, `viscous.py` and `ops.py` are the Modified Newtonian and skin-friction block graphs, brought over
@@ -89,8 +89,7 @@ The blocks read both with nTop's **Get Environment Variable** block, so they hav
 inputs; a missing variable stops the notebook with nTop's "Environment variable ... is not set". The only path
 input left is each driver block's **Working Directory**, empty by default: then the files go to a folder `ntop_vsp`
 in the system temporary folder (%TEMP%). Modified Newtonian, Viscous Correction and Aero Coefficients write next to
-their Flight Condition's files. nTop asks once to trust Run Command
-blocks.
+their Flight Condition's files. nTop asks once to trust Run Command blocks.
 
 ## Blocks
 
@@ -106,9 +105,8 @@ blocks.
 | Lofted CAD Export (VSP) | file path | bodies (from OpenVSP Fuselage blocks) as STEP solids fitted straight to their nTop slices, without OpenVSP's skinning: smoother and closer than OpenVSP's export on non-round bodies; sharp chines kept |
 | Flight Condition (VSP) | results path | Mach numbers paired with altitudes (US Standard Atmosphere 1976), angles of attack, sideslips; reference area, span, chord, moment point |
 | VSPAERO Solver Settings (VSP) | text | threads, wake model and nodes, far field, ground effect, freezing, implicit wake, convergence factors, preconditioners, quad tree, restart file, convergence check |
-| VSPAERO Analysis (VSP) | results path | model, flight condition, Mach range, body wakes, solver settings |
+| VSPAERO Analysis (VSP) | results path | model, flight condition, Mach range, body wakes, solver settings, pressure export |
 | VSPAERO Coefficient (VSP) | list of reals | any column of VSPAERO's polar, one value per case |
-| VSPAERO Surface Pressure (VSP) | Scalar Point Map | Cp or p - p_inf of one case at panel centroids, nodes or both (thin surfaces: the jump across the sheet) |
 | Wave Drag (VSP) | results path | model, flight condition (its supersonic Mach numbers), slices, rotation sections, symmetry, geometry set |
 | Wave Drag Result (VSP) | list of reals | CD_wave (or Mach, counts, Sref), one value per Mach number |
 | Wave Drag Area Distribution (VSP) | list of reals | x/L or slice areas of one rotation section at one Mach number |
@@ -120,8 +118,10 @@ blocks.
 | RASAero II (VSP) | results path | RASAero II run on a rocket's OpenVSP model (design fitted to its surfaces) at every condition, as a coefficient table |
 | Modified Newtonian (VSP) | results path | an implicit body's Modified Newtonian forces and moments at every condition of a flight condition in a Mach range, computed in nTop |
 | Modified Newtonian on Mesh (VSP) | results path | the same Modified Newtonian pressure on the implicit body, with the force and moment integrals summed over nTop's mesh of it (much faster) |
-| Tangent Wedge on Mesh (VSP) | results path | local-inclination pressure on the same mesh pipeline: exact oblique shock (tangent wedge) windward, Prandtl-Meyer or Newtonian shadow leeward; for thin surfaces (fins, wings) at supersonic speed |
-| Modified Newtonian Pressure (VSP) | scalar field | the Modified Newtonian Cp of one condition, to view on the body |
+| Tangent Wedge on Mesh (VSP) | results path | local-inclination pressure on the same mesh pipeline: exact oblique shock (tangent wedge) or exact cone (tangent cone) windward, Prandtl-Meyer or Newtonian shadow leeward; supersonic |
+| Modified Newtonian Pressure (VSP) | scalar field | the Modified Newtonian static pressure (Pa) of one flight condition case, to view on the body |
+| Surface Pressure (VSP) | Scalar Point Map | static pressure (Pa) of one flight condition case of VSPAERO, Modified Newtonian on Mesh or Tangent Wedge on Mesh run with Export Pressures |
+| Surface Pressure Jump (VSP) | Scalar Point Map | the pressure jump across VSPAERO's thin surfaces for one case, plus a required Reference Pressure (Pa) |
 | Viscous Correction (VSP) | results path | an implicit body's skin-friction forces and moments at every condition (standard-atmosphere edge state), computed in nTop |
 | Aero Coefficients (VSP) | results path | six lists of coefficients from anywhere, one value per flight condition, as a coefficient table |
 | Aero Contribution (VSP) | text | the common contribution block: source, results, name, terms, use, Mach range, scale, all with defaults; the blocks below wrap it |
@@ -171,16 +171,15 @@ Ends:
   with a flat cap.
 
 Skinning angles are set explicitly at every section and side, from the body's own slopes in the nTop slices around it.
-Left free, OpenVSP put back its default fixed angles (45° at the first section, 0 between, −45° at the last), which
-flared every blunt end out by about a tenth of its radius and bent pointed noses. Each side keeps its own angle:
-OpenVSP's AllSym ("all sides like the top"), on until 2026-11-20, made the right, bottom and left sides copy the top's
-slope. On a body whose sides have different slopes (`validation/fuselage_sides`: elliptic sections, rounded in plan,
-conical in side view, a drooped nose and a top-only boattail; exact surface from an nTop field expression) the
-independent sides cut the error against the exact surface from 0.210 to 0.066 mm mean (0.80 to 0.37 mm largest) on
-the boattail, 0.025 to 0.009 mm along the middle and 0.129 to 0.086 mm on the nose. Round bodies are unchanged
-(`validation/fuselage_ends`).
+Left free, OpenVSP puts back its default fixed angles (45° at the first section, 0 between, −45° at the last), which
+flare every blunt end out by about a tenth of its radius and bend pointed noses. Each side keeps its own angle
+(OpenVSP's AllSym, "all sides like the top", is off). On a body whose sides have different slopes
+(`validation/fuselage_sides`: elliptic sections, a drooped nose, a top-only boattail) that cuts the error against the
+exact surface from 0.210 to 0.066 mm mean (0.80 to 0.37 mm largest) on the boattail, 0.025 to 0.009 mm along the
+middle and 0.129 to 0.086 mm on the nose.
 
-On test bodies of revolution (`validation/fuselage_ends`, 6 mm slices), the OpenVSP radius against the exact one:
+On test bodies of revolution (`validation/fuselage_ends`, 6 mm slices), the OpenVSP radius against the exact one,
+before and after the end placement and skinning angles above:
 
 | Body | Before | After |
 |---|---|---|
@@ -189,10 +188,9 @@ On test bodies of revolution (`validation/fuselage_ends`, 6 mm slices), the Open
 | hemisphere nose, flat base | −5.6 mm (a conical tip) | 0.5 mm past the first 1.5 mm (tip 0.8 mm aft) |
 | flat nose, conical boattail to a smaller base | +2.4 mm | 0.17 mm |
 
-The model check no longer measures end-cap points against the section outlines, which read as up to a radius of
-error (27 mm on the rocket, now 0.59 mm largest). Building 30 such sections through OpenVSP's API takes 51 s, because every change rebuilds the
-whole surface; the driver therefore makes the fuselage with the right number of sections by script and writes each
-section's points, size and position straight into the `.vsp3` XML (2 s).
+The model check leaves out end-cap points, which would read as up to a radius of error against the section outlines.
+Building 30 sections through OpenVSP's API takes 51 s, because every change rebuilds the whole surface; the driver
+instead writes each section's points, size and position straight into the `.vsp3` XML (2 s).
 
 **Wing fit** (`fit.fit_wing`). At every slice the chord line runs from the leading edge (the point farthest from
 the trailing edge) to the trailing edge (the mid-point of the base for a blunt one); that gives the leading-edge
@@ -445,11 +443,10 @@ Marquardt on the angles: 9 minutes for the nose alone, rms slope error 1.38 to 1
 - **Surface.** One bicubic B-spline surface through every slice (about 400 at Slice Spacing 0.0025), least squares
   with a light curvature penalty. Around the body it is periodic, Points Around (48) control points. Each contour is
   split where it crosses the horizontal and vertical lines through its centre (right, bottom, left, top), and each
-  quarter is sampled evenly by arc length. Splitting at the widest point instead (as OpenVSP Model's sections do) made
-  the seams between faces wander on the flat sides of the blob body (0.22 mm rms, visibly wavy in nTop); the
-  centre-line crossings move smoothly (0.055 mm, the same as its top and bottom seams). Along the body its parameter is the distance travelled by the sections' centres and equivalent radii,
-  so a rounded nose that closes up at almost constant x is still followed. There is one control row per two slices
-  (Slices per Control Point).
+  quarter is sampled evenly by arc length (splitting at the widest point made the seams wander on flat sides, visibly
+  wavy in nTop). Along the body its parameter is the distance travelled by the sections' centres and equivalent
+  radii, so a rounded nose that closes up at almost constant x is still followed. There is one control row per two
+  slices (Slices per Control Point).
 - **Ends.** A pointed end is a pole (the first row of control points is the tip). A blunt end carries the last slice
   out to the end plane (placed as OpenVSP Model places it) and is closed by a flat face.
 - **Sharp edges.** Where the contours turn a corner at the sides, top or bottom (more than 30 degrees, median over
@@ -458,8 +455,8 @@ Marquardt on the angles: 9 minutes for the nose alone, rms slope error 1.38 to 1
 - **CAD.** The periodic surface is cut exactly (knot insertion) into clamped patches: four at the split points, or
   Faces Around 8, 12, 16 ... (each quarter cut evenly; a multiple of 4 dividing Points Around). Each is a B-spline
   face; neighbours share their edge curves exactly and join as smoothly as the uncut surface. One closed solid per
-  body (the side faces, plus a flat cap per blunt end), all bodies in one STEP file, AP214, millimetres. `docs/STEP_FORMAT.md` walks through the format
-  with records from these files.
+  body (the side faces, plus a flat cap per blunt end), all bodies in one STEP file, AP214, millimetres.
+  `docs/STEP_FORMAT.md` walks through the format with records from these files.
 
 Tests (`validation/loft_cad/test_loft.py`, results in `validation/loft_cad/results.txt`). Each body is one nTop
 expression, also evaluated in numpy as the exact field. The lofted surface and OpenVSP's (24 sections, default
@@ -480,10 +477,9 @@ between 2% and 98% of its length:
   has a slope break) and at its flattened rounded tip (4.7 degrees rms in the first 2%, against OpenVSP's 11).
 
 Every file reads in OpenCASCADE as one closed solid, and the lofted surface's points lie on the CAD faces to 1e-13 mm.
-nTop imports them with no warnings (pointed tips included). CAD Body to Implicit of each sits 0.013 to 0.020 mm mean and at most 0.073 mm from the
-exact surface (OpenVSP's stitched file of the sides body: 0.041 mean, 0.354 max); the same with 16 faces round each
-body. End to end in nTop (two bodies in one
-Fuselage block into the Lofted CAD block): 27 s.
+nTop imports them with no warnings (pointed tips included). CAD Body to Implicit of each sits 0.013 to 0.020 mm mean
+and at most 0.073 mm from the exact surface (OpenVSP's stitched file of the sides body: 0.041 mean, 0.354 max), also
+with 16 faces round each body. End to end in nTop (two bodies in one Fuselage block into the Lofted CAD block): 27 s.
 
 Limits: one closed contour per slice (the largest is used if a slice has several), bodies sliced along x (no wings or
 ducts yet). Only the four split points can hold a sharp edge; an edge elsewhere on the section is rounded over about
@@ -532,12 +528,10 @@ OpenVSP's own default fuselage and wing:
   at 1500 iterations), every force and moment coefficient must be finite, and with a relaxed wake CLtot, CDtot and
   CMytot must change by less than the **Wake Change Tolerance** (10%) over the last wake iteration. By default an
   unconverged case stops the notebook with the reason (**Convergence Check** in Solver Settings can make it a
-  warning). `<case>.ntvsp.convergence.csv` lists every case, and the polar has a `Converged` column. Tried on the
-  53 earlier runs of this project: every run of a converted model whose numbers were sound passes (the X-59 baseline: 60
-  of 60); the failures it reports are the NaN cases above (T-tail crossing, thin fuselage) and relaxed wakes that
-  were still moving 15 to 290% per iteration (thick fuselage with fins, the old mesh-route vortex lattice). Sound
-  relaxed-wake runs moved under 6%. VSPAERO's wake span efficiency `Ew` is infinite in every supersonic case (it
-  computes no wake forces there) and is not checked.
+  warning). `<case>.ntvsp.convergence.csv` lists every case, and the polar has a `Converged` column. On 53 earlier
+  runs, every one whose numbers were sound passes (the X-59 baseline: 60 of 60 cases); it fails the NaN cases above
+  and relaxed wakes still moving 15 to 290% per iteration (sound ones moved under 6%). VSPAERO's wake span efficiency
+  `Ew` is infinite in every supersonic case (it computes no wake forces there) and is not checked.
 
 ## Wave drag: the Mach range it holds over
 
@@ -616,9 +610,9 @@ results against inviscid SU2 at Mach 2 to 5 are:
 - CN within −8% to +4%;
 - the centre of pressure within 4 mm at three of five conditions, and 25 and 38 mm aft at Mach 4 and 5, alpha 4.
 
-OpenVSP's tessellation-based Planar Slice was not usable for S(x): it was 80% off near a nose. OpenVSP's end caps are several rings in
-one plane, sweeping across the cap. A cap at the front counts as a point; one further aft (a flat base) is left out,
-so the body does not seem to shrink before its base.
+OpenVSP's tessellation-based Planar Slice was not usable for S(x): it was 80% off near a nose. OpenVSP's end caps
+are several rings in one plane, sweeping across the cap. A cap at the front counts as a point; one further aft (a
+flat base) is left out, so the body does not seem to shrink before its base.
 
 **Potential Lift: Slender Body (Section Shape)** replaces the area with each section's crossflow apparent mass, which
 is what slender-body theory actually uses:
@@ -662,7 +656,7 @@ for the body.
 ## Modified Newtonian and the viscous correction, in nTop
 
 These two analyses work on the implicit body itself, entirely with nTop blocks (no Run Command, no Python): the
-method of the former `ntop_newtonian` project, now built here (`build/newtonian.py`, `build/viscous.py`) and
+method of the `ntop_newtonian` project, built here (`build/newtonian.py`, `build/viscous.py`) and
 evaluated once per flight condition through nTop's list processing.
 
 * **Modified Newtonian (VSP)**: Cp = Cp_max max(-n.V, 0)^2 with n the unit gradient of the body's field, so any
@@ -671,25 +665,29 @@ evaluated once per flight condition through nTop's list processing.
   (Classical), or **User Defined**: the **Cp Max Field** input, a scalar field, so Cp_max may differ over the body
   (one value on the fins, another on the nose); a constant field is one number everywhere. No self-shadowing: correct
   for convex bodies, a part in another's shadow is over-loaded.
-* **Modified Newtonian on Mesh (VSP)**: the same pressure, on the implicit **Body** (its unit gradient at each face
-  centroid is the surface normal; the same Cp_max choices including the Cp Max Field), integrated over a **Mesh** of it
-  (Mesh from Implicit Body, or a remeshed or imported surface mesh, closed with outward faces) instead of Surface
-  Integrals. The block exports the mesh, the driver `vsp_ntop.run_newtonian_mesh` lists the faces' centroids, nTop
-  evaluates the Body's gradient and the Cp Max Field there (Evaluate Field Gradient, Evaluate Field, Point Map, Export
-  Point Map), and the driver sums -Cp S_f and -Cp (r_f - c) x S_f over the faces (S_f the face's outward vector area) at
-  every condition (numpy). A mesh whose faces point inward overall is turned round. The pressure is the implicit's,
-  the integral the mesh's: the mesh sets only the integrals' accuracy.
-  It writes the same coefficient table. See the run time and accuracy below.
-* **Tangent Wedge on Mesh (VSP)**: the same pipeline (the Body's normals, the Mesh's integrals) with a local-inclination pressure law
-  (`vsp_ntop/local_methods.py`, after hypanel's `methods.py`). Each face's impact angle is $\delta$, with
-  $\sin\delta=-\hat n\cdot\hat V$ (positive windward). Supersonic only (Mach Min defaults above 1); $\gamma=1.4$.
-  - *Windward:* the exact two-dimensional oblique shock that turns the flow through $\delta$ (the weak solution, from
-    Thompson's closed form of the cubic in $\tan\beta$):
+* **Modified Newtonian on Mesh (VSP)**: the same pressure on the implicit **Body** (its unit gradient at each face
+  centroid is the normal; the same Cp_max choices), integrated over a **Mesh** of it (Mesh from Implicit Body, or a
+  remeshed or imported closed surface mesh) instead of Surface Integrals. The driver `vsp_ntop.run_newtonian_mesh`
+  lists the faces' centroids, nTop evaluates the Body's gradient there (and the Cp Max Field, only when User
+  Defined), and the driver sums -Cp S_f and -Cp (r_f - c) x S_f over the faces (S_f the outward vector area) at every
+  condition. A mesh whose faces point inward overall is turned round. The pressure is the implicit's, the integral
+  the mesh's. The log reports how well the Body's normals agree with the Mesh's faces; under half the area within 25
+  degrees stops the driver, since a Mesh that is not where the Body is (other length units, a moved or scaled body)
+  would otherwise give wrong forces silently. An OpenVSP Model Mesh passes (on the hobby rocket about 16% of its area
+  is off: the fins' extensions, kept as separate shells inside the body) and gives CN within 1 to 4% and CA about 10%
+  of nTop's own mesh. It writes the same coefficient table.
+* **Tangent Wedge on Mesh (VSP)**: the same pipeline (the Body's normals, the Mesh's integrals) with a
+  local-inclination pressure law (`vsp_ntop/local_methods.py`, after hypanel's `methods.py`). Each face's impact
+  angle is $\delta$, with $\sin\delta=-\hat n\cdot\hat V$ (positive windward). Supersonic only (Mach Min defaults above 1); $\gamma=1.4$.
+  - *Windward*, **Impact Method**: **Tangent Wedge**, the exact two-dimensional oblique shock that turns the flow
+    through $\delta$ (the weak solution, from Thompson's closed form of the cubic in $\tan\beta$):
     $$C_p=\frac{2}{\gamma M^2}\left(\frac{p_2}{p_1}-1\right),\qquad
     \frac{p_2}{p_1}=1+\frac{2\gamma}{\gamma+1}\left(M^2\sin^2\beta-1\right)$$
-    Above the detachment angle $\delta_{max}(M)$, where no attached shock exists, $C_p$ rises with $\sin^2\delta$
-    from its detachment value to $C_{p,max}$ at 90° (hypanel's bridge). That is the one use of **Stagnation Pressure**
-    and the **Cp Max Field** here.
+    or **Tangent Cone**, the surface pressure of the exact cone of half angle $\delta$ (Taylor-Maccoll, weak shock;
+    a port of hypanel's `conical`, tabulated once per Mach number and interpolated in $\sqrt{C_p}$), the usual choice
+    for bodies of revolution and noses. Above the detachment angle $\delta_{max}(M)$ (the wedge's or the cone's),
+    $C_p$ rises with $\sin^2\delta$ from its detachment value to $C_{p,max}$ at 90° (hypanel's bridge): the one use of
+    **Stagnation Pressure** and the **Cp Max Field** here.
   - *Leeward*, **Expansion**: **Prandtl-Meyer**, the isentropic expansion from the freestream with
     $\nu(M_2)=\nu(M)+|\delta|$, limited at vacuum; or **Newtonian Shadow**, Cp 0.
   - *Separated faces:* with Prandtl-Meyer, faces turned more than 30° away blend (smoothstep, complete at 60°) to
@@ -699,7 +697,9 @@ evaluated once per flight condition through nTop's list processing.
   Checks:
   - against oblique-shock tables, $p_2/p_1$ to four digits at Mach 2 and 3, and the detachment angles to 0.01°;
   - $\nu(2)=26.380°$;
-  - in the linear limit, windward plus leeward faces of a thin plate give its $4\alpha/\beta$ to 0.5%.
+  - in the linear limit, windward plus leeward faces of a thin plate give its $4\alpha/\beta$ to 0.5%;
+  - tangent cone: the cone table against an independent Taylor-Maccoll integration in $\theta$ (`tests/`) to 1e-6 in
+    Cp, and a 15° cone's axial force at Mach 3 and 8 to 1%; detachment at Mach 2 is 40.7°.
 
   Faces are independent: no shock-expansion marching, no interference between parts.
 
@@ -725,7 +725,8 @@ evaluated once per flight condition through nTop's list processing.
   Eckert's reference temperature (laminar) and White's van Driest II (turbulent), sudden transition at a running-length
   Reynolds number, adiabatic or fixed wall; shear along the surface flow, faded out between 30 and 60 degrees of
   leeward inclination. The freestream pressure and temperature of each condition come from the flight condition.
-* **Modified Newtonian Pressure (VSP)** shows one condition's Cp on the body.
+* **Modified Newtonian Pressure (VSP)** shows one flight condition case's static pressure on the body, p_inf + q Cp in
+  pascals, with p_inf and q at the case's altitude (Case Number as in Surface Pressure (VSP)).
 
 Axes: x along **Aft Axis** (the model's +x), z toward **Up Axis**, y = z x x: CA, CY, CN along them, moments about
 them (the axes of VSPAERO too). Each writes a coefficient table, `<Flight Condition>_<Case Name>.ntvsp.coefficients.csv`,
@@ -735,21 +736,14 @@ data, beside hypanel's implementation, is in `validation/newtonian/REPORT.md`: s
 CA and CN within 0.002 and 0.010 from 0 to 60 degrees, the Apollo capsule's pressures at hypanel's RMS, skin friction
 within 0.5% of hypanel's on a plate and a cone.
 
-On the flight condition, a cone checked against the former single-condition blocks gives the same CA, CN and Cm at
-alpha 0 and within 0.15% at alpha 4 degrees (the Surface Integral's tolerance), and finite, flat-plate-like friction
-at Mach 0.6. Not carried over: the on-mesh viscous blocks (sums over VSPAERO's panel centroids instead of Surface
-Integrals). Evaluating a list of fields at a list of points makes a list of lists, which nTop does not allow, so they
-cannot run over a flight condition.
-
 **Run time.** Each condition costs six Surface Integrals for each of Newtonian and friction, about 1 to 3 s each on
 simple bodies, more on a full aircraft and much more on thin parts (fins); use Mach Min and Max, and few angles, where
 Newtonian applies. Modified Newtonian on Mesh costs one mesh, one evaluation of the gradient at the face centroids
 and a sum per condition. On the hobby rocket of `validation/rasaero` (1.2 m, four 4 mm fins), four Newtonian
 runs (the whole rocket at 611,000 faces, the body, the fins, and the rocket again) over 330 conditions took 99 s in
-all; Surface Integrals on the body alone took 750 s for 4 conditions. On the body at Mach 3 (alpha 0 and 8, beta 0 and
-3 degrees) a mesh from Mesh from Implicit Body at 4 mm tolerance (118,000 faces), with the implicit's gradient normals, agrees with the Surface Integral block within 0.5% in CN, CY and the
-moments and to four digits in CA, and gives exact zeros where the Surface Integral's noise gives 7e-4; a User Defined
-Cp Max Field of 1.5 scales every coefficient by exactly 1.5 / Cp_max(Modified).
+all; Surface Integrals on the body alone took 750 s for 4 conditions. On the body at Mach 3 (alpha 0 and 8, beta 0
+and 3 degrees) a 4 mm Mesh from Implicit Body (118,000 faces) agrees with the Surface Integral block within 0.5% in
+CN, CY and the moments and to four digits in CA, and gives exact zeros where the Surface Integral's noise gives 7e-4.
 
 ## Aero buildup: mixing analyses in one database
 
@@ -834,9 +828,9 @@ Baseline results at beta 0 (derivatives per degree):
 **Center of Pressure (VSP)** gives the aerodynamic center (neutral point) of each alpha sweep, x_ac =
 x_ref - (dCm/dCN) cref, in metres. From the VSPAERO run alone: 20.95 m at Mach 0.6 and 0.9, moving aft to 21.62,
 21.88 and 21.98 m at Mach 1.2, 1.5 and 1.8. From the database's totals (the drag's normal-force component included):
-20.94, 20.98, 21.58, 21.84 and 21.95 m. The starter's own AeroSandbox estimate is 20.90 m; with the CG at 18.27 m both give a static margin of about
-30% of the mean aerodynamic chord subsonic. The block also gives each case's center of pressure, x_cp = x_ref -
-CMy cref / CFz, which runs away as the normal force goes to zero.
+20.94, 20.98, 21.58, 21.84 and 21.95 m. The starter's own AeroSandbox estimate is 20.90 m; with the CG at 18.27 m
+both give a static margin of about 30% of the mean aerodynamic chord subsonic. The block also gives each case's
+center of pressure, x_cp = x_ref - CMy cref / CFz, which runs away as the normal force goes to zero.
 
 Sideslip derivatives are from beta 0 and 4 degrees at alpha 2. The aircraft is statically stable in pitch, yaw and
 roll throughout, more so in pitch above Mach 1 as the aerodynamic centre moves aft. The parasite drag (0.009 to
@@ -871,7 +865,7 @@ straight from nTop's parametric model.
 ## Coverage of OpenVSP's options
 
 Every option of OpenVSP 3.56's VSPAERO, Parasite Drag and Wave Drag analyses was listed from OpenVSP itself
-(`dev/inventory.txt`) and is a block input, out of scope as you listed, or not applicable (with the reason).
+(`dev/inventory.txt`) and is a block input, out of scope, or not applicable (with the reason).
 
 **VSPAERO**
 
@@ -883,9 +877,9 @@ Every option of OpenVSP 3.56's VSPAERO, Parasite Drag and Wave Drag analyses was
 | Thick and thin geometry sets | each component's Set (Thick, Thin or None) |
 | Find body wakes | Analysis: Body Wakes |
 | Wing trailing-edge wakes | automatic: OpenVSP marks every wing trailing edge |
-| X-Z symmetry; 2D FEM and Tecplot files; Sref/cref from the model; CG calculation; stall model; propellers, rotors, actuator disks, noise; stability types and unsteady time stepping; Cp slicer; control surfaces | out of scope (your list) |
+| X-Z symmetry; 2D FEM and Tecplot files; Sref/cref from the model; CG calculation; stall model; propellers, rotors, actuator disks, noise; stability types and unsteady time stepping; Cp slicer; control surfaces | out of scope |
 | NRef (refinement levels), cull fraction, degenerate-region merging, intersection cleaning | OpenVSP's defaults |
-| `-fem`, `-interrogate` with survey points | not implemented (say if you want them) |
+| `-fem`, `-interrogate` with survey points | not implemented |
 
 **Parasite Drag**: geometry set, laminar and turbulent Cf equations and sub-component export are inputs; the model's
 length unit is metres, fixed (OpenVSP Model writes every nTop length in metres, so it is not a choice); the default
@@ -914,6 +908,53 @@ run in the Python of `NTOP_PYTHON_PATH`, and the example, DOE and study need `NT
 set. ntopcl may write its output and then not exit after notebooks with Run Command inside custom blocks; the
 runners stop it once the output file is written. A signed-in nTop is needed.
 
+Inside every custom block, each top-level block is a variable: `ntopfile.as_variables` wraps it in a named
+`core.var<type>` when the block is saved. A variable checks its block's output type, so the type must be nTop's own:
+Export Text gives a `text_file`, and a block run once per list item a `list<...>` (`ntopfile.list_outputs`). A wrong
+type shows up only at run time, as "Unknown block" or "requires X, but received X List".
+
+## Surface pressures
+
+Analyses that compute a surface pressure can write it for nTop, behind an **Export Pressures** option (Off by
+default):
+
+| Analysis | Points | Written |
+| --- | --- | --- |
+| VSPAERO Analysis (VSP) | panel centroids, nodes, or both (the option's choice) | Thick set: static pressure; Thin set: the jump across the sheet |
+| Modified Newtonian on Mesh (VSP), Tangent Wedge on Mesh (VSP) | the Mesh's face centroids | static pressure |
+
+Files are `<Case Name>.ntvsp.pressure.<Case>.csv` (static pressure p = p_inf + q Cp) and
+`<Case Name>.ntvsp.pressure_jump.<Case>.csv` (Delta p = q Delta Cp), `x, y, z, value` in metres and pascals, one per
+flight condition case (the Case column of `<Flight Condition>.ntvsp.flight.csv`: every flight point x sideslip x angle
+of attack), with p_inf and q at that case's altitude. Each run first removes the pressure files of an earlier run of
+the same Case Name. Read them with **Surface Pressure (VSP)** (Results, Case Number) or, for a jump, **Surface
+Pressure Jump (VSP)**, which requires a **Reference Pressure**: a vortex-lattice sheet carries only the jump across
+it, so the map shows Reference Pressure + Delta p. Both give a Scalar Point Map (Field from Point Map turns it into a
+field). Modified Newtonian (VSP) has no points: its pressure is the field of **Modified Newtonian Pressure (VSP)**.
+Body Lift computes sectional loads, not a surface pressure, so it exports none.
+
+On a body-plus-fins VSPAERO run (13,138 thick and 2,584 thin panels) every exported value is within 2e-8 q of
+p_inf + q Cp from VSPAERO's `.adb`.
+
+## Tests
+
+```bash
+dev/venv/Scripts/python.exe -m pytest
+```
+
+`tests/` builds one small notebook (a sphere, a thin flat plate and a 15 degree cone; Mach 3 and 8, alpha 0, 10 and
+30 degrees), runs it once with ntopcl and checks against closed-form answers:
+
+- Modified Newtonian, Modified Newtonian on Mesh and Tangent Wedge on Mesh, and an Aero Database of each: the
+  Newtonian sphere's drag (every Cp_max choice), the plate's Newtonian and tangent-wedge forces (exact oblique shock,
+  Prandtl-Meyer), the cone's tangent-cone axial force (an independent Taylor-Maccoll integration);
+- the pressure export at every face centroid, that only runs with Export Pressures on write pressure files, both
+  pressure readers and Modified Newtonian Pressure.
+
+About 80 s. Needs a signed-in nTop and a Python with this package, numpy, pytest and `implicit_io`; the blocks call
+the same Python unless `NTOP_PYTHON_PATH` is set. ntopcl runs at below-normal priority on half the cores
+(`NTOPCL_MAX_THREADS`) and is stopped above 8 GB (`NTOPCL_MEMORY_CAP_GB`).
+
 ## Known limits
 
 * Runs with the same Working Directory and Case Name overwrite each other (the DOE runs one design at a time).
@@ -921,10 +962,10 @@ runners stop it once the output file is written. A signed-in nTop is needed.
   a note in the log); a fuselage is sliced along +x and a wing's span axis must be normal to x.
 * The fuselage fit follows the body between sections with OpenVSP's own skinning, so abrupt steps (an inlet face)
   are smoothed: 0.43 m at the X-59's nacelle inlet.
-* Surface pressures are read from VSPAERO's binary `.adb`; every run checks the last case against VSPAERO's Tecplot
-  output. Integrated over the surface, these pressures do not give VSPAERO's forces (it computes those from its
-  vortex edges): use them for viewing.
+* VSPAERO's exported pressures are read from its binary `.adb`, checked against its Tecplot output. Integrated over
+  the surface they do not give VSPAERO's forces (it computes those from its vortex edges): use them for viewing.
 * nTop pairs lists item by item: a Wing block's Span Axes must have one vector per body, and Aero Coefficients' lists
   one value per flight condition ("Input list length mismatch" otherwise).
-* Modified Newtonian and the Viscous Correction cost Surface Integrals per condition (see above); the on-mesh friction
-  sums of the former `ntop_newtonian` cannot run over a flight condition and were not carried over.
+* Modified Newtonian and the Viscous Correction cost Surface Integrals per condition (see above). The on-mesh friction
+  sums of `ntop_newtonian` were not carried over: a list of fields evaluated at a list of points is a list of lists,
+  which nTop does not allow, so they cannot run over a flight condition.

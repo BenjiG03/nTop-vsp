@@ -7,7 +7,7 @@ import math
 
 import pytest
 
-from conftest import ALPHAS, MACHS, PLATE, SPHERE_R, SREF, USER_CP_MAX
+from cases import ALPHAS, MACHS, PLATE, SPHERE_R, SREF, USER_CP_MAX
 
 GAMMA = 1.4
 pytestmark = pytest.mark.e2e
@@ -197,7 +197,7 @@ def taylor_maccoll_cone_cp(mach, cone_deg, g=GAMMA, step=2e-5):
 @pytest.mark.parametrize("table", ["tw_cone"], indirect=True)
 def test_tangent_cone_on_a_cone(table):
     """A sharp cone at zero incidence: the tangent cone gives the exact cone pressure on every face, the base none."""
-    from conftest import CONE_HALF_ANGLE, CONE_LENGTH
+    from cases import CONE_HALF_ANGLE, CONE_LENGTH
     base = math.pi * (CONE_LENGTH * math.tan(math.radians(CONE_HALF_ANGLE))) ** 2 / SREF
     rows = [r for r in by_condition(table) if r["AoA"] == 0.0]
     for r in rows:
@@ -245,7 +245,7 @@ def test_pressure_files_only_when_exported(results):
 
 
 def _reads(results):
-    from conftest import CASES
+    from cases import CASES
     out = results["_json"]
     assert out, "ntopcl wrote no output"
     comps = out[0]["components"][len(CASES):]
@@ -258,7 +258,8 @@ def _reads(results):
 
 
 def test_surface_pressure_reader(results):
-    from conftest import READ_CASE, READ_ROWS, WORK
+    from cases import READ_CASE, READ_ROWS
+    from conftest import WORK
     rows = _point_map(f"{WORK}/{READ_CASE[0]}.ntvsp.pressure.{READ_CASE[1]}.csv")
     got = _reads(results)[0]
     n = len(READ_ROWS)
@@ -268,7 +269,7 @@ def test_surface_pressure_reader(results):
 
 
 def test_surface_pressure_jump_reader(results):
-    from conftest import FAKE_JUMP, REFERENCE_PRESSURE
+    from cases import FAKE_JUMP, REFERENCE_PRESSURE
     got = _reads(results)[1]
     n = len(FAKE_JUMP)
     for k, (x, y, z, dp) in enumerate(FAKE_JUMP):
@@ -278,7 +279,7 @@ def test_surface_pressure_jump_reader(results):
 
 def test_newtonian_pressure_field(results):
     """Modified Newtonian Pressure (VSP), Classical Cp_max, at points on the sphere."""
-    from conftest import FIELD_CASE, FIELD_POINTS_MM
+    from cases import FIELD_CASE, FIELD_POINTS_MM
     row = _flight_rows()[FIELD_CASE]
     a = math.radians(row["AoA"])
     got = _reads(results)[2]

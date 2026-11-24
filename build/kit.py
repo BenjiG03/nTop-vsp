@@ -1,11 +1,4 @@
-"""Building pieces shared by the nTop -> OpenVSP custom blocks.
-
-Every block here turns its inputs into lines of ``key = value`` text (SI units: metres, square metres, degrees,
-m/s, kg/m^3, seconds), and the analysis blocks write those lines to a settings file and run a driver of the
-``vsp_ntop`` package (``python -m vsp_ntop.<module>``) with Run Command, using the Python named by the
-NTOP_PYTHON_PATH environment variable and the OpenVSP folder named by VSP_PATH. Readers bring the driver's CSV files back with Import
-Table and Import Scalar Point Map.
-"""
+"""Building pieces shared by the nTop -> OpenVSP custom blocks."""
 from __future__ import annotations
 
 import math
@@ -15,7 +8,7 @@ from dataclasses import dataclass
 from ntopfile import CustomBlock, Graph, InputSpec, ModelInput, Ref
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
-FALLBACK_WORK_DIR = "ntop_vsp"  # in the system temporary folder, when Working Directory is left empty
+FALLBACK_WORK_DIR = "ntop_vsp"  # in the system temporary folder
 ENV_BLOCK = "get_environment_variable<text,bool,list_interface>[5.20.0]"
 PYTHON_VARIABLE = "NTOP_PYTHON_PATH"  # a Python with this package installed (pip install -e .)
 VSP_VARIABLE = "VSP_PATH"  # the OpenVSP folder (vspscript.exe, vspaero.exe)
@@ -33,7 +26,7 @@ MD = "$markdown-enabled$"
 PRECISION = 12
 
 
-# --- input defaults ---------------------------------------------------------------------------------------------
+# --- input defaults
 
 def d_real(v, units=None):
     return lambda g: g.real(v, units)
@@ -63,15 +56,11 @@ def d_angle_deg(v):
     return lambda g: g.real(math.radians(v), ANGLE)
 
 
-# --- settings fields ----------------------------------------------------------------------------------------------
+# --- settings fields
 
 @dataclass(frozen=True)
 class Field:
-    """One block input and how it is written to the settings file.
-
-    kind: "real" (value / reference unit), "int", "choice" (writes ``values[i]``), "point" (three keys _x _y _z in
-    metres), "text", "points" (list<point>: three keys _x _y _z, values joined by ';'), "reals" (list<real>).
-    """
+    """One block input and how it is written to the settings file."""
 
     spec: InputSpec
     key: str
@@ -139,7 +128,7 @@ def F_point(name, key, default_mm=(0, 0, 0), description=""):
                  default=tuple(v / 1000.0 for v in default_mm))
 
 
-# --- graph helpers ----------------------------------------------------------------------------------------------
+# --- graph helpers
 
 class Kit:
     """Text and file plumbing on one graph."""
@@ -267,7 +256,7 @@ def prop(ref, name):
     return Ref(r.instance, r.prop + (name,))
 
 
-# --- inputs every analysis block has --------------------------------------------------------------------------
+# --- inputs every analysis block has
 
 def run_inputs(default_case):
     return (
@@ -295,20 +284,14 @@ def environment(g: Graph, name, label):
 
 
 def analysis(g: Graph, k: Kit, inp, module, exports, settings_lines, what, needs_openvsp=True):
-    """The shared tail of every analysis block.
-
-    The Python is the one named by the NTOP_PYTHON_PATH environment variable (with this package installed), and
-    OpenVSP the folder named by VSP_PATH. ``exports(after_mkdir_base)`` adds the geometry export blocks and returns
-    the instances to wait for; the settings file gets ``settings_lines`` plus the run's own keys. Returns the results
-    base path (text), available once the driver ``vsp_ntop.<module>`` has finished without error.
-    """
+    """The shared tail of every analysis block."""
     g.comment(f"**Programs.** Python is the one named by the `{PYTHON_VARIABLE}` environment variable (it must have "
               f"the nTop_vsp package installed: `pip install -e .` in the nTop_vsp folder)"
               + (f"; OpenVSP is the folder named by `{VSP_VARIABLE}`." if needs_openvsp else "."))
     python = environment(g, PYTHON_VARIABLE, "Python")
     temp = environment(g, "TEMP", "Temporary Folder Path")
     g.comment("**Run folder.** The Working Directory, or `ntop_vsp` in the system temporary folder when it is left "
-              "empty, is created if it does not exist; every file of this run is named after the Case Name inside it.")
+              "empty, is created if it does not exist.")
     given = k.cat([inp("Working Directory")])
     empty = g.block("equals<text,text>", "bool", [given, k.t("")], top=False)
     work = g.block("core.var<text>", "text", [k.choose(empty, k.cat([temp, "/" + FALLBACK_WORK_DIR]), given)],
@@ -319,7 +302,7 @@ def analysis(g: Graph, k: Kit, inp, module, exports, settings_lines, what, needs
     ready = k.wait(mkdir, base, name="Base After Folder Exists")
     waits = exports(ready)
     g.comment("**Settings file.** Every input becomes one `key = value` line in SI units (lengths in metres, angles "
-              "in degrees). The driver reads this file; it is kept in the Working Directory as a record of the run.")
+              "in degrees).")
     own = [k.line("work_dir", work), k.line("case", inp("Case Name")), k.line("timeout_s", k.num(inp("Timeout"), 1.0, TIME))]
     if needs_openvsp:
         own.append(k.line("vsp_dir", environment(g, VSP_VARIABLE, "OpenVSP Folder")))

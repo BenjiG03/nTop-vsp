@@ -2,29 +2,6 @@
 
     python -m vsp_ntop.run_newtonian_mesh faces STL_FILE FACES_CSV      (step 1, from the block)
     python -m vsp_ntop.run_newtonian_mesh SETTINGS_FILE                  (step 2)
-
-The block exports its Mesh input as an STL in millimetres. Step 1 writes the faces' centroids as a point map
-(``x, y, z, area``, mm and mm^2). nTop evaluates the Body's gradient there (``<case>.ntvsp.mesh_gradient.csv``) and,
-only when Cp_max is User Defined, the Cp Max Field (``<case>.ntvsp.mesh_cp_max.csv``). Step 2 does the sums at every
-(Mach, AoA, Beta) of the flight condition within Mach Min to Mach Max:
-
-    Cp = Cp_max max(-n . V, 0)^2,  n = grad f / |grad f| at the face centroid (the implicit Body's own normal)
-    C_F = -(1 / Sref) sum Cp S_f,   C_M = -(1 / (Sref cref)) sum Cp (r_f - c) x S_f
-
-with S_f the face's vector area (outward, from the Mesh) and r_f its centroid: the pressure is the implicit's, the
-integral the mesh's. Cp_max: Modified (behind a normal shock above Mach 1, Rayleigh pitot; isentropic below),
-Classical (2) or User Defined (the Cp Max Field at each face).
-
-With ``method = tangent_wedge`` (the Tangent Wedge on Mesh (VSP) block) the face pressure is the tangent wedge's or,
-with ``impact = cone``, the tangent cone's, with Prandtl-Meyer or Newtonian-shadow leeward faces
-(``local_methods.py``); Cp_max then sets the pressure above shock detachment.
-
-With ``export_pressure = 1`` it also writes the static pressure p = p_inf + q Cp at the face centroids for every flight
-condition case it computed (``pressure.py``: ``<case>.ntvsp.pressure.<Case>.csv``, metres and pascals).
-
-Writes ``<case>.ntvsp.coefficients.csv`` with the Modified Newtonian (VSP) block's layout (Mach, AoA, Beta, CA, CY,
-CN, Cl, Cm, Cn about x = Aft Axis, z = Up Axis made normal to it, y = z x x, every moment over Sref cref, and the
-reference), for Coefficients Contribution (VSP). Needs numpy.
 """
 from __future__ import annotations
 
@@ -40,7 +17,7 @@ from .flight import Flight, _rows
 MM = 0.001
 ALIGNED_DEG = 25.0  # a face is aligned when the Body's normal at its centroid is within this of its own normal
 ALIGNED_COS = math.cos(math.radians(ALIGNED_DEG))
-MIN_ALIGNED_SHARE = 0.5  # below this share of the mesh area aligned, the Mesh is not a mesh of the Body
+MIN_ALIGNED_SHARE = 0.5  # below this share of the mesh area aligned
 CP_MAX_MODES = ("modified", "classical", "user")
 HEADER = ("Mach", "AoA", "Beta", "CA", "CY", "CN", "Cl", "Cm", "Cn", "Sref", "Bref", "Cref", "Xref", "Yref", "Zref")
 
@@ -120,10 +97,7 @@ def frame(aft, up):
 def coefficients(centroids, vector_areas, normals, cp_max_field, conditions, mode, axes, ref, gamma=1.4,
                  method="newtonian", expansion="prandtl_meyer", separated="freestream", impact="wedge",
                  on_cp=None):
-    """Rows of HEADER for each condition (dict with Mach, AoA, Beta). Lengths in metres, areas in m^2. ``method``:
-    newtonian (Cp_max sin^2 windward, 0 leeward) or tangent_wedge (``local_methods``: windward the tangent wedge or,
-    with ``impact = cone``, the tangent cone; ``expansion`` and ``separated`` for the leeward faces; Cp_max sets the
-    pressure above shock detachment). ``on_cp(condition, cp)``, when given, gets every condition's face Cp."""
+    """Rows of HEADER for each condition (dict with Mach, AoA, Beta). Lengths in metres, areas in m^2."""
     np = _np()
     x, y, z = axes
     sref, _, cref, centre = ref
@@ -154,9 +128,8 @@ def coefficients(centroids, vector_areas, normals, cp_max_field, conditions, mod
 
 
 def read_values(base, centroids_mm, user_cp_max):
-    """nTop's values at the face centroids: (Cp Max Field or None, gradient (n, 3)), from its point-map exports
-    (x, y, z in mm, then the value or vector), checked to list the faces in order. The Cp Max Field is exported (and
-    read) only when Stagnation Pressure is User Defined."""
+    """nTop's values at the face centroids: (Cp Max Field or None, gradient (n, 3)), from its point-map exports (x, y,
+    z in mm, then the value or vector), checked to list the faces in order."""
     np = _np()
     out = []
     for suffix, width in (("cp_max", 4), ("gradient", 6)):
@@ -275,7 +248,7 @@ def main(settings_path):
     if export:
         written = []
 
-        def on_cp(c, cp):  # every flight condition (any altitude) at this Mach, alpha, beta: p = p_inf + q Cp
+        def on_cp(c, cp):  # every flight condition (any altitude) at this Mach, alpha, beta
             for row in pressure.cases_at(fl, c["Mach"], c["AoA"], c["Beta"]):
                 pressure.write(base, row["Case"], centroids, row["Pressure"] + row["Dynamic_Pressure"] * cp)
                 written.append(int(row["Case"]))

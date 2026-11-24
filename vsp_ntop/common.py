@@ -1,14 +1,4 @@
-"""Shared helpers for the nTop -> OpenVSP drivers.
-
-The nTop custom blocks write a settings file of ``key = value`` lines (every value in SI units: metres,
-square metres, m/s, kg/m^3, degrees for angles) and then run one of the ``run_*`` modules on it
-(``python -m vsp_ntop.run_vspaero SETTINGS_FILE``) with the Python named by the NTOP_PYTHON_PATH environment
-variable, in which this package is installed (``pip install -e .``). OpenVSP is found through VSP_PATH. The scripts
-drive OpenVSP (``vspscript.exe``) and VSPAERO (``vspaero.exe``) and write plain CSV files that nTop's Import Table
-and Import Scalar Point Map blocks read back.
-
-This module is standard library only. The on-mesh and Lofted CAD drivers also need numpy, the plots matplotlib.
-"""
+"""Shared helpers for the nTop -> OpenVSP drivers."""
 from __future__ import annotations
 
 import csv
@@ -138,11 +128,7 @@ def run(cmd, log: Log, cwd, stdout_path, timeout=None):
 
 
 def run_vspscript(vsp_dir, script_text, work, stem, log: Log, timeout=None):
-    """Write ``script_text`` to ``<stem>.vspscript`` in ``work`` and run it with vspscript.exe.
-
-    vspscript returns 0 even when a script function fails, so the script prints "NTVSP_OK" at its end and
-    errors are found in its output.
-    """
+    """Write ``script_text`` to ``<stem>.vspscript`` in ``work`` and run it with vspscript.exe."""
     exe = os.path.join(vsp_dir, "vspscript.exe")
     if not os.path.isfile(exe):
         raise DriverError(f"vspscript.exe not found in OpenVSP directory '{vsp_dir}'")
@@ -175,11 +161,7 @@ def write_point_map(path, points, values):
 
 
 def read_vsp_results_csv(path):
-    """VSP's WriteResultsCSVFile output: blocks of ``Results_Name,...`` then ``name,v1,v2,...`` rows.
-
-    Returns {result name: {data name: [row, ...]}}, each row a list of values as text. Most data have one row;
-    matrix data (such as Wave Drag's Slice_Area, one row per rotation section) have several.
-    """
+    """VSP's WriteResultsCSVFile output: blocks of ``Results_Name,...`` then ``name,v1,v2,...`` rows."""
     results = {}
     current = None
     if not os.path.isfile(path):
@@ -200,7 +182,7 @@ def read_vsp_results_csv(path):
 def conda_dll_dirs():
     """Put a conda Python's DLL folders on PATH. nTop starts the Python of NTOP_PYTHON_PATH without activating its
     environment, so numpy's BLAS/LAPACK DLLs are not found at its first matrix product and the process dies with no
-    traceback. A no-op for other Pythons and off Windows (conda's Linux and macOS libraries carry an RPATH)."""
+    traceback."""
     if os.name != "nt":
         return
     dirs = [os.path.join(sys.prefix, *p) for p in (("Library", "mingw-w64", "bin"), ("Library", "usr", "bin"),

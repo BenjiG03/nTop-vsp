@@ -1,19 +1,6 @@
 """OpenVSP Parasite Drag (component drag buildup) of an OpenVSP model over a sweep of speeds, driven from nTop.
 
     python -m vsp_ntop.run_parasite SETTINGS_FILE
-
-OpenVSP's Parasite Drag tool needs OpenVSP's own components: it takes each component's wetted area from CompGeom
-and its reference length, thickness ratio or fineness ratio from DegenGeom, and it leaves out mesh components
-(an imported tessellation is reported as "not included in Parasite Drag calculation"). So this driver works on a
-``.vsp3`` model, with the flow condition and the per-component settings from nTop.
-
-The model is ``model`` (a ``.vsp3``, e.g. made by OpenVSP Model). OpenVSP runs once per flight point of the
-flight condition ``flight``: its Mach number at its altitude in the US Standard Atmosphere 1976 (OpenVSP's own),
-with the flight condition's Sref.
-
-Writes ``<case>.ntvsp.parasite.csv`` (one row of totals and flight condition per flight point),
-``<case>.ntvsp.parasite_components.<k>.csv`` (one row per component, for flight point k) and OpenVSP's own buildup
-table ``<case>.ParasiteDragBuildUp.<k>.csv``.
 """
 from __future__ import annotations
 
@@ -65,7 +52,7 @@ def script(s: Settings, model, components, points, csv_out, results_out, model_o
     # OpenVSP Model (VSP) writes every length in metres (run_model, vspmodel), so the model is in metres.
     unit = MODEL_LENGTH_UNIT
     to_model = 1.0 / LENGTH_UNITS[unit][1]  # 1.0
-    # Renaming the model keeps OpenVSP's side files (CompGeom tables) in the working directory, not beside the model.
+    # Renaming the model keeps OpenVSP's side files (CompGeom tables) in the working directory
     lines = [f'    ReadVSPFile("{vsp_path(model)}");', f'    SetVSP3FileName("{vsp_path(model_out)}");',
              "    Update();",
              '    if (FindGeoms().size() == 0) { Print("ERR the model has no components"); return; }']

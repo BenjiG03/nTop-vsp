@@ -1,30 +1,6 @@
 """Export an OpenVSP model as CAD (STEP or IGES), driven from nTop.
 
     python -m vsp_ntop.run_cad SETTINGS_FILE
-
-OpenVSP 3.56 has three ways to write its surfaces to CAD; ``method`` picks one:
-
-* ``trimmed`` (OpenVSP's Surface Intersection): the components are intersected with each other, the parts inside
-  other components are trimmed away, and the result is written as trimmed surfaces. With ``representation = brep``
-  (STEP only) closed surfaces become one BREP solid (``MANIFOLD_SOLID_BREP``); ``shell`` writes a shell model. Open
-  surfaces (a duct's wall) stay surfaces.
-* ``stitched`` (File > Export, "split and stitch"): each component's surface patches are split along their feature
-  lines, degenerate patches are dropped, and the patches are stitched back into one watertight BREP per closed
-  component. Components are neither intersected nor trimmed against each other.
-* ``surfaces`` (File > Export, STEP or IGES): each component's untrimmed surface patches, as in OpenVSP's plain
-  STEP/IGES export (surfaces only, no topology).
-
-Units: OpenVSP's CAD length unit does not scale anything; it declares the unit of the model's numbers (a 10-long
-pod written with LEN_M reads as 10 m, with the default LEN_FT as 10 ft). OpenVSP Model writes metres, so the driver
-always declares metres and the CAD program converts on import. The plain export takes the unit from OpenVSP's
-STEP/IGES settings, the stitched and trimmed ones from its Surface Intersection settings (found by testing: the
-stitched export ignores the STEP settings' unit), so the driver sets both. ``units`` may name another unit only for
-a .vsp3 built in it.
-
-Writes ``<case>.stp`` or ``<case>.igs`` and ``<case>.ntvsp.cad.csv`` (one row: method, format, units, the file's
-entity counts read back from it: solids, shells, faces, B-spline surfaces). With ``planar_caps`` (STEP), every flat
-end cap's patches are replaced by one plane face (``step_caps.py``; OpenVSP's own file is kept as
-``<case>.openvsp.stp``). Standard library only.
 """
 from __future__ import annotations
 

@@ -1,44 +1,6 @@
 """Aero database: the sum of any number of aerodynamic contributions on one flight condition, driven from nTop.
 
     python -m vsp_ntop.run_database SETTINGS_FILE
-
-The database's conditions (every flight point x sideslip x angle of attack) and its reference (Sref, bref, cref,
-moment point) are those of the Flight Condition ``flight``. Each group of ``contribution.<key> = <value>`` lines
-(written by Aero Contribution (VSP), starting with ``contribution.kind``) is one source of forces and moments:
-
-* ``vspaero``: a VSPAERO run (``results``), its inviscid (``terms: inviscid``, CFi*, CMi*) or total (``terms:
-  total``, with VSPAERO's own skin-friction estimate) coefficients; at each condition the run's Reynolds number
-  nearest the condition's; reference and moment point from the run's flight condition.
-* ``wave``: a Wave Drag run, CD_wave(Mach), a drag along the freestream through the database's moment point
-  (Wave and Parasite Drag give no moments).
-* ``parasite``: a Parasite Drag run, Total_CD(Mach) at the condition's altitude, likewise.
-* ``coefficients``: a coefficient table made in nTop (Modified Newtonian, Viscous Correction, Aero Coefficients):
-  ``<results>.ntvsp.coefficients.csv`` with Mach, (Altitude,) AoA, Beta, then CA, CY, CN and moments about x aft,
-  y right, z up (or CD, CY, CL and moments in aircraft body-axis signs), and the reference they are over. It
-  applies only at its own altitudes, when it has an Altitude column.
-
-Every contribution applies only over the Mach numbers its analysis ran (Wave Drag: none subsonic; an analysis
-limited by its own Mach Min and Max: those), and in its own Mach window (below).
-
-Every contribution also has ``mach_min`` and ``mach_max`` (it applies from Mach Min up to, not including, Mach
-Max), ``scale`` (a factor) and ``use``: ``all``, ``drag`` (only the force component along the freestream) or
-``nodrag`` (everything but that component).
-
-At each condition every contribution that applies is taken at that condition if it has it, else interpolated
-(multilinear between the neighbouring Mach numbers, angles of attack and sideslips, every combination of which it
-must have; in Mach only for wave and parasite drag), turned into body-axis forces and moments about its own moment
-point, moved to the database's moment point (M_db = M + (r - r_db) x F), and normalised by the database's
-reference. Their sum gives
-
-    CL, CD, CY (wind axes; CY along the side axis, positive right)      Cl, Cm, Cn (body-axis signs)
-
-with VSPAERO's convention for the wind axes: freestream V = (cos a cos b, -sin b, sin a cos b) in x aft, y right,
-z up; lift along (-sin a, 0, cos a); side force along (cos a sin b, cos b, sin a sin b); CD = F.V.
-
-Writes ``<case>.ntvsp.database.csv`` (the design variables, Mach, Altitude, AoA, Beta, the totals, L/D, CA and CN,
-and each contribution's own CL...Cn), ``<case>.ntvsp.center_of_pressure.csv`` and
-``<case>.ntvsp.aerodynamic_center.csv`` (positions in metres). With ``append_to`` set, the rows are appended to
-that file as well (a design-of-experiments table).
 """
 from __future__ import annotations
 
@@ -54,7 +16,7 @@ COEFFICIENTS = ("CL", "CD", "CY", "Cl", "Cm", "Cn")
 TOL = 1e-6
 
 
-# --- axes ----------------------------------------------------------------------------------------------------------
+# --- axes
 
 def axes(alpha_deg, beta_deg):
     """Unit freestream, lift and side-force directions in x aft, y right, z up."""
@@ -81,7 +43,7 @@ def body_to_wind(f, alpha, beta):
     return dot(f, lift), dot(f, v), dot(f, side)  # CL, CD, CY
 
 
-# --- interpolation -------------------------------------------------------------------------------------------------
+# --- interpolation
 
 def _key(v):
     return round(v, 6)
@@ -153,7 +115,7 @@ def interp_mach(name, points, m):
     return pts[-1][1]
 
 
-# --- contributions -------------------------------------------------------------------------------------------------
+# --- contributions
 
 def read_table(path, allow_empty=False):
     if not os.path.isfile(path):
@@ -179,9 +141,7 @@ ALT_TOL = 0.5  # metres: flight points at the same altitude
 
 
 class Contribution:
-    """One source of forces and moments. ``body(cond)`` gives (force, moment) coefficients in x aft, y right, z up,
-    over its own reference, about its own moment point, at a database condition (a dict: Mach, Altitude, AoA, Beta,
-    Re_cref), or None where it has no values and so does not apply."""
+    """One source of forces and moments."""
 
     def __init__(self, c, log):
         self.kind = c.get("kind", "")
@@ -211,7 +171,7 @@ class Contribution:
         tot = c.get("terms", "inviscid") == "total"
         f = ("CFxtot", "CFytot", "CFztot", "CMxtot", "CMytot", "CMztot") if tot else \
             ("CFix", "CFiy", "CFiz", "CMix", "CMiy", "CMiz")
-        # One grid per Reynolds number; a condition takes the run's Reynolds number nearest its own.
+        # One grid per Reynolds number.
         self.grids = {}
         for re_ in sorted({r["Re_1e6"] for r in rows}):
             sub = [r for r in rows if r["Re_1e6"] == re_]
@@ -223,7 +183,7 @@ class Contribution:
         base = c["results"]
         flight = Flight(Settings(base + ".ntvsp.settings.txt").text("flight"))
         self.sref, self.bref, self.cref = flight.ref[0], 1.0, 1.0
-        self.point = None  # no moment information: the drag acts through the database's moment point
+        self.point = None  # no moment information
         if self.kind == "wave":
             rows = read_table(base + ".ntvsp.wave.csv", allow_empty=True)
             self.mach_points = {None: [(r["Mach"], r["CD_wave"]) for r in rows]}

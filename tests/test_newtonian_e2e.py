@@ -1,14 +1,5 @@
 """Modified Newtonian (VSP), Modified Newtonian on Mesh (VSP) and Tangent Wedge on Mesh (VSP) against analytic
-solutions, through ntopcl (see conftest.py).
-
-* Sphere, Newtonian: the force is pure drag, CD = (Cp_max / 2) pi R^2 / Sref at any angle of attack.
-* Flat plate (a thin box, chord c, span b, thickness t), Newtonian: CN = Cp_max sin^2(alpha) c b / Sref from the
-  windward face, CA = Cp_max cos^2(alpha) t b / Sref from the leading-edge face.
-* Same plate, tangent wedge: CN = (Cp_lower - Cp_upper) c b / Sref, the exact oblique shock below and the
-  Prandtl-Meyer expansion above (the edge faces add only to CA).
-
-The expected values are computed here from their textbook forms, independently of vsp_ntop.
-"""
+solutions, through ntopcl (see conftest.py)."""
 from __future__ import annotations
 
 import csv
@@ -22,7 +13,7 @@ GAMMA = 1.4
 pytestmark = pytest.mark.e2e
 
 
-# --- analytic solutions ---------------------------------------------------------------------------------------------
+# --- analytic solutions
 
 def cp_max_rayleigh(mach, g=GAMMA):
     """Stagnation Cp behind a normal shock (Rayleigh pitot formula)."""
@@ -41,7 +32,7 @@ def oblique_shock_cp(mach, theta, g=GAMMA):
                          / (mach**2 * (g + math.cos(2.0 * beta)) + 2.0))
 
     lo, hi = math.asin(1.0 / mach), 0.5 * math.pi
-    for _ in range(200):  # beta at the largest deflection: the weak branch lies below it
+    for _ in range(200):  # beta at the largest deflection
         a, b = lo + (hi - lo) / 3.0, hi - (hi - lo) / 3.0
         lo, hi = (a, hi) if deflection(a) < deflection(b) else (lo, b)
     lo, hi = math.asin(1.0 / mach), 0.5 * (lo + hi)
@@ -93,7 +84,7 @@ PLANFORM = CHORD * SPAN / SREF
 EDGE = THICK * SPAN / SREF
 
 
-# --- tests ----------------------------------------------------------------------------------------------------------
+# --- tests
 
 @pytest.mark.parametrize("table, cp_max", [
     ("si_sphere_classical", lambda m: 2.0),
@@ -157,12 +148,12 @@ def test_aero_database_sphere_drag(results):
         assert r["CD"] == pytest.approx(0.5 * cp_max_rayleigh(r["Mach"]) * SPHERE_AREA, rel=5e-3)
 
 
-# --- tangent cone -----------------------------------------------------------------------------------------------------
+# --- tangent cone
 
 def taylor_maccoll_cone_cp(mach, cone_deg, g=GAMMA, step=2e-5):
     """Surface Cp of the sharp cone of half angle ``cone_deg`` at zero incidence: the Taylor-Maccoll equation
-    integrated in theta (RK4) from a trial conical shock to where V_theta vanishes, the shock angle found by bisection.
-    Velocities over the limiting speed."""
+    integrated in theta (RK4) from a trial conical shock to where V_theta vanishes, the shock angle found by
+    bisection."""
     target = math.radians(cone_deg)
 
     def surface(beta):
@@ -185,7 +176,7 @@ def taylor_maccoll_cone_cp(mach, cone_deg, g=GAMMA, step=2e-5):
             k3 = f(theta + h / 2, tuple(a + h / 2 * b for a, b in zip(y, k2)))
             k4 = f(theta + h, tuple(a + h * b for a, b in zip(y, k3)))
             new = tuple(a + h / 6 * (b + 2 * c + 2 * d + e) for a, b, c, d, e in zip(y, k1, k2, k3, k4))
-            if new[1] >= 0.0:  # V_theta reaches zero at the surface: interpolate
+            if new[1] >= 0.0:  # V_theta reaches zero at the surface
                 t = y[1] / (y[1] - new[1])
                 vr = y[0] + t * (new[0] - y[0])
                 cone = theta + t * h
@@ -215,7 +206,7 @@ def test_tangent_cone_on_a_cone(table):
         assert abs(r["CN"]) < 1e-3 * expected
 
 
-# --- pressure exports and readers ---------------------------------------------------------------------------------------
+# --- pressure exports and readers
 
 def _flight_rows():
     from conftest import WORK

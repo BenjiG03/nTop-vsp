@@ -1,21 +1,4 @@
-"""Surface pressure per case from VSPAERO's binary ``.adb`` (aerothermal database) file.
-
-Layout (VSPAERO 7.2.2 / OpenVSP 3.56, ``VSP_SOLVER::WriteOutAerothermalDatabase*``), in 4-byte words:
-
-* A header and the geometry. Word 6 of the file is the number of level-0 loops: the triangles of the ``.vspgeom``
-  file in order (for the polygon layout, the triangles of its triangulation section), followed by the triangles
-  VSPAERO builds along the wakes.
-* Per solved (Mach, alpha, beta) condition: Mach, alpha and beta (float32, angles in radians), Cp clip limits,
-  solver-level arrays (doubles), then one (Cp, unsteady Cp, circulation) float32 triple per level-0 loop, then the
-  number of trailing vortices (int32) and their data. On thick (panel) surfaces Cp is the surface pressure
-  coefficient; on thin (vortex lattice) surfaces it is the pressure jump across the sheet: Cp on the side the
-  triangle normals point to, minus Cp on the other side (negative where the sheet lifts toward its normals).
-
-The conditions are listed, in order, in ``<case>.adb.cases`` ("Mach AoA Beta Case: n ..."). Each condition's header
-is found by its Mach, alpha and beta; the triple block is the run of ``3 * loops`` words after it whose middle
-column (unsteady Cp, zero in steady runs) is all zero and which is followed by the trailing-vortex count. The
-Tecplot file VSPAERO writes for its last case checks the result (``check_against_tecplot``).
-"""
+"""Surface pressure per case from VSPAERO's binary ``.adb`` (aerothermal database) file."""
 from __future__ import annotations
 
 import math
@@ -41,11 +24,7 @@ def _close(a, b, tol):
 
 
 def read_cp(path, cases, n_surface):
-    """List (one per case of ``cases``) of per-loop Cp lists, in VSPAERO's level-0 loop order.
-
-    ``n_surface``: the number of surface triangles (they come first; the wake loops after them carry no pressure).
-    Most of them have a non-zero Cp, which tells the pressure block from runs of zeros elsewhere in the file.
-    """
+    """List (one per case of ``cases``) of per-loop Cp lists, in VSPAERO's level-0 loop order."""
     with open(path, "rb") as f:
         raw = f.read()
     n = len(raw) // 4

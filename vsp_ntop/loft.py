@@ -1,29 +1,4 @@
-"""A smooth B-spline surface through an implicit body's nTop slices: the CAD surface without OpenVSP's skinning.
-
-OpenVSP skins a fuselage through a few sections and sets the surface's slope only at four points of each section
-(top, bottom and the sides), interpolating it in between. On flattened sections that is wrong away from those points,
-and the CAD shows a ripple at every section (validation/fuselage_sides). Here the surface is fitted through every
-slice instead, with no slope rule: a bicubic B-spline surface, least squares over all the contour points.
-
-The surface S(u, w):
-  * w goes once round the body (periodic, uniform cubic B-spline, ``nw`` control points per ring). Each contour is
-    split at its right-most point, bottom centre, left-most point and top centre (OpenVSP's order) and each quarter
-    is sampled evenly by arc length, so w = 0, 1/4, 1/2, 3/4 are those four points on every slice. The split points
-    are where the contour crosses the horizontal and vertical lines through its centre (at a sharp chine on a side,
-    its widest point), which move smoothly along the body.
-  * u runs nose to tail (clamped cubic B-spline). Each slice's u is its distance along the body measured on the
-    sections' centres and equivalent radii, so u keeps moving where a rounded nose closes up at almost constant x.
-  * A pointed end is a pole: the first (last) row of control points is the tip point. A blunt end carries the
-    outermost slice out to the end plane, and the end is closed by a flat cap (in ``step_write``).
-  * Fitting is least squares with a small curvature penalty (second differences of the control net), which smooths
-    the contours' own faceting without rounding the shape.
-
-For CAD the periodic surface is cut exactly (knot insertion) into patches at w = 0, 1/4, 1/2, 3/4 (or more: ``faces``
-round the body, at w = k / faces), so each patch is an ordinary clamped B-spline surface and neighbouring patches share
-their edge curves exactly.
-
-numpy only (no CAD kernel). Lengths are metres throughout.
-"""
+"""A smooth B-spline surface through an implicit body's nTop slices: the CAD surface without OpenVSP's skinning."""
 from __future__ import annotations
 
 import math
@@ -37,7 +12,7 @@ from . import slices as S
 DEGREE = 3
 
 
-# --- B-spline basics -------------------------------------------------------------------------------------------------
+# --- B-spline basics
 
 def basis(knots, t, degree=DEGREE):
     """Matrix of B-spline basis functions: row i = all basis functions at t[i] (Cox-de Boor). ``knots`` is the full
@@ -68,9 +43,8 @@ def basis(knots, t, degree=DEGREE):
 
 
 def ring_knots(nw, creases=(), degree=DEGREE):
-    """Knots of one turn round the body, w in [0, 1), repeats included: ``nw`` even spans, a quarter's worth
-    starting at each of w = 0, 1/4, 1/2, 3/4. A quarter point listed in ``creases`` (0..3) gets a knot of
-    multiplicity ``degree``: the curve passes through a control point there and may turn a corner (C0)."""
+    """Knots of one turn round the body, w in [0, 1), repeats included: ``nw`` even spans, a quarter's worth starting
+    at each of w = 0, 1/4, 1/2, 3/4."""
     per = nw // 4
     out = []
     for q in range(4):
@@ -81,9 +55,8 @@ def ring_knots(nw, creases=(), degree=DEGREE):
 
 
 def unrolled(ring, extra=0, degree=DEGREE):
-    """The periodic knot sequence written out over [0, 1] (plus ``extra`` more knots): the last ``degree`` knots of the
-    turn before, the turn, and the first ``degree + 1 + extra`` of the turn after. Its basis functions number
-    len(ring) + degree + extra; function j belongs to control point j mod len(ring)."""
+    """The periodic knot sequence written out over [0, 1] (plus ``extra`` more knots): the last ``degree`` knots of
+    the turn before, the turn, and the first ``degree + 1 + extra`` of the turn after."""
     ring = list(ring)
     return np.array([t - 1.0 for t in ring[len(ring) - degree:]] + ring
                     + [t + 1.0 for t in ring[:degree + 1 + extra]])
@@ -142,7 +115,7 @@ def evaluate(patch, u, w):
     return np.einsum("ia,abk,jb->ijk", Bu, patch.ctrl, Bw)
 
 
-# --- The body surface ------------------------------------------------------------------------------------------------
+# --- The body surface
 
 @dataclass
 class Patch:
@@ -155,14 +128,14 @@ class Patch:
 
 @dataclass
 class End:
-    x: float          # station along the slicing axis (frame z), metres
+    x: float          # station along the slicing axis (frame z)
     pointed: bool
-    point: tuple      # the tip (pointed) or the cap's centre (blunt), world coordinates
+    point: tuple      # the tip (pointed) or the cap's centre (blunt)
 
 
 @dataclass
 class Loft:
-    patches: list                 # Patch per face round the body, w = [k/n, (k+1)/n]
+    patches: list                 # Patch per face round the body
     start: End
     end: End
     frame: F.Frame
@@ -194,17 +167,10 @@ def _crossings(pts, axis, value):
 
 
 def _ring_samples(loop, per_quarter, widest=(False, False)):
-    """Contour points of one slice in the surface's w order, (4 per_quarter, 2) in the slice's (u, v).
-
-    The four split points (w = 0, 1/4, 1/2, 3/4) are where the contour crosses the horizontal and vertical lines
-    through its bounding-box centre: right, bottom, left, top. Those move smoothly from slice to slice even where a
-    side is nearly flat, whereas the widest point of a flat side jumps up and down with the contour's faceting (a
-    wavy seam between faces). ``widest`` (right, left): split that side at its widest point instead, for a sharp
-    chine there. Falls back to fit._section_curve if the lines miss the contour or the order is not right, bottom,
-    left, top round it."""
+    """Contour points of one slice in the surface's w order, (4 per_quarter, 2) in the slice's (u, v)."""
     u0, u1, v0, v1 = S.bounds(loop)
     uc, vc = 0.5 * (u0 + u1), 0.5 * (v0 + v1)
-    pts = list(loop) if S.area(loop) < 0 else list(reversed(loop))  # clockwise in (u, v): right, bottom, left, top
+    pts = list(loop) if S.area(loop) < 0 else list(reversed(loop))  # clockwise in (u, v)
     n = len(pts)
     horiz, vert = _crossings(pts, 1, vc), _crossings(pts, 0, uc)
     if not horiz or not vert:
@@ -219,7 +185,7 @@ def _ring_samples(loop, per_quarter, widest=(False, False)):
     bottom = min(vert, key=lambda c: c[1][1])
     top = max(vert, key=lambda c: c[1][1])
     anchors = [right, bottom, left, top]
-    # walking forward from the right, the split points must come in this order
+    # walking forward from the right
     pos = [(a[0] - right[0]) % n for a in anchors]
     if not pos[0] <= pos[1] <= pos[2] <= pos[3]:
         return _row_samples(loop, per_quarter)
@@ -256,15 +222,7 @@ def corner_angles(rows, per_quarter):
 
 def loft_body(layers, frame: F.Frame, nw=48, per_quarter=24, rows_per_ctrl=2.0, smooth=1e-4, bounds=None,
               creases="auto", faces=4):
-    """Fit the body's surface to its slices.
-
-    ``layers``: nTop slices (slices.read_cli) in ``frame``; the largest contour of each is used. ``nw``: control
-    points round the body (a multiple of 4). ``rows_per_ctrl``: slices per control point along the body. ``smooth``:
-    weight of the curvature penalty, relative to the data term. ``bounds``: the body's bounding-box extent along the
-    slicing axis, which places blunt ends (see fit._end). ``creases``: quarter points (0 right, 1 bottom, 2 left,
-    3 top) where the surface may have a sharp edge along the body; "auto" picks those where the middle 80% of the
-    slices turn by more than CREASE_ANGLE (the median). ``faces``: CAD faces round the body (a multiple of 4 that
-    divides ``nw``): the surface is cut at w = k / faces, the split points among them."""
+    """Fit the body's surface to its slices."""
     if nw % 4 or nw < 8:
         raise F.FitError("control points round the body must be a multiple of 4, at least 8")
     if faces % 4 or faces < 4 or nw % faces:
@@ -286,8 +244,7 @@ def loft_body(layers, frame: F.Frame, nw=48, per_quarter=24, rows_per_ctrl=2.0, 
     x0, pointed0, _ = F._end(used, areas, True, spacing, b0)
     x1, pointed1, _ = F._end(used, areas, False, spacing, b1)
 
-    # sharp edges along the body at the four split points (chines): found on contours split at their widest points,
-    # where a chine is; there the knot round the body is made triple
+    # sharp edges along the body at the four split points (chines)
     first_pass = np.stack([_row_samples(l.loops[0], per_quarter)[0] for l in used])
     angles = corner_angles(first_pass, per_quarter)
     k0, k1 = int(0.1 * len(angles)), max(int(0.9 * len(angles)), int(0.1 * len(angles)) + 1)
@@ -334,10 +291,10 @@ def loft_body(layers, frame: F.Frame, nw=48, per_quarter=24, rows_per_ctrl=2.0, 
     u = np.concatenate([[0.0], np.cumsum(step)])
     u /= u[-1]
 
-    # w of the samples: quarters at 0, 1/4, 1/2, 3/4, even arc length inside each
+    # w of the samples
     w = np.arange(m) / m
 
-    # round the body: one periodic fit per row (shared basis), with a curvature penalty (not across a crease)
+    # round the body
     ring = ring_knots(nw, creases)
     n_ring = len(ring)
     Bw = periodic_basis(ring, w)
@@ -348,7 +305,7 @@ def loft_body(layers, frame: F.Frame, nw=48, per_quarter=24, rows_per_ctrl=2.0, 
     Aw = Bw.T @ Bw + lam_w * Dw.T @ Dw
     R = np.einsum("ij,rjk->rik", np.linalg.solve(Aw, Bw.T), P)         # (n_rows, n_ring, 3)
 
-    # along the body: clamped fit through the rows, ends held (pole rows to the tip; blunt ends to their row)
+    # along the body
     n_rows = len(rows)
     nu = int(max(DEGREE + 3, min(n_rows, round(n_rows / rows_per_ctrl))))
     ku = clamped_knots(u, nu)
@@ -396,14 +353,14 @@ def loft_body(layers, frame: F.Frame, nw=48, per_quarter=24, rows_per_ctrl=2.0, 
 
 
 def split_faces(C, ku, ring, faces=4):
-    """Cut the periodic surface (control net C, one control point per knot of ``ring`` round the body) into
-    ``faces`` clamped patches at w = k / faces: unroll it, insert each cut knot until it is triple (a cubic then passes
-    through a control point there), and take the control points between the cuts. Every cut is a knot of ``ring``."""
-    # unrolled one control point further than one turn, so that w = 1 is inside the knot range
+    """Cut the periodic surface (control net C, one control point per knot of ``ring`` round the body) into ``faces``
+    clamped patches at w = k / faces: unroll it, insert each cut knot until it is triple (a cubic then passes through
+    a control point there), and take the control points between the cuts."""
+    # unrolled one control point further than one turn
     kw = unrolled(ring, extra=1)
     Q = np.concatenate([C, C[:, :DEGREE + 1]], axis=1)
     cuts = []
-    for k in range(faces + 1):   # the knots' own values, so a cut never lands a rounding error away from one
+    for k in range(faces + 1):   # the knots' own values
         t = k / faces
         near = kw[np.argmin(np.abs(kw - t))]
         if abs(near - t) > 1e-9:

@@ -1,30 +1,4 @@
-"""Lift a fin carries onto the body, after Pitts, Nielsen and Kaattari (NACA TR 1307).
-
-TR 1307 writes the lift of a wing-body combination as factors on the lift of the wing alone (the exposed panels
-joined at the root). ``K_B(W)`` is the lift the fins put on the body. A vortex-lattice wing ending at the body surface
-has none of it, and one extended through the body to the axis over-predicts it on a slender body (its inboard strips
-behave as more wing).
-
-Supersonic, TR 1307's planar model (its Figure 4) flattens the body into a strip of width d beside each fin root. The
-fin's pressure reaches the strip between the Mach lines from the root's leading and trailing edges; equations 23 and
-25 give it, from the conical flow of the swept leading edge, in units of the two-dimensional 4 alpha / beta:
-
-    beta m > 1:  beta m / (pi sqrt(beta^2 m^2 - 1)) arccos((xi / beta + beta m eta) / (eta + m xi))
-    beta m < 1:  2 (beta m)^(3/2) / (pi (beta m + 1)) sqrt(xi / beta - eta) / sqrt(m xi + eta)
-
-with xi aft of the root leading edge, eta across the strip from the root and m the cotangent of the leading-edge
-sweep. The report integrates it in closed form for a body that runs on behind the fin (equations 24, 26) or ends at
-the trailing edge (30, 31); here it is integrated numerically up to wherever the body ends. Its integral over the
-fin's planform area is K_B(W), its first moments place the load (TR 1307 equations 66 to 70).
-
-When TR 1307's rule beta A (1 + lambda) (1 / (beta m) + 1) <= 4 says the fin's tip would reach the strip, and at
-subsonic speed, slender-body theory (equation 21) gives K_B(W) instead; the load is still placed where the planar
-model puts it.
-
-The 4 alpha / beta of the planar model stands for the fin's own mean lifting pressure, so the carried lift is K_B(W)
-times the fin's lift from VSPAERO, along the fin's normal. Nothing here assumes a circular body: root distance, body
-width across the fin's plane and the body's length behind the root come from the OpenVSP model.
-"""
+"""Lift a fin carries onto the body, after Pitts, Nielsen and Kaattari (NACA TR 1307)."""
 from __future__ import annotations
 
 import math
@@ -74,11 +48,7 @@ def strip_pressure(xi, eta, beta, m):
 
 
 def planar_integrals(beta, m, width, root_chord, length):
-    """(lift, xi moment, eta moment) of one fin's strip pressure, as areas in units of 4 alpha / beta.
-
-    The strip runs across the body from eta = 0 to ``width``, between the Mach lines from the root's leading and
-    trailing edges, and stops where the body does, ``length`` aft of the leading edge. Moments are about the root
-    leading edge (xi aft, eta across the body)."""
+    """(lift, xi moment, eta moment) of one fin's strip pressure, as areas in units of 4 alpha / beta."""
     top = min(width, length / beta)
     knee = min(max((length - root_chord) / beta, 0.0), top)  # aft of here the strip stops at the body's end
     total = np.zeros(3)
@@ -100,7 +70,7 @@ def planar_integrals(beta, m, width, root_chord, length):
 def body_factor(mach, root, semispan, root_chord, tip_chord, slope, planform, width, length):
     """K_B(W) of one fin, where its carried lift acts (xi aft of the root leading edge, eta across the body from the
     root) and which method set it ("planar" or "slender")."""
-    if mach <= 1.0 + 1e-6:  # no Mach lines: slender-body theory, at the root's mid-chord and the body's middle
+    if mach <= 1.0 + 1e-6:  # no Mach lines: slender-body theory
         return slender_factors(root / semispan)[1], 0.5 * root_chord, 0.5 * width, "slender"
     beta = math.sqrt(mach * mach - 1.0)
     exposed = semispan - root

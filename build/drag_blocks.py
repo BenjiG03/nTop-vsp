@@ -6,7 +6,7 @@ from ntopfile import Graph, InputSpec
 from kit import (F_choice, F_int, F_length, F_real, F_switch, F_text, Kit, analysis, d_choice, d_real,
                  d_int, d_text, make_block, model_inputs, run_inputs)
 
-# --- Parasite drag -------------------------------------------------------------------------------------------------
+# --- Parasite drag
 
 BODY_FF = ("Manual", "Schemensky Fuselage", "Schemensky Nacelle", "Hoerner Streamlined Body", "Torenbeek", "Shevell",
            "Covert", "Jenkinson Fuselage", "Jenkinson Wing Nacelle", "Jenkinson Aft Fuselage Nacelle")
@@ -45,7 +45,7 @@ def component_block():
     inp = model_inputs(specs)
     g.comment("**One component's Parasite Drag settings**, as one line of text: the name, then the form factor "
               "equations, manual form factor, % laminar, Q, roughness (metres), Te/Tw, Taw/Tw and incorporated "
-              "generation, separated by `|`. Put several of these in a List for Parasite Drag (VSP)'s Components.")
+              "generation, separated by `|`.")
     parts = []
     for i, f in enumerate(COMPONENT_FIELDS):
         v = inp(f.spec.name)
@@ -159,7 +159,7 @@ def parasite_components_block():
     k = Kit(g)
     inp = model_inputs(specs)
     g.comment("**Parasite Drag table.** One row per component in `<Case Name>.ntvsp.parasite_components.<n>.csv` for "
-              "flight point n; the chosen column comes out as a list.")
+              "flight point n.")
     path = k.cat([inp("Results"), ".ntvsp.parasite_components.", k.num(inp("Flight Point")), ".csv"])
     table = g.block("import_table<file_path,bool>", "table", [path, g.boolean(True)], "Import Results Table")
     col = g.block("extract_column<table,text>", "list<text>", [table, k.pick(inp("Column"), PARASITE_COMPONENT_COLUMNS)],
@@ -171,7 +171,7 @@ def parasite_components_block():
                       "fineness ratio, Reynolds number...).", specs, "list<real>", g, out)
 
 
-# --- Wave drag --------------------------------------------------------------------------------------------------------
+# --- Wave drag
 
 WAVE_FIELDS = [
     F_int("Number of Slices", "num_slices", 30, "Mach-plane cuts along the configuration for each rotation section. The "
@@ -194,10 +194,7 @@ def wave_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**OpenVSP Wave Drag** at each supersonic Mach number of the flight condition. OpenVSP cuts the model with Mach planes "
-              "(inclined at the Mach angle) at each rotation section, turns each set of cut areas into an equivalent "
-              "area distribution, and averages the von Karman slender-body wave drag over the roll angles: the "
-              "supersonic area rule, zero-lift linear theory. CD_wave = D / (q Sref).")
+    g.comment("**OpenVSP Wave Drag** at each supersonic Mach number of the flight condition.")
     lines = k.field_lines(WAVE_FIELDS, lambda f: inp(f.spec.name)) + [k.line("model", inp("OpenVSP Model")),
                                                                       k.line("flight", inp("Flight Condition"))]
     out = analysis(g, k, inp, "run_wave", lambda base: [], lines, "Wave Drag")
@@ -205,9 +202,7 @@ def wave_block():
         "wave_drag", "Wave Drag (VSP)",
         "Runs OpenVSP's **Wave Drag** (supersonic area rule) on an OpenVSP model at the supersonic Mach numbers of a "
         "Flight Condition, with its reference area, and returns the path of its results (connect it to Wave Drag "
-        "Result, Wave Drag Area Distribution or Wave Drag Contribution). The other inputs are those of OpenVSP's Wave "
-        "Drag screen: number of slices, number of rotation sections, symmetry and geometry set. It is linear theory at zero lift: see the README for the Mach range it holds over. "
-        "Not exposed (out of scope): inflow and outflow faces.", specs, "text", g, out)
+        "Result, Wave Drag Area Distribution or Wave Drag Contribution).", specs, "text", g, out)
 
 
 WAVE_RESULTS = ("CD_wave", "Mach", "Num_Slices", "Num_Rotation_Sections", "Sref")
@@ -233,8 +228,7 @@ def wave_areas_block():
     k = Kit(g)
     inp = model_inputs(specs)
     g.comment("**Area distribution.** The driver writes each Mach number's and rotation section's equivalent area "
-              "distribution to `<Case Name>.ntvsp.wave_areas.<m>.<n>.csv` (roll angle, x/L, area). The chosen column "
-              "comes out as a list, one value per slice.")
+              "distribution to `<Case Name>.ntvsp.wave_areas.<m>.<n>.csv` (roll angle, x/L, area).")
     path = k.cat([inp("Results"), ".ntvsp.wave_areas.", k.num(inp("Mach Number")), ".", k.num(inp("Rotation Section")),
                   ".csv"])
     table = g.block("import_table<file_path,bool>", "table", [path, g.boolean(True)], "Import Area Table")
@@ -245,7 +239,7 @@ def wave_areas_block():
                       "x/L stations or slice areas, as a list.", specs, "list<real>", g, out)
 
 
-# --- Body lift -------------------------------------------------------------------------------------------------
+# --- Body lift
 
 BODY_POTENTIAL = ("Slender Body", "Off", "Slender Body (Section Shape)")
 BODY_POTENTIAL_KEYS = ("slender", "off", "shape")
@@ -284,11 +278,8 @@ def body_lift_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**Body lift** of the model's fuselages: OpenVSP's surface sampled in rings at planes normal to x gives "
-              "the section area S(x); slender-body theory puts the potential normal force where S grows (the nose), "
-              "Allen and Perkins' crossflow adds the viscous part along the whole body. The total angle of attack "
-              "sets both, and the force lies along the crossflow, so sideslip is included. Moments about the flight "
-              "condition's moment point; no axial force (Wave and Parasite Drag carry the drag).")
+    g.comment("**Body lift** of the model's fuselages: OpenVSP's surface sampled in rings at planes normal to x "
+              "gives the section area S(x).")
     lines = [k.line("model", inp("OpenVSP Model")), k.line("flight", inp("Flight Condition")),
              k.line("components", k.join(inp("Components"), "|")),
              k.line("potential", k.pick(inp("Potential Lift"), BODY_POTENTIAL_KEYS)),
@@ -300,12 +291,10 @@ def body_lift_block():
         "body_lift", "Body Lift (VSP)",
         "The normal force of an OpenVSP model's fuselages from their section-area distribution (no other geometry "
         "input): slender-body potential lift on the nose and, optionally, Allen and Perkins' viscous crossflow "
-        "(Jorgensen's tables), at every (Mach, alpha, beta) of a Flight Condition. Writes a coefficient table; "
-        "connect the output to Coefficients Contribution (VSP). Use it with lifting surfaces whose Force Accounting "
-        "is Exposed Strip, which leave the body's lift out.", specs, "text", g, out)
+        "(Jorgensen's tables), at every (Mach, alpha, beta) of a Flight Condition.", specs, "text", g, out)
 
 
-# --- RASAero II ------------------------------------------------------------------------------------------------
+# --- RASAero II
 
 RASAERO_VARIABLE = "RASAERO_PATH"  # the folder holding RASAero II.exe
 

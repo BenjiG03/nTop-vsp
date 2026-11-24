@@ -1,24 +1,6 @@
 """VSPAERO analysis of an OpenVSP model, driven from nTop.
 
     python -m vsp_ntop.run_vspaero SETTINGS_FILE
-
-Steps (each logged to ``<case>.ntvsp.log``):
-
-1. OpenVSP reads the model (``model`` = a ``.vsp3`` made by OpenVSP Model) and writes VSPAERO's panel file
-   (``VSPAEROComputeGeometry``: ``<case>.vspgeom``, ``<case>.vkey``). Components in the model's "Thick" set become
-   panel-method surfaces, those in the "Thin" set vortex-lattice camber surfaces. OpenVSP marks the trailing edges
-   of its wings as wakes itself; with ``find_body_wakes`` it also marks wakes behind fuselage bases.
-2. ``<case>.vspaero`` is written with every setting, in the form OpenVSP itself writes it.
-3. ``vspaero.exe`` solves all Mach x alpha x beta x Re_cref combinations in one run.
-4. Convergence check of every case (``convergence``; ``<case>.ntvsp.convergence.csv``): an unconverged case stops
-   the run with an error unless ``convergence_check`` is 0 (warn only).
-5. Results for nTop: ``<case>.ntvsp.polar.csv`` (one row per case, with a Converged column), centres of pressure
-   (``pressure_centers``), the panels' points and areas (``.ntvsp.faces.{1,4}.csv``) and, with Export Pressures,
-   surface pressure point maps per flight condition case (``pressure.py``).
-
-Settings (``key = value``; lengths in metres, angles in degrees, SI elsewhere) are listed in the blocks. The flight
-conditions and reference come from ``flight`` (a Flight Condition's results): VSPAERO runs its distinct Mach
-numbers, angles of attack and sideslips, and the Reynolds numbers (on cref) of its flight points.
 """
 from __future__ import annotations
 
@@ -35,7 +17,7 @@ from .common import (openvsp_dir, DriverError, Log, Settings, fmt, main_wrapper,
                      write_csv, write_point_map)
 from .flight import Flight
 
-# Solver settings written to <case>.vspaero, in OpenVSP's order: (file key, settings key, kind).
+# Solver settings written to <case>.vspaero, in OpenVSP's order
 SOLVER_KEYS = [
     ("FreezeMultiPoleAtIteration", "freeze_multipole_at_iteration", int),
     ("FreezeWakeAtIteration", "freeze_wake_at_iteration", int),
@@ -138,7 +120,7 @@ def read_polar(path):
 GMRES_RECORD = re.compile(r"Wake Iter:\s*(\d+)\s*/\s*(\d+)\s*\.\.\.\s*GMRES Iter:\s*(\d+)\s*\.\.\.\s*Red:\s*(\S+)\s*/\s*(\S+)"
                           r"\s*\.\.\.\s*Max:\s*(\S+)\s*/\s*(\S+)")
 SOLVING = re.compile(r"Solving\.\.\.\s*Mach:\s*(\S+)\s*\.\.\.\s*Alpha:\s*(\S+)\s*\.\.\.\s*Beta:\s*(\S+)")
-# Floors of the wake-change measure, so coefficients near zero do not count as large relative changes.
+# Floors of the wake-change measure
 WAKE_FLOORS = (("CLtot", 0.05), ("CDtot", 0.005), ("CMytot", 0.01))
 
 
@@ -199,16 +181,14 @@ def wake_changes(history_path):
 
 
 def convergence(work, case, header, data, s: Settings, log):
-    """Checks every case: VSPAERO's linear solve (GMRES) of the last wake iteration reached both its residual
-    targets (VSPAERO stops it after 1500 iterations otherwise), every value is finite, and with a relaxed wake the
-    forces changed by less than ``wake_tolerance`` over the last wake iteration. Writes
-    ``<case>.ntvsp.convergence.csv`` and returns one flag per polar row."""
+    """Checks every case: VSPAERO's linear solve (GMRES) of the last wake iteration reached both its residual targets
+    (VSPAERO stops it after 1500 iterations otherwise), every value is finite, and with a relaxed wake the forces
+    changed by less than ``wake_tolerance`` over the last wake iteration."""
     solves = solver_records(os.path.join(work, case + ".vspaero.log"))
     wakes = wake_changes(os.path.join(work, case + ".history"))
     tol = s.real("wake_tolerance", 0.1)
     i_m, i_a, i_b = header.index("Mach"), header.index("AoA"), header.index("Beta")
-    # Force and moment coefficients only: ratios such as the wake span efficiency Ew are 0/0 supersonic, where
-    # VSPAERO computes no wake (Trefftz plane) forces.
+    # Force and moment coefficients only
     coefs = [i for i, h in enumerate(header) if h.startswith("C")]
     rows, flags, failures = [], [], []
     for n, row in enumerate(data, start=1):
@@ -259,9 +239,7 @@ PRESSURE_POINTS = ("off", "centroids", "nodes", "both")
 def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, log, flight=None):
     """The panels' points and areas (``<case>.ntvsp.faces.{1,4}.csv``, thick components only) for the viscous
     correction, and, with ``export_pressure`` (off, centroids, nodes or both), surface pressure point maps per flight
-    condition case (``pressure.py``): p = p_inf + q Cp on thick components; on thin (vortex lattice) components only
-    the jump across the sheet, q (Cp on the side the panel normals point to - Cp on the other side). Node values are
-    area-weighted averages of the panels of the same kind around each node."""
+    condition case (``pressure.py``): p = p_inf + q Cp on thick components."""
     tris = vspgeom.level0(g)
     thin = vspgeom.thin_parts(os.path.join(work, case + ".vkey"))
     faces = [t for t, _ in tris]
@@ -313,7 +291,7 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, l
     nodes = {kind: sorted({i for k in sel for i in faces[k]}) for kind, sel in kinds.items()}
 
     def solution(row):
-        # VSPAERO solves Mach 0 as Mach 0.001 and lists it so in .adb.cases; the case list has 7 decimals.
+        # VSPAERO solves Mach 0 as Mach 0.001 and lists it so in .adb.cases.
         cond = (max(row[i_mach], 0.001), row[i_aoa], row[i_beta])
         match = [k for k, c in enumerate(cases) if all(abs(a - b) < 1e-5 for a, b in zip(c, cond))]
         if not match:
@@ -332,7 +310,7 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, l
         for kind, sel in kinds.items():
             if not sel:
                 continue
-            offset = p_inf if kind == "pressure" else 0.0  # the jump is q Delta Cp: no freestream pressure in it
+            offset = p_inf if kind == "pressure" else 0.0  # the jump is q Delta Cp
             pts, vals = [], []
             if mode in ("centroids", "both"):
                 pts += [centroids[k] for k in sel]
@@ -353,15 +331,7 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, l
 
 
 def pressure_centers(work, case, header, data, s: Settings, log):
-    """Centre of pressure of every case and aerodynamic centre of every (Mach, beta, Re_cref) alpha sweep.
-
-    VSPAERO's axes are x aft, z up, and CMy (nose up) is about the moment reference point over Sref cref. The
-    resultant of the normal force CFz and the moment crosses the line through the reference point along x at
-    x_cp = x_ref - CMy cref / CFz (inviscid coefficients, CFiz and CMiy). The aerodynamic centre is where the moment
-    does not change with lift: x_ac = x_ref - (dCMy/dCFz) cref, the slope fitted over the alpha sweep. Both are
-    given as points (x, y_ref, z_ref) in metres. A case with no normal force (|CFz| < 1e-6) has no centre of
-    pressure: its point is the reference point and Defined is 0.
-    """
+    """Centre of pressure of every case and aerodynamic centre of every (Mach, beta, Re_cref) alpha sweep."""
     i = {h: header.index(h) for h in ("Mach", "AoA", "Beta", "Re/1e6", "CFiz", "CMiy")}
     xr, yr, zr, cref = s.real("xcg"), s.real("ycg"), s.real("zcg"), s.real("cref")
     rows = []
@@ -392,9 +362,9 @@ def pressure_centers(work, case, header, data, s: Settings, log):
         log("aerodynamic centre x: " + ", ".join(f"Mach {r[0]:g} beta {r[1]:g}: {r[3]:.3f} m" for r in ac))
 
 
-# --- Force Accounting: Exposed Strip ------------------------------------------------------------------------------------
+# --- Force Accounting: Exposed Strip
 
-LOD_FORCES = {  # polar column: .lod strip column (0-based) of the same quantity, per strip area
+LOD_FORCES = {  # polar column: .lod strip column (0-based) of the same quantity
     "CLo": 14, "CDo": 15, "CSo": 16, "CLi": 17, "CDi": 18, "CSi": 19, "CLtot": 11, "CDtot": 12, "CStot": 13,
     "CFox": 23, "CFoy": 24, "CFoz": 25, "CFix": 26, "CFiy": 27, "CFiz": 28, "CFxtot": 20, "CFytot": 21, "CFztot": 22}
 LOD_MOMENTS = {  # polar column: (.lod column, reference length key): per strip area and chord
@@ -564,8 +534,7 @@ def main(settings_path):
         if stale.startswith(case + ".ntvsp.") and stale.endswith(".csv"):
             os.remove(os.path.join(work, stale))
     flight = Flight(s.text("flight"))
-    # The reference, moment point and freestream come with the flight condition (the first flight point's speed and
-    # density; they scale VSPAERO's dimensional loads only, and the pressure maps use each case's own).
+    # The reference
     sref, bref, cref, (xr, yr, zr) = flight.ref
     first = flight.points[0]
     s.raw.update(sref=repr(sref), bref=repr(bref), cref=repr(cref), xcg=repr(xr), ycg=repr(yr), zcg=repr(zr),

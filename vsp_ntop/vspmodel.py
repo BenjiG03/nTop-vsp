@@ -1,12 +1,4 @@
-"""Build OpenVSP Fuselage and Wing components from fitted sections (``fit.py``).
-
-Fuselages are built in two steps, because every change to a section in OpenVSP's API rebuilds the whole surface
-(about 1.7 s per section for a 30-section fuselage): a script makes the component with the right number of
-file-defined sections (``fuselage_lines``), and ``set_fuselage_sections`` then writes each section's position,
-shape and size straight into the saved ``.vsp3`` XML. Wings are few sections and are built by the script alone
-(``wing_lines``). Components go into the user sets "Thick" and "Thin" (OpenVSP sets 3 and 4), which the VSPAERO
-analysis hands to VSPAERO as its thick (panel) and thin (vortex lattice) sets. Standard library only.
-"""
+"""Build OpenVSP Fuselage and Wing components from fitted sections (``fit.py``)."""
 from __future__ import annotations
 
 import math
@@ -60,7 +52,7 @@ def fuselage_lines(k, name, f: F.FuselageFit, set_name, tess_w):
     for i, s in enumerate(secs):
         L.append(f"    ChangeXSecShape( xs{k}, {i}, {'XS_POINT' if s.is_point else 'XS_FILE_FUSE'} );")
     # A blunt end (a base, or a cut-off nose) is closed with a flat cap, so the surface stays closed for the panel
-    # method and for Wave Drag's area distribution; OpenVSP leaves fuselage ends open by default.
+    # method and for Wave Drag's area distribution.
     L.append(f'    SetParmVal( {gid}, "CapUMinOption", "EndCap", {0 if secs[0].is_point else 1} );')
     L.append(f'    SetParmVal( {gid}, "CapUMaxOption", "EndCap", {0 if secs[-1].is_point else 1} );')
     L += _sets(gid, set_name)
@@ -75,9 +67,8 @@ def _parm(group, name, value):
 
 
 def axial_points(secs, tess_w, aspect):
-    """Tessellation points along each section interval, so panels are about ``aspect`` times as long (along x) as
-    they are wide (around the body): the width is the smaller of the two sections' perimeters over ``tess_w - 1``.
-    VSPAERO's panel method goes wrong next to a wake when a body's panels are much longer than wide."""
+    """Tessellation points along each section interval, so panels are about ``aspect`` times as long (along x) as they
+    are wide (around the body): the width is the smaller of the two sections' perimeters over ``tess_w - 1``."""
     def perimeter(s):
         if s.is_point:
             return 0.0
@@ -93,12 +84,8 @@ def axial_points(secs, tess_w, aspect):
 
 def skin_angles(secs):
     """Skinning angle (degrees, from the x axis, positive where the side moves away from the axis going aft) of the
-    top, right, bottom and left sides at every section: the body's own slopes from the nTop slices around it (the fit's
-    ``slopes``), or else central differences of the sections' extents; a rounded point (``tip_angle``) meets the axis
-    square.
-
-    Every angle is set explicitly: OpenVSP put back its default fixed angles (45 degrees at the first section, -45 at
-    the last) when they were left free, which flared every blunt end out by about a tenth of its radius."""
+    top, right, bottom and left sides at every section: the body's own slopes from the nTop slices around it (the
+    fit's ``slopes``), or else central differences of the sections' extents."""
     def sides(s):
         if s.is_point:
             return (s.zc, s.yc, -s.zc, -s.yc)
@@ -110,7 +97,7 @@ def skin_angles(secs):
         if s.is_point and s.tip_angle is not None:
             out.append((s.tip_angle,) * 4)
             continue
-        if s.slopes is not None:  # the body's own slopes, from the nTop slices around the section
+        if s.slopes is not None:  # the body's own slopes
             out.append(tuple(math.degrees(math.atan(v)) for v in s.slopes))
             continue
         a, b = (i - 1 if i > 0 else i), (i + 1 if i < n - 1 else i)
@@ -120,10 +107,7 @@ def skin_angles(secs):
 
 
 def set_fuselage_sections(vsp3_in, vsp3_out, fits, tess):
-    """Write the fitted sections of each fuselage into a ``.vsp3`` made by ``fuselage_lines``.
-
-    ``fits``: {component name: FuselageFit}; ``tess``: {name: (tess_w, panel aspect ratio, nose cluster,
-    tail cluster)}."""
+    """Write the fitted sections of each fuselage into a ``.vsp3`` made by ``fuselage_lines``."""
     tree = ET.parse(vsp3_in)
     done = set()
     for geom in tree.getroot().iter("Geom"):
@@ -147,9 +131,7 @@ def set_fuselage_sections(vsp3_in, vsp3_out, fits, tess):
             _parm(g, "XLocPercent", (s.x - x0) / length)
             _parm(g, "YLocPercent", s.yc / length)
             _parm(g, "ZLocPercent", s.zc / length)
-            # each side keeps its own angle: AllSym (OpenVSP's "all sides like the top") made the sides and bottom copy
-            # the top's slope; on a body with different slopes per side (validation/fuselage_sides) the boattail's
-            # mean error was 3x larger with it. NTVSP_SKIN_SIDES=allsym restores it, for comparison.
+            # each side keeps its own angle
             sym = 1 if os.environ.get("NTVSP_SKIN_SIDES", "independent") == "allsym" else 0
             _parm(g, "AllSym", sym)
             if not sym:
@@ -209,8 +191,7 @@ SYMMETRY_FLAGS = {"none": "0", "xz": "SYM_XZ", "xy": "SYM_XY", "xzxy": "SYM_XZ |
 def wing_lines(k, name, f: F.WingFit, set_name, symmetry, tess_u, tess_w, le_cluster=0.25, te_cluster=0.25,
                root_cluster=1.0, tip_cluster=1.0, sharp_te=True):
     """Script lines for one Wing. ``symmetry``: none, xz, xy or xzxy (OpenVSP's planar symmetry: mirrored about the
-    x-z plane, the x-y plane, or both). ``tess_u``: spanwise points (shared between sections by span); ``tess_w``:
-    points around each airfoil."""
+    x-z plane, the x-y plane, or both). ``tess_u``: spanwise points (shared between sections by span)."""
     st = f.stations
     secs = F.wing_sections(f)
     fr = f.frame

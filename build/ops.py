@@ -1,8 +1,4 @@
-"""Thin typed wrappers around nTop block signatures, so graph code reads like the maths.
-
-Every function adds one nTop block instance to a ``Graph`` and returns its id. Nothing here computes
-a value: the arithmetic happens when nTop runs the notebook.
-"""
+"""Thin typed wrappers around nTop block signatures, so graph code reads like the maths."""
 from __future__ import annotations
 
 from ntopfile import Graph, ModelInput, Ref  # noqa: F401
@@ -24,7 +20,7 @@ class Ops:
     def _b(self, func, typ, inputs, name=None):
         return self.g.block(func, typ, list(inputs), name=name, top=name is not None)
 
-    # --- constants ---------------------------------------------------------------------------
+    # --- constants
     def real(self, v, units=None):
         """A constant, shared with every other use of the same value and units in this graph."""
         key = (float(v), tuple(sorted((units or {}).items())))
@@ -39,7 +35,7 @@ class Ops:
     def vector(self, x, y, z):
         return self.g.vector(x, y, z)
 
-    # --- scalars -----------------------------------------------------------------------------
+    # --- scalars
     def add(self, a, b, name=None):
         return self._b("add<real,real>", "real", [a, b], name)
 
@@ -79,9 +75,9 @@ class Ops:
         return self._b("core.select_by_choice<choice,list_interface>", "real", [choice, values], name)
 
     def pick(self, choice, items, name=None):
-        """As ``select``, for items that may be lists (one value per flight condition): the sum of each item times
-        a 0/1 weight picked by the dropdown. A list cannot be an item of a list in nTop, so ``select`` cannot take
-        them. The items must be finite."""
+        """As ``select``, for items that may be lists (one value per flight condition): the sum of each item times a
+        0/1 weight picked by the dropdown. A list cannot be an item of a list in nTop, so ``select`` cannot take them.
+        """
         out = None
         for i, item in enumerate(items):
             w = self.select(choice, [self.real(1.0 if j == i else 0.0) for j in range(len(items))])
@@ -101,7 +97,7 @@ class Ops:
         """w a + (1 - w) b."""
         return self.add(self.mul(w, a), self.mul(self.sub(self.real(1.0), w), b), name=name)
 
-    # --- vectors -----------------------------------------------------------------------------
+    # --- vectors
     def vadd(self, a, b, name=None):
         return self._b("add<vector,vector>", "vector", [a, b], name)
 
@@ -131,7 +127,7 @@ class Ops:
         r = ref if isinstance(ref, Ref) else Ref(ref)
         return Ref(r.instance, r.prop + (c,))
 
-    # --- scalar fields -----------------------------------------------------------------------
+    # --- scalar fields
     def fadd(self, a, b, name=None):
         return self._b("add<real_field,real_field>", "real_field", [a, b], name)
 
@@ -175,7 +171,7 @@ class Ops:
         """f evaluated at (x(p), y(p), z(p)) instead of p."""
         return self._b("remap<real_field,real_field,real_field,real_field>", "real_field", [f, x, y, z], name)
 
-    # --- vector fields -----------------------------------------------------------------------
+    # --- vector fields
     def vfield(self, x, y, z, name=None):
         return self._b("vector_field_from_components<real_field,real_field,real_field>", "vector_field", [x, y, z], name)
 
@@ -198,7 +194,7 @@ class Ops:
     def vfsub(self, a, b, name=None):
         return self._b("subtract<vector_field,vector_field>", "vector_field", [a, b], name)
 
-    # --- integrals ---------------------------------------------------------------------------
+    # --- integrals
     def flux(self, body, v, tol, name=None):
         """Integral over the body's surface of v . n dA (nTop's Surface Integral of a vector field)."""
         return self._b("surface_integral<implicit,vector_field,real>", "real", [body, v, tol], name)

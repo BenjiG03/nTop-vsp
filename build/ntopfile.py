@@ -1,10 +1,4 @@
-"""Write nTop custom blocks and host notebooks as .ntop containers.
-
-A notebook is a graph of block instances in JSON plus a table of constants. This module
-keeps that graph as plain data: ``Graph`` accumulates instances and the functions at the
-bottom turn it into container sections. Container reading and writing comes from
-``implicit_io``, which also documents the format.
-"""
+"""Write nTop custom blocks and host notebooks as .ntop containers."""
 from __future__ import annotations
 
 import uuid
@@ -116,7 +110,7 @@ class Graph:
 
     def block(self, func, typ, inputs, name=None, top=True, units=None) -> int:
         iid = self._new()
-        # nTop renames duplicates on load, so unnamed helpers get unique names here.
+        # nTop renames duplicates on load
         self.code.append(_instance(iid, func, typ, inputs, name or f"{func.split('<')[0]}_{iid}", units=units))
         if top:
             self.top.append(iid)
@@ -209,8 +203,7 @@ def _input_section(name, spec: InputSpec, block_key, index) -> nc.Section:
                    graph.leaves)
 
 
-# nTop's own output types of blocks the builders annotate loosely: a variable checks its block's type, a plain block
-# does not (Export Text's output is a Text File, "text_file", not a path).
+# nTop's own output types of blocks the builders annotate loosely
 OUTPUT_TYPES = {"export_text": "text_file"}
 LIST_PROPERTIES = {"points", "values"}  # properties that are lists (of a point map)
 
@@ -279,9 +272,7 @@ def list_outputs(code, input_types):
 def as_variables(top, code, output, input_types=()):
     """Every top-level block of a custom block's graph made a variable, as nTop shows them: each is wrapped in a
     ``core.var<type>`` that takes the block's name and its place at the top level, the block moves inside it, and
-    every connection to the block (properties included) and the block's output go through the variable. A block run
-    once per item of a list (``list_outputs``) gets a ``list<type>`` variable. Variables and floating comments stay
-    as they are. Returns (top, code, output) without changing the graph."""
+    every connection to the block (properties included) and the block's output go through the variable."""
     code = [dict(inst, type=OUTPUT_TYPES.get(inst["func"].split("<")[0], inst["type"])) if inst["func"] else inst
             for inst in code]
     by_id = {inst["id"]: inst for inst in code}
@@ -329,8 +320,8 @@ class CustomBlock:
     graph: Graph
     output: int
     side_effects: bool = True
-    function_id: str = ""  # keeps the id of a block saved from nTop; default derives one from the key
-    dependencies: tuple = ()  # indices of the custom blocks this one calls, among the embedded sf sections
+    function_id: str = ""  # keeps the id of a block saved from nTop.
+    dependencies: tuple = ()  # indices of the custom blocks this one calls
     requires: tuple = field(default=(), compare=False)  # the custom blocks this one calls (set dependencies on save)
 
     @property
@@ -403,11 +394,7 @@ def with_dependencies(blocks, first=0) -> list:
 
 
 def save_block(block: CustomBlock, path, template=TEMPLATE, embedded=()) -> str:
-    """Write the block as its own .ntop file, importable with File > Import.
-
-    The custom blocks it calls (``block.requires``, or ``embedded`` in the order its ``dependencies`` index) are
-    stored as sf sections, as nTop stores a custom block that uses other custom blocks.
-    """
+    """Write the block as its own .ntop file, importable with File > Import."""
     if block.requires:
         embedded = with_dependencies(block.requires)
         number = {b.key: i for i, b in enumerate(embedded)}

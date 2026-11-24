@@ -1,12 +1,5 @@
 """Write the nTop custom blocks: nTop implicit bodies to an OpenVSP model, and OpenVSP's VSPAERO, Wave Drag and
-Parasite Drag on it.
-
-    sh build/py.sh build/build_blocks.py [--out DIR]
-
-Each file in ``blocks/`` is one custom block; bring it into nTop with File > Import (or drag it into a
-notebook). The blocks call the Python drivers in ``vsp_ntop/`` with Run Command, so nTop asks once to trust
-the notebook's Run Command blocks.
-"""
+Parasite Drag on it."""
 from __future__ import annotations
 
 import argparse

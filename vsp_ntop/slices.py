@@ -1,9 +1,4 @@
-"""Section contours of an implicit body, as nTop's Slice Body block exports them (CLI, ASCII).
-
-nTop slices the body with parallel planes in a frame (x axis, y axis, slicing direction z = x cross y) and
-Export Slices to CLI writes each layer's contours as closed polylines in the frame's x and y. ``read_cli``
-returns them in metres. The helpers below are plane geometry on those loops. Standard library only.
-"""
+"""Section contours of an implicit body, as nTop's Slice Body block exports them (CLI, ASCII)."""
 from __future__ import annotations
 
 import math

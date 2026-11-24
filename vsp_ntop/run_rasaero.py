@@ -1,28 +1,6 @@
 """RASAero II on an OpenVSP model of a rocket, driven from nTop.
 
     python -m vsp_ntop.run_rasaero SETTINGS_FILE
-
-RASAero II (Rogers Aeroscience, free, Windows) has no command line. This driver
-
-1. turns the OpenVSP model into a RASAero II design: the fuselage (``body``, or the model's only fuselage) sampled on
-   its OpenVSP surface gives the nose (its length is where the radius first reaches the body's; its shape the
-   closest of Conical, Tangent Ogive and Von Karman Ogive), the body tube and, when the radius falls at the tail, a
-   boattail; the wings (``fins``, or every wing) sampled on their surfaces give one fin set: the count (every surface,
-   mirrored copies included), and the exposed root chord, tip chord, span and sweep distance outboard of the body, the
-   thickness and a hexagonal section with the leading- and trailing-edge bevel lengths. RASAero II takes trapezoidal
-   fins of one kind only, so the fins must all be alike;
-2. runs RASAero II (``RASAERO_PATH``: the folder holding ``RASAero II.exe``) through its window, with Microsoft Active
-   Accessibility (``rasaero_ui``: the scripts of hypanel's RASAero comparison): opens the design and runs its Run
-   Test at each total angle of attack the flight condition needs, once per altitude (the launch site altitude);
-3. reads the Run Test files (normal force, axial force and centre of pressure against Mach number, every 0.01) and
-   writes ``<case>.ntvsp.coefficients.csv`` at every condition of the flight condition: RASAero II is axisymmetric,
-   so at (alpha, beta) the normal force is taken at the total angle acos(cos a cos b) along the crossflow, with the
-   centre of pressure on the body axis, in the flight condition's reference (RASAero's coefficients are on the
-   body's cross-section area). Also ``<case>.CDX1`` (the design) and ``<case>.ntvsp.rasaero_design.txt`` (what was
-   fitted).
-
-Settings: model, flight, body, fins, turbulent (1: all turbulent), surface (RASAero's Surface text), timeout_s,
-rasaero_dir, mach_min, mach_max.
 """
 from __future__ import annotations
 
@@ -44,7 +22,7 @@ HEADER_ALT = ("Mach", "Altitude", "AoA", "Beta", "CA", "CY", "CN", "Cl", "Cm", "
               "Yref", "Zref")
 
 
-# --- geometry ------------------------------------------------------------------------------------------------------
+# --- geometry
 
 def ogive(t, fineness):
     """Tangent ogive r / R at x / L = t for L / R = 2 fineness."""
@@ -128,8 +106,7 @@ def fin_planform(ring_list, body_radius_at):
         h = [((q[1] - cy) * -cz + (q[2] - cz) * cy) / n for q in ring]
         return max(h) - min(h)
 
-    # OpenVSP's wing surface starts and ends with its end caps: rings at the root (and tip) span whose section
-    # shrinks to nothing. Keep one ring per span station, the fullest.
+    # OpenVSP's wing surface starts and ends with its end caps
     by_rho = {}
     for ring in ring_list:
         rho = math.hypot(sum(q[1] for q in ring) / len(ring), sum(q[2] for q in ring) / len(ring))
@@ -161,11 +138,11 @@ def fin_planform(ring_list, body_radius_at):
     else:
         rb, le_x, te_x = root[0], root[1], root[2]
     chord, tip_chord = te_x - le_x, tip[2] - tip[1]
-    # thickness and bevels from the root ring: half-thickness along the chord
+    # thickness and bevels from the root ring
     ring = root[3]
     cy = sum(q[1] for q in ring) / len(ring)
     cz = sum(q[2] for q in ring) / len(ring)
-    ny, nz = -cz, cy  # normal to the fin's plane in y-z: across the span direction
+    ny, nz = -cz, cy  # normal to the fin's plane in y-z
     nn = math.hypot(ny, nz) or 1.0
     ny, nz = ny / nn, nz / nn
     pts = [(q[0], (q[1] - cy) * ny + (q[2] - cz) * nz) for q in ring]
@@ -281,7 +258,7 @@ def design_xml(nose, body, fins, n_fins, altitude_ft, turbulent, surface):
 """
 
 
-# --- running RASAero II ----------------------------------------------------------------------------------------
+# --- running RASAero II
 
 def ps(script, *args, timeout=600):
     cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", os.path.join(UI, script)] + list(args)
@@ -371,7 +348,7 @@ def main(settings_path):
     nose = fit_nose(xs, radius)
     n_len, big, shape, rms = nose
     tail = [i for i in range(len(xs)) if xs[i] > xs[0] + n_len]
-    drop = [i for i in tail if radius[i] < 0.95 * big]  # a real boattail, not a skinning wiggle at the base
+    drop = [i for i in tail if radius[i] < 0.95 * big]  # a real boattail
     boattail = None
     if drop and drop[0] > tail[0]:
         start = xs[drop[0] - 1]
@@ -394,7 +371,7 @@ def main(settings_path):
     plan = [fin_planform([[(q[0], q[1] - axis_y, q[2] - axis_z) for q in r] for r in rl], body_radius_at)
             for rl in surfaces.values()]
     ref = plan[0]
-    for p in plan[1:]:  # measured where each fin meets the fitted round body: a noncircular body spreads them
+    for p in plan[1:]:  # measured where each fin meets the fitted round body
         for k in ("root_chord", "tip_chord", "span", "sweep"):
             gap = abs(p[k] - ref[k]) / max(ref["root_chord"], 1e-9)
             if gap > 0.10:
@@ -413,13 +390,12 @@ def main(settings_path):
     log("RASAero II design: " + summary)
     open(os.path.join(work, case + ".ntvsp.rasaero_design.txt"), "w", encoding="utf-8").write(summary + "\n")
 
-    # 2. run RASAero II: one design per altitude, Run Test at every total angle of attack needed
+    # 2. run RASAero II
     def alpha_t(c):
         a, b = math.radians(c["AoA"]), math.radians(c["Beta"])
         return math.degrees(math.acos(max(-1.0, min(1.0, math.cos(a) * math.cos(b)))))
 
-    # RASAero II's angle-of-attack box takes whole degrees only (it drops a decimal point: 8.94 becomes 894), so the
-    # Run Test is made at every whole degree up to the largest total angle and interpolated between them.
+    # RASAero II's angle-of-attack box takes whole degrees only (it drops a decimal point: 8.94 becomes 894)
     angles = list(range(0, int(math.ceil(max(alpha_t(c) for c in conds) - 1e-9)) + 1))
     if len(angles) < 2:
         angles = [0, 1]
@@ -463,7 +439,7 @@ def main(settings_path):
         lo_, hi_ = at_mach(tables[(alt, j)], c["Mach"]), at_mach(tables[(alt, j + 1)], c["Mach"])
         cn = (1 - t) * lo_[0] + t * hi_[0]
         ca = (1 - t) * lo_[1] + t * hi_[1]
-        # the moment (CN x_cp) is linear between the runs; at no normal force, the low-angle centre of pressure
+        # the moment (CN x_cp) is linear between the runs.
         x_cp = ((1 - t) * lo_[0] * lo_[2] + t * hi_[0] * hi_[2]) / cn if abs(cn) > 1e-9 else lo_[3]
         cn, ca = cn * scale, ca * scale
         a, b = math.radians(c["AoA"]), math.radians(c["Beta"])

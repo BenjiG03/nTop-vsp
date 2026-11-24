@@ -1,13 +1,5 @@
 """The Flight Condition block, and the analyses computed in nTop itself on it: Modified Newtonian, the viscous
-(skin-friction) correction and coefficients given directly.
-
-Flight Condition (VSP) runs ``vsp_ntop.run_flight`` (US Standard Atmosphere 1976 through ``ambiance``) and outputs
-its results base; every analysis takes it. The nTop-native analyses read its tables with Import Table, evaluate
-their graphs once per condition (nTop's list processing over the condition lists), and write
-``<flight base>_<Case Name>.ntvsp.coefficients.csv`` with Export Text: one row per condition, body-axis force and
-moment coefficients (x aft, y right, z up) with the reference they are normalised by. Their output is that path
-base, for Coefficients Contribution (VSP).
-"""
+(skin-friction) correction and coefficients given directly."""
 from __future__ import annotations
 
 import math
@@ -33,7 +25,7 @@ def _list_default(values, units=None):
     return lambda g: g.block("core.list<real>", "list<real>", [g.real(v, units) for v in values], top=False)
 
 
-# --- Flight Condition ----------------------------------------------------------------------------------------------------
+# --- Flight Condition
 
 def flight_block():
     own = (
@@ -59,11 +51,7 @@ def flight_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**Flight condition.** The flight points are (Mach, altitude) pairs; the analyses run each at every "
-              "sideslip and angle of attack. A Python driver evaluates the US Standard Atmosphere 1976 at each "
-              "altitude (the `ambiance` package): temperature, pressure, density, speed of sound and viscosity, and "
-              "from the Mach number the velocity, dynamic pressure and Reynolds number. The reference area, span, "
-              "chord and moment point travel with the conditions to every analysis and to the Aero Database.")
+    g.comment("**Flight condition.** The flight points are (Mach, altitude) pairs.")
     g.comment("**Files** (in the Working Directory, under the Case Name): `.ntvsp.points.csv` (per flight point), "
               "`.ntvsp.flight.csv` (per condition: point x sideslip x angle of attack, angle of attack fastest), "
               "`.ntvsp.inviscid.csv` (the distinct Mach, angle of attack and sideslip combinations, for analyses that "
@@ -83,9 +71,7 @@ def flight_block():
         "flight_condition", "Flight Condition (VSP)",
         "The flight conditions and reference shared by every analysis and by the Aero Database: Mach numbers paired "
         "with altitudes (the US Standard Atmosphere 1976 gives temperature, pressure, density, speed and Reynolds "
-        "number), each at every angle of attack and sideslip, with the reference area, span, chord and moment "
-        "point. Connect its output to the analyses (VSPAERO, Wave Drag, Parasite Drag, Modified Newtonian, Viscous "
-        "Correction) and to Aero Database (VSP); each uses what it needs.", specs, "text", g, out)
+        "number), each at every angle of attack and sideslip, with the reference area, span, chord and moment point.", specs, "text", g, out)
 
 
 def _prop(ref, c):
@@ -93,7 +79,7 @@ def _prop(ref, c):
     return prop(ref, c)
 
 
-# --- reading a flight condition in nTop ------------------------------------------------------------------------------------
+# --- reading a flight condition in nTop
 
 class Conditions:
     """A flight condition's columns as lists, kept to the conditions with Mach Min <= Mach < Mach Max."""
@@ -126,7 +112,7 @@ def write_coefficients(g, k, flight, case, cond, coefficients, ref_first, with_a
     """Export the rows; returns the results base (available once the file is written)."""
     cols = [cond["Mach"]] + ([cond["Altitude"]] if with_altitude else []) + [cond["AoA"], cond["Beta"]]
     parts = [k.num(c) for c in cols] + [k.num(coefficients[n]) for n in ("CA", "CY", "CN", "Cl", "Cm", "Cn")]
-    # Newtonian normalises every moment by one reference length, the chord: say so in Bref and Cref.
+    # Newtonian normalises every moment by one reference length, the chord
     parts += [k.num(ref_first[c]) for c in ("Sref", "Cref", "Cref", "Xref", "Yref", "Zref")]
     rows = k.ecat(parts, sep=",")
     text = k.cat([header or (COEFFICIENT_HEADER_ALT if with_altitude else COEFFICIENT_HEADER), "\n",
@@ -174,7 +160,7 @@ def _newtonian_values(g, k, inp, cond, ref, extra=None):
     return values
 
 
-# --- Modified Newtonian ---------------------------------------------------------------------------------------------------
+# --- Modified Newtonian
 
 def newtonian_block():
     specs = (InputSpec("Body", "implicit", "The body (an implicit). Its gradient gives the surface normal, so any "
@@ -191,9 +177,7 @@ def newtonian_block():
     cond = Conditions(g, k, inp("Flight Condition"), "inviscid", ("Mach", "AoA", "Beta"), inp("Mach Min"), inp("Mach Max"))
     ref = cond.ref()
     sol = newtonian.build(g, _newtonian_values(g, k, inp, cond, ref).__getitem__)
-    g.comment("**6. Table.** One row per condition: Mach, AoA, Beta (degrees), CA, CY, CN, Cl, Cm, Cn and the "
-              "reference, written to `<Flight Condition>_<Case Name>.ntvsp.coefficients.csv` for Coefficients "
-              "Contribution (VSP).")
+    g.comment("**6.")
     out = write_coefficients(g, k, inp("Flight Condition"), inp("Case Name"), cond, sol.coefficients, ref[0], False)
     return make_block(
         "modified_newtonian", "Modified Newtonian (VSP)",
@@ -235,7 +219,7 @@ def newtonian_pressure_block():
                       g, out)
 
 
-# --- Modified Newtonian on a mesh ----------------------------------------------------------------------------------------
+# --- Modified Newtonian on a mesh
 
 MESH_CP_MAX_KEYS = ("modified", "classical", "user")
 
@@ -298,8 +282,7 @@ def _mesh_block(method):
               "condition within Mach Min to Mach Max.")
 
     def exports(ready):
-        g.comment("**1. Mesh.** The Mesh is exported as an STL in millimetres; the driver lists its faces' centroids "
-                  "and areas as a point map.")
+        g.comment("**1.")
         stl = k.cat([ready, ".ntvsp.mesh.stl"], name="Mesh File")
         exported = g.block("export_mesh<file_path,mesh,unit_length_enum>", "mesh_file_data",
                            [stl, inp("Mesh"), g.unit_length("mm")], "Export Mesh")
@@ -310,10 +293,7 @@ def _mesh_block(method):
                                           faces_csv, '"']))
         rc = k.run_command(command, temp, inp("Timeout"), name="List Mesh Faces")
         ok = k.check(rc, "Listing the mesh faces", name="Check Faces")
-        g.comment("**2. The Body at the faces.** nTop evaluates the Body's gradient (its normal) at every face "
-                  "centroid and exports it (`<Case Name>.ntvsp.mesh_gradient.csv`), in the faces' order. With "
-                  "Stagnation Pressure User Defined it exports the Cp Max Field there too "
-                  "(`<Case Name>.ntvsp.mesh_cp_max.csv`; otherwise the path list is empty and nothing is written).")
+        g.comment("**2.")
         faces = g.block("import_real_point_map<file_path,unit_length_enum,real_field>", "real_point_map",
                         [k.wait(ok, faces_csv), g.unit_length("mm"), o.field("1")], "Mesh Faces")
         points = Ref(faces, ("points",))
@@ -345,9 +325,7 @@ def _mesh_block(method):
                   k.line("separated", k.pick(inp("Separated Faces"), TW_SEPARATED_KEYS))]
     lines += [k.line(f"aft_{c}", k.num(_prop(aft, c))) for c in "xyz"]
     lines += [k.line(f"up_{c}", k.num(_prop(up, c))) for c in "xyz"]
-    g.comment("**3. Sums.** The driver `vsp_ntop.run_newtonian_mesh` computes Cp on every face at every condition and "
-              "sums the forces and moments; it writes `<Case Name>.ntvsp.coefficients.csv` (Mach, AoA, Beta, CA, CY, "
-              "CN, Cl, Cm, Cn and the reference), the layout of Modified Newtonian (VSP).")
+    g.comment("**3.")
     title = "Tangent Wedge on Mesh" if wedge else "Modified Newtonian on Mesh"
     out = analysis(g, k, inp, "run_newtonian_mesh", exports, lines, title, needs_openvsp=False)
     if wedge:
@@ -373,7 +351,7 @@ def _mesh_block(method):
         "results path for Coefficients Contribution (VSP).\n" + newtonian.METHOD_DOC, specs, "text", g, out)
 
 
-# --- Viscous correction -----------------------------------------------------------------------------------------------------
+# --- Viscous correction
 
 PRESSURE_SOURCES = ("Modified Newtonian (computed here)", "Freestream (Cp = 0: flat-plate friction)")
 
@@ -412,9 +390,7 @@ def viscous_block():
         "Boundary Layer": inp("Boundary Layer"), "Transition Reynolds Number": inp("Transition Reynolds Number"),
         "Wall": inp("Wall"), "Wall Temperature": inp("Wall Temperature")})
     _, coefficients, _ = viscous.build(g, values.__getitem__)
-    g.comment("**9. Table.** One row per condition (with its altitude): Mach, Altitude (m), AoA, Beta, CA ... Cn and "
-              "the reference, written to `<Flight Condition>_<Case Name>.ntvsp.coefficients.csv` for Coefficients "
-              "Contribution (VSP).")
+    g.comment("**9.")
     out = write_coefficients(g, k, inp("Flight Condition"), inp("Case Name"), cond, coefficients, ref[0], True)
     return make_block(
         "viscous_correction", "Viscous Correction (VSP)",
@@ -424,7 +400,7 @@ def viscous_block():
         "Coefficients Contribution (VSP).\n" + viscous.VISCOUS_DOC, specs, "text", g, out)
 
 
-# --- Coefficients given directly ----------------------------------------------------------------------------------------------
+# --- Coefficients given directly
 
 AXES = ("Body: CA, CY, CN; moments about x aft, y right, z up",
         "Wind: CD, CY, CL; moments in aircraft body-axis signs (Cl right wing down, Cm nose up, Cn nose right)")
@@ -441,9 +417,9 @@ def coefficients_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**Coefficients from anywhere.** Six lists, one value per condition of the flight condition (test data, "
-              "another tool, other nTop blocks), written as a coefficient table for Coefficients Contribution (VSP). "
-              "Each list must have as many values as the flight condition has conditions.")
+    g.comment("**Coefficients from anywhere.** Six lists, one value per condition of the flight condition (test "
+              "data, another tool, other nTop blocks), written as a coefficient table for Coefficients Contribution "
+              "(VSP).")
     cond = Conditions(g, k, inp("Flight Condition"), "flight", ("Mach", "Altitude", "AoA", "Beta"), g.real(-1.0),
                       g.real(1e9))
     first, _, _, _ = cond.ref()

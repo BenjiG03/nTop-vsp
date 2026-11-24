@@ -1,14 +1,5 @@
-"""Write (and optionally run) the mixed-analysis example: one aero database from VSPAERO, Wave Drag, Modified Newtonian
-and the Viscous Correction, each over its own Mach range.
-
-    sh build/py.sh build/mixed_example.py [--run]
-
-The X-59 starter's geometry again (its parametric graph, unchanged), on one Flight Condition of three flight points
-at three altitudes, Mach 0.8, 1.6 and 4: VSPAERO below Mach 2.5 (its vortex lattice on the lifting surfaces),
-Wave Drag up to Mach 2.5, Modified Newtonian on the whole aircraft from Mach 2.5, and the Viscous Correction's skin
-friction at every Mach number in place of Parasite Drag. Aero Database sums them, Center of Pressure gives the
-aerodynamic center and Polar Plot draws CL against CD.
-"""
+"""Write (and optionally run) the mixed-analysis example: one aero database from VSPAERO, Wave Drag, Modified
+Newtonian and the Viscous Correction, each over its own Mach range."""
 from __future__ import annotations
 
 import argparse
@@ -33,7 +24,7 @@ RUNS = ROOT + "/runs"
 NOTEBOOK = EXAMPLES + "/X-59 Mixed Analyses.ntop"
 POINTS = ((0.8, 30000.0), (1.6, 50000.0), (4.0, 80000.0))   # (Mach, altitude ft)
 ALPHAS = (0.0, 4.0)
-HANDOVER = 2.5   # Mach: VSPAERO and Wave Drag below, Modified Newtonian from here
+HANDOVER = 2.5   # Mach: VSPAERO and Wave Drag below
 
 
 def build(path=NOTEBOOK):
@@ -59,9 +50,7 @@ def build(path=NOTEBOOK):
               "* **Viscous Correction** (skin friction from the standard atmosphere at each altitude) at every Mach "
               "number, in place of Parasite Drag.\n\nThe blocks call Python and OpenVSP with Run Command: allow them "
               "when nTop asks.")
-    g.comment("**1. OpenVSP model** for VSPAERO and Wave Drag: the fuselage in no VSPAERO set, the wing, canards and "
-              "horizontal tails as one Wing block (mirrored about the x-z plane), the fin (cut below the T-tail) as "
-              "another.")
+    g.comment("**1.")
     cut = g.block("box<point,real,real,real>", "box", [g.point(25000, 0, 3100 + 5000), g.real(20.0, LENGTH),
                                                         g.real(20.0, LENGTH), g.real(10.0, LENGTH)], "Above T-Tail")
     fin = g.block("boolean_subtract<blend_enum,real_field,implicit,list<implicit>>[5.44.0]", "implicit",
@@ -82,8 +71,7 @@ def build(path=NOTEBOOK):
                        "Symmetry": lambda g: g.choice(list(mb.SYMMETRY), 0)}, "Fin Component")], "Components")
     run = {"Working Directory": lambda g: g.file_path(RUNS)}
     vsp_model = call(g, model, {"Components": comps, **run, "Case Name": lambda g: g.text("mixed_model")}, "X-59 Model")
-    g.comment("**2. Flight condition**: Mach numbers paired with altitudes (US Standard Atmosphere 1976), every pair at "
-              "each angle of attack; the reference area, span and chord of the baseline wing and the CG station.")
+    g.comment("**2.")
     deg = math.radians(1.0)
     fc = call(g, flight, {"Mach": lambda g: lst("real", [g.real(m) for m, _ in POINTS], "Mach"),
                           "Altitude": lambda g: lst("real", [g.real(h * 0.3048, LENGTH) for _, h in POINTS], "Altitude"),
@@ -125,8 +113,7 @@ def build(path=NOTEBOOK):
                             "Case Name": lambda g: g.text("mixed_database")}, "Aero Database")
     table = call(g, db_table, {"Results": db}, "Database Table")
     ac = call(g, center, {"Aero Database": db, "Quantity": lambda g: g.choice(list(v.CENTERS), 1)}, "Aerodynamic Center")
-    g.comment("**5. Drag polar**, CL against CD, one curve per flight point; it opens in a window and is saved as "
-              "`runs/mixed_polar.png`.")
+    g.comment("**5.")
     img = call(g, plot, {"Results": lambda g: lst("text", [db]), **run,
                          "Case Name": lambda g: g.text("mixed_polar")}, "Drag Polar")
     out = g.block("core.group<any>", "group", [table, ac, img], "Outputs")

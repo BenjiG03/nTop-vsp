@@ -1,13 +1,4 @@
-"""Write (and optionally run) the X-59 aero database example notebook.
-
-    sh build/py.sh build/x59_example.py [--run]
-
-The notebook is the X-59 hackathon starter's parametric geometry with blocks appended: each component body becomes
-an OpenVSP component, OpenVSP Model builds the model, VSPAERO, Wave Drag and Parasite Drag run on it over a shared
-flight envelope, and Aero Database combines them into a six-degree-of-freedom table. Wing Span and Wing Inner Sweep
-are notebook inputs and are recorded in every row, so ``examples/x59_doe.py`` can run the notebook over a design of
-experiments and collect one table (``runs/x59_doe.csv``).
-"""
+"""Write (and optionally run) the X-59 aero database example notebook."""
 from __future__ import annotations
 
 import argparse
@@ -80,13 +71,7 @@ def build(path=NOTEBOOK):
               "alpha x beta condition.\n\n**Wing Span** and **Wing Inner Sweep** are inputs of this notebook and are "
               "recorded in every row: `examples/x59_doe.py` runs it over a design of experiments and collects one "
               "table. The blocks call Python and OpenVSP with Run Command: allow them when nTop asks.")
-    g.comment("**1. Components.** Each body of the starter becomes an OpenVSP component; a component block takes a list "
-              "of bodies. The fuselage assembly (fuselage and nacelle, unioned in the starter) is an OpenVSP Fuselage "
-              "in no VSPAERO set: VSPAERO solves the lifting surfaces with its vortex lattice, while Wave Drag and "
-              "Parasite Drag take the whole model (see the README for why). The wing, canards and tails are one Wing "
-              "block (four bodies, each with its span axis, mirrored about the x-z plane), the fin another (no "
-              "symmetry, span axis +z), all in the Thin set. The fin is cut 65 mm below the T-tail's plane, because thin "
-              "surfaces that cross near a tip make VSPAERO fail above Mach 1.")
+    g.comment("**1.")
     cut = g.block("box<point,real,real,real>", "box", [g.point(25000, 0, 3100 + 5000), g.real(20.0, LENGTH),
                                                         g.real(20.0, LENGTH), g.real(10.0, LENGTH)], "Above T-Tail")
     cut_list = g.block("core.list<implicit>", "list<implicit>", [cut], top=False)
@@ -114,8 +99,7 @@ def build(path=NOTEBOOK):
              "Fin Component"),
     ]
     comp_list = g.block("core.list<text>", "list<text>", comps, "Components")
-    g.comment("**2. OpenVSP model.** Fitted to the bodies' section contours; Model Check gives each component's largest "
-              "distance from its body (metres) and Model Mesh shows OpenVSP's surfaces.")
+    g.comment("**2.")
     run = {"Working Directory": lambda g: g.file_path(RUNS)}
     vsp_model = call(g, model, {"Components": comp_list, **run, "Case Name": lambda g: g.text("x59_model")}, "X-59 Model")
     call(g, check, {"Model": vsp_model}, "Largest Deviation")
@@ -136,8 +120,7 @@ def build(path=NOTEBOOK):
                           "Reference Chord": lambda g: g.real(CREF, LENGTH),
                           "Moment Reference Point": lambda g: g.point(*CG),
                           **run, "Case Name": lambda g: g.text("x59_flight")}, "Flight Condition")
-    g.comment("**4. VSPAERO** (vortex lattice on the Thin set), every condition in one run, with a fixed wake for speed "
-              "(a relaxed wake changed CL by under 0.1% on this model at Mach 1.6).")
+    g.comment("**4.")
     ss = call(g, solver, {"Processors": lambda g: g.integer(16),
                           "Wake": lambda g: g.choice(["Relaxed", "Fixed"], 1)}, "Solver Settings")
     aero = call(g, ana, {"OpenVSP Model": vsp_model, "Flight Condition": fc, "Solver Settings": ss,
@@ -149,12 +132,7 @@ def build(path=NOTEBOOK):
     g.comment("**6. Parasite Drag** of every component at each flight point (Mach number and altitude).")
     pd = call(g, parasite, {"OpenVSP Model": vsp_model, "Flight Condition": fc, **run,
                             "Case Name": lambda g: g.text("x59_parasite")}, "Parasite Drag")
-    g.comment("**7. Aero database.** Each analysis becomes a contribution: VSPAERO's inviscid forces and moments, wave "
-              "drag (supersonic) and parasite drag. Aero Database sums them at every condition of the flight condition "
-              "into CL, CD, CY, Cl, Cm, Cn, with the two design variables in the first columns; each run's rows are "
-              "also appended to `runs/x59_doe.csv`. Other sources (Modified Newtonian above some Mach number, a "
-              "Viscous Correction in place of Parasite Drag) go into the same list through Coefficients Contribution "
-              "(VSP).")
+    g.comment("**7.")
     span_m = g.block("divide<real,real>", "real", [dv.id_of("Wing Span"), g.real(1.0, LENGTH)], top=False)
     sweep_deg = g.block("divide<real,real>", "real", [dv.id_of("Wing Inner Sweep"), g.real(math.radians(1.0), ANGLE)],
                         top=False)
@@ -170,11 +148,9 @@ def build(path=NOTEBOOK):
     table = call(g, db_table, {"Results": db}, "Database Table")
     cl = call(g, coef, {"Results": aero, "Coefficient": lambda g: g.choice(list(v.POLAR_COLUMNS), v.POLAR_COLUMNS.index("CLi"))},
               "CLi")
-    g.comment("**8. Aerodynamic center** (neutral point) at each Mach number and beta, from the database's pitching "
-              "moment against normal force: positions, to compare with the CG station (18.27 m) for the static margin.")
+    g.comment("**8.")
     ac = call(g, center, {"Aero Database": db, "Quantity": lambda g: g.choice(list(v.CENTERS), 1)}, "Aerodynamic Center")
-    g.comment("**9. Drag polar**, CL against CD at zero sideslip, one curve per Mach number. It opens in a window and is "
-              "saved as `runs/x59_polar.png`.")
+    g.comment("**9.")
     img = call(g, plot, {"Results": lambda g: g.block("core.list<text>", "list<text>", [db], top=False),
                          "Filter": lambda g: g.choice(list(bb.FILTERS), 1), **run,
                          "Case Name": lambda g: g.text("x59_polar")}, "Drag Polar")

@@ -1,15 +1,4 @@
-"""Fit OpenVSP fuselage and wing definitions to the section contours of an implicit body.
-
-The model axes are OpenVSP's: x aft, y to the right, z up. A body is sliced by nTop in a frame (``Frame``):
-
-* fuselage: planes normal to x. Contour coordinates are (y, z).
-* wing: planes normal to the span axis s (a unit vector normal to x: +y for a wing or tailplane, +z for a
-  fin, in between for a canted fin). Contour coordinates are (n, x) with n = x cross s the wing's upward normal,
-  so the wing's own frame is (x, s, n), OpenVSP's (X, Y, Z) of a wing component.
-
-``fit_fuselage`` returns the stations and closed cross-sections of an OpenVSP Fuselage; ``fit_wing`` the
-stations, chords, twists and airfoils of an OpenVSP Wing. Standard library only.
-"""
+"""Fit OpenVSP fuselage and wing definitions to the section contours of an implicit body."""
 from __future__ import annotations
 
 import math
@@ -69,7 +58,7 @@ def wing_frame(origin, span_axis):
     return Frame(tuple(origin), cross(x, s), x)
 
 
-# --- Fuselage --------------------------------------------------------------------------------------------------------
+# --- Fuselage
 
 @dataclass
 class FuseSection:
@@ -82,7 +71,7 @@ class FuseSection:
     params: list = field(default_factory=list)   # curve parameter 0..1 of each point
     loop: list = field(default_factory=list)     # the source contour (frame u, v), for the deviation check
     tip_angle: float = None   # a rounded point's skinning angle (degrees from the axis: 90 nose, -90 tail)
-    slopes: tuple = None      # d(extent)/dx of the top, right, bottom and left sides, from the slices
+    slopes: tuple = None      # d(extent)/dx of the top
 
     @property
     def is_point(self):
@@ -97,22 +86,22 @@ class FuselageFit:
 
 
 def _section_curve(loop, per_quarter):
-    """Closed curve through a contour in OpenVSP's order: right-hand point, down through the bottom, round the
-    left side and over the top. The four quarters meet at the widest points (right, left) and on the centreline
-    (bottom, top); each is sampled evenly by arc length."""
+    """Closed curve through a contour in OpenVSP's order: right-hand point, down through the bottom, round the left
+    side and over the top. The four quarters meet at the widest points (right, left) and on the centreline (bottom,
+    top)."""
     u0, u1, v0, v1 = S.bounds(loop)
     w, h = u1 - u0, v1 - v0
     if w <= 0 or h <= 0:
         raise FitError("a cross-section has no width or height")
     uc, vc = 0.5 * (u0 + u1), 0.5 * (v0 + v1)
-    pts = list(loop) if S.area(loop) < 0 else list(reversed(loop))  # clockwise in (y, z): right -> bottom -> left
+    pts = list(loop) if S.area(loop) < 0 else list(reversed(loop))  # clockwise in (y, z)
     n = len(pts)
 
     def extreme(sign):
         best = max(sign * p[0] for p in pts)
         tol = 0.004 * w
         idx = [i for i in range(n) if sign * pts[i][0] >= best - tol]
-        # the tied run may wrap around the end of the list; take its middle along the contour
+        # the tied run may wrap around the end of the list.
         runs, run = [], [idx[0]]
         for i in idx[1:]:
             if i == run[-1] + 1:
@@ -179,8 +168,7 @@ ROUND_TIP = 0.75  # a tip whose sqrt(area) grows as (x - x_tip)^p with p below t
 
 def _tip(layers, areas, order, spacing):
     """Tip position and shape of a pointed end from the slices nearest it: sqrt(area) = c |x - x_tip|^p fitted over
-    the slices with less than a quarter of the largest area (3 to 8 of them), p searched from 0.35 to 1.3. The tip is
-    held within one slice spacing of the outermost slice."""
+    the slices with less than a quarter of the largest area (3 to 8 of them), p searched from 0.35 to 1.3."""
     big = max(areas)
     idx = [i for i in order[:8] if areas[i] < 0.25 * big] or list(order[:3])
     if len(idx) < 3:
@@ -214,11 +202,7 @@ def _tip(layers, areas, order, spacing):
 
 def _end(layers, areas, at_start, spacing, bound=None):
     """Where the body ends beyond its first (or last) layer, whether it ends in a point, and the point's shape
-    exponent p (sqrt(area) ~ distance^p: 1 for a cone or ogive, 0.5 for a sphere).
-
-    An end whose outermost slice is still a large part of the largest one is blunt: its flat end lies between that
-    slice and the next (empty) one: it is put midway between that slice and the nearer of the next slice and the
-    body's bounding box (``bound``; nTop's boxes can be a few millimetres loose), so within half a slice spacing."""
+    exponent p (sqrt(area) ~ distance^p: 1 for a cone or ogive, 0.5 for a sphere)."""
     order = list(range(len(layers))) if at_start else list(range(len(layers) - 1, -1, -1))
     i0, i1 = order[0], order[min(3, len(order) - 1)]
     r0, r1 = math.sqrt(areas[i0]), math.sqrt(areas[i1])
@@ -226,7 +210,7 @@ def _end(layers, areas, at_start, spacing, bound=None):
     blunt = areas[i0] > 0.03 * max(areas) and not r1 > 1.6 * r0
     if blunt or r1 <= r0:
         sign = -1.0 if at_start else 1.0
-        reach = spacing  # the next slice out is empty: the end is within one spacing
+        reach = spacing  # the next slice out is empty
         if bound is not None and 0.0 <= sign * (bound - z0) < reach:
             reach = sign * (bound - z0)  # nTop's bounding box contains the body (it may be loose)
         return z0 + sign * 0.5 * reach, False, None
@@ -258,7 +242,7 @@ def fit_fuselage(layers, frame: Frame, n_sections=24, nose_cluster=0.5, tail_clu
     ext = []
     for l in used:
         u0, u1, v0, v1 = S.bounds(l.loops[0])
-        ext.append((v1, u1, -v0, -u0))  # top, right, bottom, left: distances out from the frame's axis
+        ext.append((v1, u1, -v0, -u0))  # top, right, bottom, left
 
     def slope(i):
         a, b = max(i - 1, 0), min(i + 1, n - 1)
@@ -268,7 +252,7 @@ def fit_fuselage(layers, frame: Frame, n_sections=24, nose_cluster=0.5, tail_clu
         u0, u1, v0, v1 = S.bounds(used[i].loops[0])
         return 0.5 * (u0 + u1), 0.5 * (v0 + v1)
 
-    # End nodes: a pointed end is a point at the tip; a blunt one carries the outermost slice out to the end.
+    # End nodes: a pointed end is a point at the tip.
     def end_node(at_start):
         i = 0 if at_start else n - 1
         x, pointed, p_tip = (x_start, pointed_start, p_start) if at_start else (x_end, pointed_end, p_end)
@@ -328,7 +312,7 @@ def fit_fuselage(layers, frame: Frame, n_sections=24, nose_cluster=0.5, tail_clu
     else:
         uc, vc, w, h, pts, params = _section_curve(used[-1].loops[0], per_quarter)
         sections.append(FuseSection(x1, uc, vc, w, h, pts, params, used[-1].loops[0], slopes=slope(n - 1)))
-    # stations must increase; drop any section that a pointed end has overtaken
+    # stations must increase.
     clean = [sections[0]]
     for s in sections[1:]:
         if s.x > clean[-1].x + 1e-9:
@@ -343,7 +327,7 @@ def fit_fuselage(layers, frame: Frame, n_sections=24, nose_cluster=0.5, tail_clu
     return FuselageFit(frame, clean, notes)
 
 
-# --- Wing ----------------------------------------------------------------------------------------------------------------
+# --- Wing
 
 @dataclass
 class WingStation:
@@ -385,7 +369,7 @@ def _airfoil(loop, n_points):
         d = (te_mid[0] - le_pt[0], te_mid[1] - le_pt[1])
         chord = math.hypot(*d)
         e = (d[0] / chord, d[1] / chord)
-        nrm = (e[1], -e[0])  # normal to the chord with a positive u (upward) part: e is mostly +v
+        nrm = (e[1], -e[0])  # normal to the chord with a positive u (upward) part
         proj = [(p[0] - le_pt[0]) * e[0] + (p[1] - le_pt[1]) * e[1] for p in loop]
         perp = [(p[0] - le_pt[0]) * nrm[0] + (p[1] - le_pt[1]) * nrm[1] for p in loop]
         t_max = max(proj)
@@ -400,7 +384,7 @@ def _airfoil(loop, n_points):
     e = (d[0] / chord, d[1] / chord)
     nrm = (e[1], -e[0])
     te_thick = math.dist(loop[up_i], loop[low_i]) / chord
-    if te_thick < max(0.0008, 2.5 * spacing / chord):  # a sharp trailing edge: both surfaces end at one point
+    if te_thick < max(0.0008, 2.5 * spacing / chord):  # a sharp trailing edge
         te_thick = 0.0
 
     def local(p):
@@ -431,9 +415,8 @@ def _airfoil(loop, n_points):
 
 
 def _select(metric, n_max, tolerance, min_gap=0.0):
-    """Indices of at most ``n_max`` stations such that linear interpolation between them stays within
-    ``tolerance`` of every row of ``metric`` (greedy: add the worst station until done). A station closer than
-    ``min_gap`` (in the first column) to one already kept is not added."""
+    """Indices of at most ``n_max`` stations such that linear interpolation between them stays within ``tolerance`` of
+    every row of ``metric`` (greedy: add the worst station until done)."""
     keep = [0, len(metric) - 1]
     while len(keep) < n_max:
         worst, where = tolerance, None
@@ -484,9 +467,9 @@ def fit_wing(layers, frame: Frame, n_sections=8, airfoil_points=41, tolerance=0.
 
 
 def extend_wing(fit: WingFit, z0):
-    """Extend the wing inboard to span station ``z0`` (between its root and the plane through the origin):
-    a new root station whose leading edge, chord and thickness continue the first section's linear variation, with
-    the root airfoil and twist. Returns the span from ``z0`` to the original root (where the wing body starts)."""
+    """Extend the wing inboard to span station ``z0`` (between its root and the plane through the origin): a new root
+    station whose leading edge, chord and thickness continue the first section's linear variation, with the root
+    airfoil and twist."""
     a, b = fit.stations[0], fit.stations[1]
     exposed = a.z - z0
     if exposed <= 1e-9 * max(1.0, abs(a.z)):

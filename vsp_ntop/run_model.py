@@ -1,20 +1,6 @@
 """Build an OpenVSP model from nTop implicit bodies, driven from nTop.
 
     python -m vsp_ntop.run_model SETTINGS_FILE
-
-Each component block (OpenVSP Fuselage, OpenVSP Wing) slices its implicit body in nTop (Slice Body) and exports
-the section contours as an ASCII CLI file; its settings arrive here as one ``component = key: value; ...`` line.
-This driver
-
-1. reads each component's contours and fits OpenVSP sections to them (``fit.py``): a Fuselage's closed
-   cross-sections along x, or a Wing's airfoils, chords, twist, sweep and dihedral along its span axis;
-2. builds the components in OpenVSP (``vspmodel.py``), each in the Thick or Thin set, with its tessellation and
-   clustering, and saves ``<case>.vsp3``;
-3. checks the model against the contours: a grid of points on each OpenVSP surface is compared with the nTop
-   section contours, and the mean and largest distances go to ``<case>.ntvsp.model.csv``;
-4. exports OpenVSP's tessellation as ``<case>.stl`` (metres) to show in nTop.
-
-Lengths are metres. Standard library only.
 """
 from __future__ import annotations
 
@@ -47,11 +33,7 @@ def carryover_fins(name, frame, z0, stations, symmetry, fuse_fits):
     """The geometry TR 1307's carry-over needs for each copy of a wing (``carryover.py``), from its exposed stations
     (before any extension into the body) and the fuselage it sits on: root and tip distances from the plane through
     the origin normal to the span axis, root and tip chords, the cotangent of the leading-edge sweep, the planform
-    area, the body's width across the span direction at the root and its length aft of the root leading edge.
-
-    The body is the fuselage with a section nearest the root's mid-chord point; its width is measured in the wing's
-    plane (section contour points within 20% of the root distance of it) over the root chord, so it need not be
-    round or centred on the origin."""
+    area, the body's width across the span direction at the root and its length aft of the root leading edge."""
     if not fuse_fits:
         raise DriverError(f"{name}: Force Accounting with carry-over needs the body it sits on as an OpenVSP Fuselage "
                           "in the model (in any Set, None included)")
@@ -76,7 +58,7 @@ def carryover_fins(name, frame, z0, stations, symmetry, fuse_fits):
             gap = min(math.dist(p, mid) for p in pts[near])
             if best is None or gap < best[0]:
                 over = [i for i, x in enumerate(xs) if x_le <= x <= x_le + root.chord] or [near]
-                # across the body in the fin's plane: section points within a band of it (all, if none are)
+                # across the body in the fin's plane
                 band = [dot(p, s) for i in over for p in pts[i] if abs(dot(p, n) - dot(q, n)) <= 0.2 * r]
                 low = min(band or [dot(p, s) for i in over for p in pts[i]])
                 end = max(ff.frame.origin[0] + sec.x for sec in ff.sections)
@@ -90,9 +72,7 @@ def carryover_fins(name, frame, z0, stations, symmetry, fuse_fits):
 
 
 def parse_components(path):
-    """``component = key: value; key: value; ...`` lines, in order. A component block given several bodies writes
-    one line for all of them: ``names`` and the per-body values (``files``, ``ox`` ... ``sz``) are ``|``-separated
-    lists, expanded here into one component per body. One name for several bodies numbers them (Name_1, Name_2...)."""
+    """``component = key: value; key: value; ...`` lines, in order."""
     out = []
     for line in open(path, encoding="utf-8"):
         key, _, value = line.partition("=")
@@ -217,7 +197,7 @@ def duct_deviation(points, f):
         if a % per:
             continue
         loop = f.sections[a // per].loop3d
-        loop = loop[::max(1, len(loop) // 720)]  # at most ~720 points: the check stays fast on fine contours
+        loop = loop[::max(1, len(loop) // 720)]  # at most ~720 points
         q = (x, y, z)
         best = 1e300
         for i in range(len(loop)):
@@ -253,8 +233,7 @@ def _dist_loop(loop, u, v):
 
 def deviation(points, layers, frame: F.Frame, skip_ends):
     """Mean and largest distance from OpenVSP surface points to the nTop contours (interpolated between the two
-    nearest slices), over points between the first and last slice. ``skip_ends``: fraction of the grid's u range
-    left out at each end (a wing's root and tip caps)."""
+    nearest slices), over points between the first and last slice."""
     loops = []
     for l in layers:
         loop = S.outer_loops(l)[0]
@@ -269,7 +248,7 @@ def deviation(points, layers, frame: F.Frame, skip_ends):
             continue
         rel = (x - frame.origin[0], y - frame.origin[1], z - frame.origin[2])
         u, v, h = dot(rel, frame.ex), dot(rel, frame.ey), dot(rel, frame.ez)
-        if h <= zs[0] + 1e-7 or h >= zs[-1] - 1e-7:  # outside the slices, or on an end cap in an end slice's plane
+        if h <= zs[0] + 1e-7 or h >= zs[-1] - 1e-7:  # outside the slices
             continue
         j = max(0, min(len(zs) - 2, next((i for i in range(len(zs) - 1) if zs[i + 1] >= h), len(zs) - 2)))
         t = (h - zs[j]) / (zs[j + 1] - zs[j]) if zs[j + 1] > zs[j] else 0.0
@@ -291,7 +270,7 @@ def main(settings_path):
     if not comps:
         raise DriverError("no components: connect OpenVSP Fuselage or OpenVSP Wing blocks to Components")
     seen = {}
-    for c in comps:  # names must differ in OpenVSP: number repeats
+    for c in comps:  # names must differ in OpenVSP
         n = M.clean_name(c["name"])
         seen[n] = seen.get(n, 0) + 1
         if seen[n] > 1:
@@ -329,7 +308,7 @@ def main(settings_path):
                 if abs(dot(frame.ez, X) - 1.0) > 1e-9:
                     raise DriverError(f"{name}: a fuselage is sliced along +x")
                 bounds = None
-                if "bx0" in c and "bx1" in c:  # the bounding box's x range, in the slicing frame
+                if "bx0" in c and "bx1" in c:  # the bounding box's x range
                     bounds = (num(c, "bx0") - frame.origin[0], num(c, "bx1") - frame.origin[0])
                 f = F.fit_fuselage(layers, frame, int(num(c, "sections", 24)), num(c, "nose_cluster", 0.5),
                                    num(c, "tail_cluster", 0.5), bounds=bounds)

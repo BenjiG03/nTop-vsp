@@ -46,23 +46,20 @@ def cad_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**OpenVSP to CAD.** The driver `run_cad.py` opens the model in OpenVSP and writes it with OpenVSP's own "
-              "CAD export: trimmed and intersected (Surface Intersection), split and stitched (one BREP per "
-              "component), or untrimmed surfaces; it reads the file back for its solid, shell and face counts "
-              "(`<Case Name>.ntvsp.cad.csv`).")
+    g.comment("**OpenVSP to CAD.** The driver `run_cad.py` opens the model in OpenVSP and writes it with OpenVSP's "
+              "own CAD export: trimmed and intersected (Surface Intersection), split and stitched (one BREP per "
+              "component), or untrimmed surfaces.")
     lines = k.field_lines(CAD_FIELDS, lambda f: inp(f.spec.name)) + [k.line("model", inp("OpenVSP Model"))]
     base = analysis(g, k, inp, "run_cad", lambda b: [], lines, "CAD Export")
     out = k.cat([base, k.pick(inp("Format"), (".stp", ".igs"))], name="CAD File")
     return make_block(
         "openvsp_cad", "OpenVSP CAD Export (VSP)",
-        "Writes an OpenVSP model (from **OpenVSP Model (VSP)**, so from nTop implicit bodies) as **STEP or IGES** with "
-        "OpenVSP's CAD export and returns the file's path (`<Working Directory>/<Case Name>.stp` or `.igs`). Trimmed: "
-        "the components intersected into one BREP solid; Stitched: one watertight BREP per component, not "
-        "intersected; Untrimmed Surfaces: the surface patches only. The surfaces are OpenVSP's fit of the bodies, "
-        "so the CAD is as close to them as **OpenVSP Model Check (VSP)** reports.", specs, "text", g, out)
+        "Writes an OpenVSP model (from **OpenVSP Model (VSP)**, so from nTop implicit bodies) as **STEP or IGES** "
+        "with OpenVSP's CAD export and returns the file's path (`<Working Directory>/<Case Name>.stp` or `.igs`). "
+        "Trimmed: the components intersected into one BREP solid.", specs, "text", g, out)
 
 
-# --- Lofted CAD: B-spline solids fitted to the nTop slices, without OpenVSP's skinning ------------------------------
+# --- Lofted CAD: B-spline solids fitted to the nTop slices, without OpenVSP's skinning
 
 LOFT_FIELDS = (
     F_int("Points Around", "points_around", 48,
@@ -92,18 +89,16 @@ def loft_block():
     k = Kit(g)
     inp = model_inputs(specs)
     g.comment("**Lofted CAD.** The driver `run_loft.py` fits a smooth bicubic B-spline surface through all of each "
-              "body's nTop slices (least squares, no OpenVSP), cuts it into Faces Around faces round the body, closes a "
-              "pointed end at a single point and a blunt end with a flat face, and writes one closed solid per body "
-              "to `<Case Name>.stp` (millimetres). `docs/STEP_FORMAT.md` explains the file.")
+              "body's nTop slices (least squares, no OpenVSP), cuts it into Faces Around faces round the body, "
+              "closes a pointed end at a single point and a blunt end with a flat face, and writes one closed solid "
+              "per body to `<Case Name>.stp` (millimetres).")
     lines = k.field_lines(LOFT_FIELDS, lambda f: inp(f.spec.name)) + [k.cat([k.join(inp("Components"), "\n"), "\n"])]
     base = analysis(g, k, inp, "run_loft", lambda b: [], lines, "Lofted CAD", needs_openvsp=False)
     out = k.cat([base, ".stp"], name="STEP File")
     return make_block(
         "lofted_cad", "Lofted CAD Export (VSP)",
-        "Writes implicit bodies as **STEP solids fitted directly to their nTop slices**, with no OpenVSP skinning, and "
-        "returns the file's path (`<Working Directory>/<Case Name>.stp`). Give it the **OpenVSP Fuselage (VSP)** "
+        "Writes implicit bodies as **STEP solids fitted directly to their nTop slices**, with no OpenVSP skinning, "
+        "and returns the file's path (`<Working Directory>/<Case Name>.stp`). Give it the **OpenVSP Fuselage (VSP)** "
         "blocks of the bodies. Each body becomes one closed solid: a smooth B-spline surface through every slice, "
-        "cut into faces round the body (4 by default), a single point at a pointed end and a flat face at a blunt one. "
-        "Sharp edges at the "
-        "sides, top or bottom (chines) are kept. Smoother and closer than OpenVSP's CAD export on non-round bodies "
-        "(see the README); bodies only, not wings or ducts.", specs, "text", g, out)
+        "cut into faces round the body (4 by default), a single point at a pointed end and a flat face at a blunt "
+        "one.", specs, "text", g, out)

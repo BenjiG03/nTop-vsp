@@ -1,15 +1,6 @@
 """Flight conditions from Mach number and altitude, driven from nTop.
 
     python -m vsp_ntop.run_flight SETTINGS_FILE
-
-Settings: ``mach`` and ``altitude`` (``;``-separated, paired item by item into flight points; one altitude serves
-every Mach number), ``alpha`` and ``beta`` (degrees), the reference ``sref``, ``bref``, ``cref`` and moment point
-``xref``, ``yref``, ``zref`` (metres).
-
-The atmosphere at each altitude (geometric) is the US Standard Atmosphere 1976 as implemented by the ``ambiance``
-package: temperature, pressure, density, speed of sound and dynamic viscosity; the velocity, dynamic pressure and
-Reynolds numbers follow from the Mach number. The conditions are every flight point x sideslip x angle of attack.
-Files: see ``vsp_ntop.flight``.
 """
 from __future__ import annotations
 

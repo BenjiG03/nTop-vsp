@@ -1,10 +1,6 @@
 """End-to-end tests: build one notebook of nTop_vsp blocks on bodies with analytic answers, run it with ntopcl once
 per session, and read the coefficient tables the blocks write.
 
-Needs nTop (ntopcl, signed in), and a Python with the nTop_vsp package, numpy, pytest and ``implicit_io`` (which
-writes the notebooks): the one running pytest is also the one the blocks call (``NTOP_PYTHON_PATH``), unless that
-variable is already set.
-
     python -m pytest tests            (about 2 minutes)
 """
 from __future__ import annotations
@@ -37,7 +33,7 @@ CREF = 0.1      # m
 # Bodies, small enough for Mesh from Implicit Body at MESH_TOL.
 SPHERE_R = 0.05  # m
 PLATE = (0.1, 0.1, 0.002)  # m: chord (x), span (y), thickness (z)
-CONE_HALF_ANGLE = 15.0  # degrees; a sharp cone, tip at the origin, axis along +x
+CONE_HALF_ANGLE = 15.0  # degrees.
 CONE_LENGTH = 0.1  # m
 MESH_TOL = 0.5e-3  # m (finer tolerances on these bodies take many GB in Mesh from Implicit Body)
 COARSE_TOL = 2e-3  # m, for the pressure export (fewer faces, less to write)
@@ -83,8 +79,7 @@ CASES = (
     ("tw_plate", "tw", "plate", 0, {}),
     ("tw_cone", "tw", "cone", 0, {"Impact Method": 1}),
 )
-# Readers checked through the notebook's output (in this order): Surface Pressure (VSP) of a mesh case, Surface
-# Pressure Jump (VSP) of a hand-written jump file, Modified Newtonian Pressure (VSP) evaluated at points on the sphere.
+# Readers checked through the notebook's output (in this order)
 READ_CASE = ("mesh_sphere_export", 2)
 READ_ROWS = (0, 1, 2)
 FAKE_JUMP = ((0.0, 0.0, 0.0, 0.0), (0.01, 0.0, 0.0, 100.0), (0.0, 0.02, 0.0, -50.0))  # x, y, z (m), Delta p (Pa)
@@ -135,7 +130,7 @@ def build():
             given.update({"Mesh": meshes[body], "Working Directory": work})
         given.update({key: (lambda g, key=key, i=i: g.choice(list(labels[key]), i)) for key, i in extra.items()})
         result = _call(g, {"si": si_b, "mesh": mesh_b, "tw": tw_b}[kind], given, name)
-        # The Aero Database of that one contribution, on the same flight condition: db_<case>.ntvsp.database.csv
+        # The Aero Database of that one contribution, on the same flight condition
         contribution = _call(g, contribution_b, {"Results": result}, name + " contribution")
         outs.append(_call(g, database_b, {"Flight Condition": flight, "Contributions": _lst(g, "text", [contribution]),
                                           "Working Directory": work, "Case Name": g.text("db_" + name)},
@@ -190,9 +185,7 @@ def _working_set_gb(pid):
 
 
 def run(g, blocks, output, path, timeout=900, settle=6):
-    """Save and run the notebook; returns the log text. ntopcl runs at below-normal priority and is stopped when
-    it passes MEMORY_CAP_GB (NTOPCL_MEMORY_CAP_GB), reports that nTop exited, or, as it may not exit after Run
-    Command blocks, once its output file is written and stable."""
+    """Save and run the notebook."""
     from ntopfile import save_host
     save_host(g, blocks, path, output=output, output_type="group")
     res = os.path.splitext(path)[0] + ".json"

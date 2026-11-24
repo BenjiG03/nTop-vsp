@@ -1,10 +1,4 @@
-"""Surface pressure readers shared by every analysis that exports pressures (``vsp_ntop/pressure.py``).
-
-Analyses with an **Export Pressures** option (VSPAERO Analysis, Modified Newtonian on Mesh, Tangent Wedge on Mesh)
-write ``<results>.ntvsp.pressure.<Case>.csv`` (static pressure, Pa) and, for VSPAERO's thin surfaces,
-``<results>.ntvsp.pressure_jump.<Case>.csv`` (the jump across the sheet, Pa), one per flight condition case. The
-readers import one case as a Scalar Point Map.
-"""
+"""Surface pressure readers shared by every analysis that exports pressures (``vsp_ntop/pressure.py``)."""
 from __future__ import annotations
 
 from kit import PRESSURE, Kit, d_choice, d_int, make_block, model_inputs
@@ -39,8 +33,7 @@ def surface_pressure_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**Surface pressure** (Pa) of one case, from `<Results>.ntvsp.pressure.<Case>.csv`. Field from Point "
-              "Map turns it into a field. VSPAERO's thin surfaces have only a jump: Surface Pressure Jump (VSP).")
+    g.comment("**Surface pressure** (Pa) of one case, from `<Results>.ntvsp.pressure.<Case>.csv`.")
     path = k.cat([inp("Results"), ".ntvsp.pressure.", k.num(inp("Case Number")), ".csv"], name="Pressure File")
     out = _import(g, k, path, "Surface Pressure")
     return make_block("surface_pressure", "Surface Pressure (VSP)",

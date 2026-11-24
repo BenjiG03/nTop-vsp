@@ -1,26 +1,4 @@
 """Planar end caps in an OpenVSP STEP file: each flat cap's patches replaced by one PLANE face, by editing the file.
-
-OpenVSP closes a blunt fuselage end, or a wing's root or tip, with a flat cap made of B-spline patches whose control
-net has one row collapsed to a point (the cap's centre; a wing cap's leading and trailing edge). Parasolid (nTop's
-CAD kernel) reports those patches as degenerate geometry on import. A flat cap is a plane, so this module replaces
-its patches with one ADVANCED_FACE on a PLANE, bounded by the cap's rim edges, which are kept as they are (shared with
-the side surfaces):
-
-1. in each shell, the planar B-spline faces with a collapsed control-net boundary row, and the coplanar faces joined
-   to them by an edge, form a cap;
-2. the cap's rim is its edges used once within the cap: one closed loop, or an outer loop and holes where another
-   part passes through the cap (trimmed export). Each rim edge is run opposite to the way the side face
-   that shares it runs it (as in any valid shell), and they are chained into one closed loop. (The orientation
-   in OpenVSP's own cap loops cannot be used: its cap patches are not oriented consistently with each other, two
-   of them running a shared edge the same way.)
-3. the plane's normal is set by that loop's direction of travel (counter-clockwise about the face normal, as STEP
-   bounds run), so the face points the way the patches did;
-4. the shell lists the new face in place of the patches; the patches, their surfaces, the edges inside the cap and
-   the rim edges' parameter-space curves on the removed patches are dropped (everything no longer reachable from
-   the file's roots).
-
-Everything else is kept as written: other faces, open shells, names, units, header. A pointed tip keeps its
-collapsed patch edges: there the surface itself closes to a point. Standard library only.
 """
 from __future__ import annotations
 
@@ -338,8 +316,8 @@ def planar_caps(text, log=print):
             ents[sid] = _kind(ents[sid]) + "(" + ",".join(sargs) + ")"
     if not caps:
         return text, 0
-    # rim edges' SURFACE_CURVEs: drop the parameter-space curves on removed surfaces
-    bare = {}  # SURFACE_CURVEs left with no parameter-space curve (an edge between two caps): use the 3D curve
+    # rim edges' SURFACE_CURVEs
+    bare = {}  # SURFACE_CURVEs left with no parameter-space curve (an edge between two caps)
     for i, t in list(ents.items()):
         if _kind(t) in ("SURFACE_CURVE", "SEAM_CURVE"):
             a = _args(t)

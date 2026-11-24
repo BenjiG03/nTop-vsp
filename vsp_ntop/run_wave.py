@@ -1,15 +1,6 @@
 """OpenVSP Wave Drag (supersonic area rule) of an OpenVSP model over a sweep of Mach numbers, driven from nTop.
 
     python -m vsp_ntop.run_wave SETTINGS_FILE
-
-OpenVSP cuts the model with Mach planes at several roll angles (rotation sections), turns each set of cut areas
-into an equivalent area distribution, and averages their von Karman slender-body wave drag, as in OpenVSP's Wave
-Drag screen, at the supersonic Mach numbers of the flight condition (``flight``) with its Sref. That is linear
-theory at zero lift; ``validation/wave_drag_mach.py`` measures its range. Inflow and
-outflow faces are not used (out of scope).
-
-Writes ``<case>.ntvsp.wave.csv`` (one row per Mach number: CD_wave and the run's settings) and, for each Mach
-number m and rotation section t, ``<case>.ntvsp.wave_areas.<m>.<t>.csv`` (x/L station and slice area).
 """
 from __future__ import annotations
 

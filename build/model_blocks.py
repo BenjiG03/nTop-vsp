@@ -1,10 +1,4 @@
-"""OpenVSP model blocks: nTop implicit bodies to OpenVSP Fuselage and Wing components.
-
-A component block slices its implicit bodies in nTop (Slice Body, exported as CLI contours; a list of bodies is
-sliced body by body through nTop's list processing) and outputs one line of text describing them; OpenVSP Model
-collects those lines, and its driver (``run_model.py``) makes one OpenVSP component per body, fits OpenVSP
-sections to its contours and builds the ``.vsp3`` model the analysis blocks take.
-"""
+"""OpenVSP model blocks: nTop implicit bodies to OpenVSP Fuselage and Wing components."""
 from __future__ import annotations
 
 from ntopfile import Graph, InputSpec, Ref
@@ -80,7 +74,7 @@ def _num(k, v, ref=1.0, units=None):
     return k.num(v, ref, units)
 
 
-# --- Fuselage ---------------------------------------------------------------------------------------------------------
+# --- Fuselage
 
 def fuselage_block():
     specs = (
@@ -90,11 +84,10 @@ def fuselage_block():
                   "OpenVSP overlapping ones."),
         InputSpec("Names", "list<text>", NAMES_DOC, default=lambda g: g.block("core.list<text>", "list<text>",
                                                                              [g.text("Fuselage")], top=False)),
-        InputSpec("Set", "choice", "How VSPAERO sees the body. None (default): not at all; VSPAERO solves the lifting "
-                  "surfaces, and the body still counts in Wave Drag and Parasite Drag. Thick: the panel method on the "
-                  "closed surface, subsonic only (VSPAERO's panel method gave wrong drag above Mach 1 in every test, "
-                  "on OpenVSP's own models too). Thin: a vortex lattice on its camber plates. See the README for the "
-                  "tests behind the default.", default=d_choice(SETS, 2)),
+        InputSpec("Set", "choice", "How VSPAERO sees the body. None (default): not at all; VSPAERO solves the "
+                                   "lifting surfaces, and the body still counts in Wave Drag and Parasite Drag. "
+                                   "Thick: the panel method on the closed surface, subsonic only (VSPAERO's panel "
+                                   "method gave wrong drag above Mach 1 in every test, on OpenVSP's own models too).", default=d_choice(SETS, 2)),
         InputSpec("Slice Spacing", "real", "Distance between nTop's section cuts, as a fraction of the body's length.",
                   default=d_real(0.005)),
         InputSpec("Contour Tolerance", "real", "Point spacing of the section contours, as a fraction of the body's "
@@ -117,12 +110,9 @@ def fuselage_block():
     inp = model_inputs(specs)
     body = inp("Bodies")
     g.comment("**OpenVSP Fuselages from implicit bodies.** nTop cuts each body with planes normal to x (Slice Body) "
-              "and exports the section contours. OpenVSP Model fits an OpenVSP Fuselage to them: cross-sections at "
-              "clustered stations, each a closed curve through its contour; a pointed nose or tail becomes a point "
-              "section, a blunt end a flat cap.")
+              "and exports the section contours.")
     mn, mx, centre, size, diag = _box(g, body)
-    g.comment("**Slicing.** The cuts start just ahead of the body's bounding box, every Slice Spacing x length; "
-              "the contour points are Contour Tolerance x the box diagonal apart.")
+    g.comment("**Slicing.** The cuts start just ahead of the body's bounding box, every Slice Spacing x length.")
     reach = _r(g, "multiply", diag, g.real(0.505))
     origin = g.block("point<real,real,real>", "point", [_r(g, "subtract", centre[0], reach), centre[1], centre[2]],
                      "Slicing Origin")
@@ -145,12 +135,10 @@ def fuselage_block():
     return make_block(
         "openvsp_fuselage", "OpenVSP Fuselage (VSP)",
         "OpenVSP **Fuselages** fitted to a list of implicit bodies (one component each), as one component line for "
-        "**OpenVSP Model (VSP)**. nTop slices each body normal to x; the fit places Sections cross-sections along it "
-        "and gives each the shape of the body's contour there. Set puts them in OpenVSP's Thick or Thin set for "
-        "VSPAERO.", specs, "text", g, out)
+        "**OpenVSP Model (VSP)**. nTop slices each body normal to x.", specs, "text", g, out)
 
 
-# --- Wing ---------------------------------------------------------------------------------------------------------------
+# --- Wing
 
 def wing_block():
     specs = (
@@ -165,29 +153,25 @@ def wing_block():
                   "there are bodies), normal to x: +y for a wing or tailplane (root to tip), +z for a fin, in between "
                   "for a canted surface.", default=lambda g: g.block("core.list<vector>", "list<vector>",
                                                                        [g.vector(0, 1, 0)], top=False)),
-        InputSpec("Symmetry", "choice", "OpenVSP's planar symmetry. x-z plane: each surface is mirrored left to right "
-                  "(a wing, a tailplane); x-y plane: top to bottom (a dorsal fin mirrored into a ventral one); both: "
-                  "four copies (cruciform or X tails). With symmetry, only the part of each body on the +span side of "
-                  "the plane through the origin normal to its span axis is used, so give the whole surface or that "
-                  "half. None: each whole body is one surface.", default=d_choice(SYMMETRY, 1)),
-        InputSpec("Extension", "real", "How far to extend each wing inboard of its root (where the given body starts), "
-                  "along its span axis: a new root section continues the first section's leading and trailing edges "
-                  "and thickness, with the root airfoil. VSPAERO then solves panels inside the fuselage, which "
-                  "removes the free root edge (and its tip-like loss of lift) that a wing ending at the body surface "
-                  "has. 0: no extension. It must stop short of the plane through the origin normal to the span axis "
-                  "(the body's axis for fins on a body centred on x): wings that meet or cross there, such as four "
-                  "fins reaching the axis, made VSPAERO return no finite result. Stopping a little short, about 1 to 2% "
-                  "of the root's distance, keeps the root vortices of opposite wings nearly cancelling. The OpenVSP "
-                  "wing, and so Wave and Parasite Drag, include the extension.", LENGTH, d_real(0.0, LENGTH)),
+        InputSpec("Symmetry", "choice", "OpenVSP's planar symmetry. x-z plane: each surface is mirrored left to "
+                                        "right (a wing, a tailplane); x-y plane: top to bottom (a dorsal fin "
+                                        "mirrored into a ventral one); both: four copies (cruciform or X tails).", default=d_choice(SYMMETRY, 1)),
+        InputSpec("Extension", "real", "How far to extend each wing inboard of its root (where the given body "
+                                       "starts), along its span axis: a new root section continues the first "
+                                       "section's leading and trailing edges and thickness, with the root airfoil. "
+                                       "VSPAERO then solves panels inside the fuselage, which removes the free root "
+                                       "edge (and its tip-like loss of lift) that a wing ending at the body surface "
+                                       "has. 0: no extension. It must stop short of the plane through the origin "
+                                       "normal to the span axis (the body's axis for fins on a body centred on x): "
+                                       "wings that meet or cross there, such as four fins reaching the axis, made "
+                                       "VSPAERO return no finite result.", LENGTH, d_real(0.0, LENGTH)),
         InputSpec("Force Accounting", "choice", "Which part of each wing's VSPAERO loads counts. Whole Wing: every "
-                  "strip, the Extension included (the extension's lift then stands for the body's carry-over lift, "
-                  "which it over-predicts on a slender body). Exposed Strip: only the strips outboard of the wing "
-                  "body's own root (where the given implicit starts: give the wing trimmed at the fuselage surface); "
-                  "the driver takes the inboard strips' forces and moments off every case, from VSPAERO's spanwise "
-                  "loads. Exposed Strip + Carry-over (TR 1307): as Exposed Strip, plus the lift each wing carries "
-                  "onto the body, K_B(W) times the wing's own normal force, from NACA TR 1307 (supersonic planar "
-                  "model on the body's measured width and length behind the root, or slender-body theory where its "
-                  "selection rule asks); the body must be an OpenVSP Fuselage in the model, in any Set.",
+                                                "strip, the Extension included (the extension's lift then stands for "
+                                                "the body's carry-over lift, which it over-predicts on a slender "
+                                                "body). Exposed Strip: only the strips outboard of the wing body's "
+                                                "own root (where the given implicit starts: give the wing trimmed at "
+                                                "the fuselage surface); the driver takes the inboard strips' forces "
+                                                "and moments off every case, from VSPAERO's spanwise loads.",
                   default=d_choice(ACCOUNTING, 0)),
         InputSpec("Slice Spacing", "real", "Distance between nTop's section cuts, as a fraction of the body's size along "
                   "Span Axis.", default=d_real(0.01)),
@@ -219,22 +203,18 @@ def wing_block():
     inp = model_inputs(specs)
     body = inp("Bodies")
     g.comment("**OpenVSP Wings from implicit bodies.** nTop cuts each body with planes normal to its span axis and "
-              "exports the airfoil contours. OpenVSP Model fits an OpenVSP Wing: at each station the chord line runs "
-              "from the leading edge to the trailing edge, giving chord, twist and the airfoil, and stations become "
-              "sections where those stop varying linearly.")
+              "exports the airfoil contours.")
     mn, mx, centre, size, diag = _box(g, body)
     s = inp("Span Axes")
     sc = [prop(s, c) for c in "xyz"]
     norm = _sqrt(g, _sum(g, [_sq(g, c) for c in sc]))
     unit = [_r(g, "divide", c, norm) for c in sc]
     g.comment("**Slicing.** Cuts every Slice Spacing x the body's extent along the span axis, starting below the "
-              "body (or, with Symmetry, at the plane through the origin normal to the span axis). The frame's x axis "
-              "is x cross span and its y axis is x, so the contours are airfoils with x along the chord.")
+              "body (or, with Symmetry, at the plane through the origin normal to the span axis).")
     extent = _sum(g, [_r(g, "multiply", _sqrt(g, _sq(g, u)), d) for u, d in zip(unit, size)])
     reach = _r(g, "multiply", diag, g.real(0.505))
     along = _sum(g, [_r(g, "multiply", c, u) for c, u in zip(centre, unit)])
-    # back = reach without symmetry, along (the plane through the origin) with it: a 0/1 weighting, since reach and
-    # along are lists (one per body) and a list cannot be an item of a list.
+    # back = reach without symmetry, along (the plane through the origin) with it
     mirrored = g.block("core.select_by_choice<choice,list_interface>", "real",
                        [inp("Symmetry"), g.block("core.list<real>", "list<real>",
                                                  [g.real(0.0), g.real(1.0), g.real(1.0), g.real(1.0)], top=False)],
@@ -267,13 +247,12 @@ def wing_block():
     return make_block(
         "openvsp_wing", "OpenVSP Wing (VSP)",
         "OpenVSP **Wings** fitted to a list of implicit lifting surfaces (one component each, with its own span "
-        "axis), as one component line for **OpenVSP Model (VSP)**. nTop slices each body normal to its span axis; the "
-        "fit finds each station's chord line, twist and airfoil and keeps the stations needed to follow the planform. "
-        "Symmetry mirrors them about the x-z plane, the x-y plane or both. OpenVSP marks their trailing edges as wakes "
-        "for VSPAERO, so no wake input is needed.", specs, "text", g, out)
+        "axis), as one component line for **OpenVSP Model (VSP)**. nTop slices each body normal to its span axis; "
+        "the fit finds each station's chord line, twist and airfoil and keeps the stations needed to follow the "
+        "planform.", specs, "text", g, out)
 
 
-# --- Duct ---------------------------------------------------------------------------------------------------------------
+# --- Duct
 
 WALLS = ("Outer", "Inner")
 WALL_KEYS = ("outer", "inner")
@@ -341,8 +320,7 @@ def duct_block():
     mn, mx, centre, size, diag = _box(g, body)
     o_in, n_in = _plane(g, inp("Inlet Plane"))
     o_out, n_out = _plane(g, inp("Outlet Plane"))
-    g.comment("**End points and normals.** The centre of the body's bounding box projected onto each plane; each "
-              "plane's normal turned to point from the inlet towards the outlet.")
+    g.comment("**End points and normals.** The centre of the body's bounding box projected onto each plane.")
     neg = g.real(-1.0)
     p_in = _vadd(g, centre, n_in, _r(g, "multiply", _dot(g, _vadd(g, centre, o_in, neg), n_in), neg))
     p_out = _vadd(g, centre, n_out, _r(g, "multiply", _dot(g, _vadd(g, centre, o_out, neg), n_out), neg))
@@ -355,8 +333,7 @@ def duct_block():
 
     n_in, n_out = towards(n_in), towards(n_out)
     g.comment("**Cutting planes.** s from 0 to 1 by OpenVSP's clustering function (Inlet and Outlet Clustering), the "
-              "end cuts a little inside the body; plane s passes through (1 - s) inlet point + s outlet point with "
-              "the normal (1 - s) inlet normal + s outlet normal.")
+              "end cuts a little inside the body.")
     t = g.block("sequence_from_bounds<real,real,integer>", "list<real>", [g.real(0.0), g.real(1.0), inp("Sections")],
                 top=False)
     mt = _r(g, "subtract", g.real(1.0), t)
@@ -367,9 +344,7 @@ def duct_block():
     s = _r(g, "add", g.real(DUCT_INSET), _r(g, "multiply", s, g.real(1.0 - 2.0 * DUCT_INSET)))
     origin_c = _vadd(g, p_in, d, s)
     normal_c = _unit(g, _vadd(g, n_in, _vadd(g, n_out, n_in, neg), s))
-    # in-plane axes of every cut: y axis = n x (world y), x axis = y axis x n. nTop writes a cut on a plane that is
-    # not normal to a world axis in exactly these axes, whatever frame it is given (found on this block's test duct:
-    # the axes of the frame passed in were ignored), so the frame is built to match them. A duct along y has none.
+    # in-plane axes of every cut
     nvec = _vector(g, normal_c)
     ey = g.block("cross_product<vector,vector>", "vector", [nvec, g.vector(0, 1, 0)], top=False)
     ey_c = _unit(g, [prop(ey, c) for c in "xyz"])
@@ -410,11 +385,10 @@ def duct_block():
         "openvsp_duct", "OpenVSP Duct (VSP)",
         "An OpenVSP **duct**: the side wall of an implicit body whose ends are planar and lie in the given inlet and "
         "outlet planes (not necessarily parallel), as an OpenVSP Fuselage open at both ends, for **OpenVSP Model "
-        "(VSP)**. nTop cuts the body on planes turning from the inlet plane to the outlet plane; each cut's outer "
-        "contour (or, for a tube, its inner one) becomes a section in that plane.", specs, "text", g, out)
+        "(VSP)**. nTop cuts the body on planes turning from the inlet plane to the outlet plane.", specs, "text", g, out)
 
 
-# --- Model ----------------------------------------------------------------------------------------------------------------
+# --- Model
 
 def model_block():
     own = (InputSpec("Components", "list<text>", "Outputs of OpenVSP Fuselage, OpenVSP Wing and OpenVSP Duct blocks, in a List.",
@@ -432,10 +406,8 @@ def model_block():
     out = analysis(g, k, inp, "run_model", lambda base: [], lines, "OpenVSP Model")
     return make_block(
         "openvsp_model", "OpenVSP Model (VSP)",
-        "Builds an OpenVSP model (`.vsp3`) from OpenVSP Fuselage and OpenVSP Wing component lines and returns its path "
-        "base for **VSPAERO Analysis**, **Wave Drag** and **Parasite Drag** (VSP). Each component is fitted to its nTop "
-        "body's section contours; **OpenVSP Model Check (VSP)** reports how closely, and **OpenVSP Model Mesh (VSP)** "
-        "shows the result in nTop.", specs, "text", g, out)
+        "Builds an OpenVSP model (`.vsp3`) from OpenVSP Fuselage and OpenVSP Wing component lines and returns its "
+        "path base for **VSPAERO Analysis**, **Wave Drag** and **Parasite Drag** (VSP).", specs, "text", g, out)
 
 
 MODEL_COLUMNS = ("Max_Deviation", "Mean_Deviation", "Max_Deviation_Fraction", "Sections", "Slices", "Size",

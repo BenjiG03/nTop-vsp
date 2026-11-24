@@ -7,7 +7,7 @@ import pressure_blocks as pb
 from kit import (default_text, LENGTH, F_choice, F_int, F_length, F_real, F_switch, Kit, analysis, d_choice, d_int,
                  d_text, make_block, model_inputs, run_inputs)
 
-# --- Solver ----------------------------------------------------------------------------------------------------------
+# --- Solver
 
 SOLVER_FIELDS = [
     F_int("Processors", "ncpu", 4, "Threads for VSPAERO (-omp)."),
@@ -81,7 +81,7 @@ def solver_block():
          "(-omp, -groundheight, -save, -restart), as `key = value` lines for the analysis block."])
 
 
-# --- Analysis --------------------------------------------------------------------------------------------------------
+# --- Analysis
 
 PRESSURE_EXPORT = ("Off", "Panel centroids", "Nodes", "Centroids and nodes")
 PRESSURE_EXPORT_KEYS = ("off", "centroids", "nodes", "both")
@@ -112,12 +112,7 @@ def analysis_block(solver=SOLVER_FIELDS):
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**VSPAERO analysis of an OpenVSP model.** 1. Write the settings file. 2. The Python driver has OpenVSP "
-              "read the model and write VSPAERO's panel file: components in the Thick set become panel-method surfaces, "
-              "those in the Thin set vortex-lattice camber surfaces, and OpenVSP marks every wing trailing edge as a "
-              "wake. 3. It writes the `.vspaero` input and runs `vspaero.exe` for every Mach x alpha x beta x Re_cref "
-              "case of the flight condition. 4. It checks that every case converged (Solver Settings' Convergence Check) and stops with the "
-              "reason if one did not. 5. The output is the path of the results, for the VSPAERO reader blocks.")
+    g.comment("**VSPAERO analysis of an OpenVSP model.** 1.")
     lines = [
         k.line("model", inp("OpenVSP Model")),
         k.line("flight", inp("Flight Condition")),
@@ -149,7 +144,7 @@ def prop_of(ref, c):
 
 
 
-# --- Readers ---------------------------------------------------------------------------------------------------------
+# --- Readers
 
 POLAR_COLUMNS = ("CLtot", "CDtot", "CStot", "CMxtot", "CMytot", "CMztot", "CFxtot", "CFytot", "CFztot", "L_over_D", "E",
                  "CLo", "CLi", "CDo", "CDi", "CSo", "CSi", "CMox", "CMoy", "CMoz", "CMix", "CMiy", "CMiz",
@@ -175,9 +170,8 @@ def coefficient_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**VSPAERO coefficients.** The driver writes VSPAERO's `.polar` as `<Case Name>.ntvsp.polar.csv`, one row "
-              "per case (Re_cref outermost, then Mach, beta, alpha). Import Table reads it and the chosen column comes "
-              "out as a list of reals, one per case.")
+    g.comment("**VSPAERO coefficients.** The driver writes VSPAERO's `.polar` as `<Case Name>.ntvsp.polar.csv`, one "
+              "row per case (Re_cref outermost, then Mach, beta, alpha).")
     path = k.cat([inp("Results"), ".ntvsp.polar.csv"])
     out = table_column(g, k, path, k.pick(inp("Coefficient"), POLAR_COLUMNS))
     return make_block("vspaero_coefficient", "VSPAERO Coefficient (VSP)",
@@ -198,10 +192,8 @@ def mesh_faces_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**Mesh faces.** The driver writes the panel triangles of the Thick-set components as surface points with "
-              "the area each stands for: `x, y, z, area` (metres, square metres). Feed this point map to the Mesh Faces "
-              "input of ntop_newtonian's Viscous Correction on Mesh blocks, which then sum the skin friction over the "
-              "points instead of integrating it over the body: seconds instead of minutes.")
+    g.comment("**Mesh faces.** The driver writes the panel triangles of the Thick-set components as surface points "
+              "with the area each stands for: `x, y, z, area` (metres, square metres).")
     n = k.pick(inp("Points per Face"), ("4", "1"))
     path = k.cat([inp("Results"), ".ntvsp.faces.", n, ".csv"], name="Faces File")
     scale = g.leaf("real_field", {"expression": "1", "units": {}})
@@ -220,21 +212,17 @@ def center_block():
     specs = (
         InputSpec("Aero Database", "text", "Output of Aero Database (VSP): the centers come from its totals (every "
                   "contribution, about the flight condition's moment point)."),
-        InputSpec("Quantity", "choice", "Center of pressure: where the resultant of each condition's normal force and "
-                  "pitching moment crosses the line through the moment reference point along x (it runs away as the "
-                  "normal force goes to zero). Aerodynamic center: the point about which the pitching moment does not "
-                  "change with lift (the neutral point), from the alpha sweep at each Mach number, altitude and "
-                  "sideslip.", default=d_choice(CENTERS)),
+        InputSpec("Quantity", "choice", "Center of pressure: where the resultant of each condition's normal force "
+                                        "and pitching moment crosses the line through the moment reference point "
+                                        "along x (it runs away as the normal force goes to zero).", default=d_choice(CENTERS)),
     )
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
     g.comment("**Center of pressure.** The Aero Database driver computes, from the total normal force CN (z up) and "
-              "pitching moment Cm about the moment reference point (over Sref and cref, x aft): x_cp = x_ref - Cm cref "
-              "/ CN for every condition, and x_ac = x_ref - (dCm/dCN) cref for every alpha sweep at one Mach number, "
-              "altitude and sideslip (a straight-line fit). The points are positions (metres in the files, lengths "
-              "here) on the line through the reference point along x; a condition with no normal force gets the "
-              "reference point (column Defined = 0 in the file).")
+              "pitching moment Cm about the moment reference point (over Sref and cref, x aft): x_cp = x_ref - Cm "
+              "cref / CN for every condition, and x_ac = x_ref - (dCm/dCN) cref for every alpha sweep at one Mach "
+              "number, altitude and sideslip (a straight-line fit).")
     path = k.cat([inp("Aero Database"), k.pick(inp("Quantity"), (".ntvsp.center_of_pressure.csv",
                                                             ".ntvsp.aerodynamic_center.csv"))], name="Table File")
     table = g.block("import_table<file_path,bool>", "table", [path, g.boolean(True)], "Import Table")
@@ -247,8 +235,6 @@ def center_block():
     out = g.block("point<real,real,real>", "list<point>", xyz, "Centers")
     return make_block(
         "center_of_pressure", "Center of Pressure (VSP)",
-        "Center of pressure of every condition of an Aero Database, or the aerodynamic center (neutral point) of every "
-        "alpha sweep, as "
-        "a list of points: absolute positions in the model's frame with length units (not fractions of the "
-        "reference chord), on the line through the moment reference point along x. Compare the aerodynamic center "
-        "with the CG for the static margin.", specs, "list<point>", g, out)
+        "Center of pressure of every condition of an Aero Database, or the aerodynamic center (neutral point) of "
+        "every alpha sweep, as a list of points: absolute positions in the model's frame with length units (not "
+        "fractions of the reference chord), on the line through the moment reference point along x.", specs, "list<point>", g, out)

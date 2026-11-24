@@ -1,17 +1,4 @@
-"""Flight conditions shared by every analysis: Mach and altitude through the US Standard Atmosphere 1976.
-
-The Flight Condition (VSP) block runs ``run_flight``, which writes, under its results base ``<base>``:
-
-* ``<base>.ntvsp.points.csv``: one row per flight point (Mach, altitude) with the atmosphere there;
-* ``<base>.ntvsp.flight.csv``: one row per flight condition, every flight point x sideslip x angle of attack (in that
-  order, angle of attack fastest), with its flight point's atmosphere and the reference values;
-* ``<base>.ntvsp.inviscid.csv``: the distinct (Mach, AoA, Beta) of those conditions, for analyses that do not depend
-  on altitude (Modified Newtonian);
-* ``<base>.ntvsp.settings.txt``: the block's settings, reference values included.
-
-Analysis drivers get ``flight = <base>`` in their own settings and read it with ``Flight``. Units: SI, angles in
-degrees, altitude in metres (geometric).
-"""
+"""Flight conditions shared by every analysis: Mach and altitude through the US Standard Atmosphere 1976."""
 from __future__ import annotations
 
 import csv

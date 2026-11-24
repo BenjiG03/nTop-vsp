@@ -1,7 +1,4 @@
-"""Run generated notebooks headlessly with ntopcl and read their output back.
-
-Python only builds notebooks and reads files here; every value comes from nTop.
-"""
+"""Run generated notebooks headlessly with ntopcl and read their output back."""
 from __future__ import annotations
 
 import json
@@ -62,8 +59,7 @@ def run_notebook(path, timeout=3600):
         os.remove(res)
     t0 = time.time()
     log_path = os.path.splitext(path)[0] + ".log"
-    # ntopcl writes its output file and then may never exit after notebooks that use Run Command inside custom
-    # blocks, so wait for the output file to settle and stop it.
+    # ntopcl writes its output file and then may never exit after notebooks that use Run Command inside custom blocks
     with open(log_path, "w", encoding="utf-8", errors="replace") as logf:
         p = subprocess.Popen([NTOPCL, "--trustnotebook", "-v", "2", "-o", res, path], stdout=logf,
                              stderr=subprocess.STDOUT)

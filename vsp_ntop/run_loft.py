@@ -1,20 +1,6 @@
 """Lofted CAD: STEP solids fitted straight to nTop's slices of each body, without OpenVSP's skinning.
 
     python -m vsp_ntop.run_loft SETTINGS_FILE
-
-The settings file carries the OpenVSP Fuselage blocks' component lines (the bodies' slice files, slicing origins and
-bounding boxes); every fuselage body becomes one closed solid (``loft.loft_body``: a bicubic B-spline surface fitted
-through all the slices, cut into faces round the body, a pole at a pointed end, a flat cap at a blunt one), all written
-to ``<case>.stp`` (``step_write``; millimetres). Settings:
-
-    points_around    control points round each body (a multiple of 4; default 48)
-    faces_around     CAD faces round each body (a multiple of 4 that divides points_around; default 4)
-    rows_per_ctrl    slices per control point along the body (default 2)
-    sharp_edges      auto (default): a sharp edge along the body where the contours turn a corner at the sides, top
-                     or bottom; none: smooth all round
-
-Writes ``<case>.ntvsp.loft.csv``: per body, the slices used, how closely the surface passes through the contour points
-(rms and largest distance, mm), the ends, the sharp edges kept. numpy only.
 """
 from __future__ import annotations
 

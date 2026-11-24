@@ -1,22 +1,5 @@
 """Skin friction after the pressure solve, hypanel's ``viscous.correct``, as nTop blocks (from ntop_newtonian, now
-part of nTop_vsp; lists of flight conditions as in ``newtonian``).
-
-The block takes the Cp field of the Modified Newtonian Pressure block and adds flat-plate skin friction at the
-inviscid edge state. It is one way: pressure does not change.
-
-* Edge state. p / p_inf = 1 + gamma M^2 Cp / 2, and the edge Mach number is the isentropic one from the pitot
-  pressure, as hypanel's Newtonian method closes it. Total temperature is conserved.
-* Laminar: Blasius with Eckert's reference temperature. Turbulent: White's closed form of van Driest II.
-  Transition is sudden at Transition Reynolds Number, on the running-length Reynolds number.
-* Wall temperature adiabatic (recovery Pr^1/2 laminar, Pr^1/3 turbulent) or fixed.
-* Shear acts along the surface flow, the freestream projected on the tangent plane, and fades out between 30
-  and 60 degrees of leeward inclination, as hypanel's does.
-* Running length. hypanel traces each point's streamline. nTop has no surface-streamline length field, so
-  here it is the distance downstream of the body's most upstream point along the freestream, divided by
-  the local cosine of inclination. That is the streamline length exactly on flat plates and on cones at zero
-  incidence, and an approximation where surface streamlines curve.
-* Air: R = 287.05 J/(kg K), Pr = 0.72, Sutherland viscosity.
-"""
+part of nTop_vsp; lists of flight conditions as in ``newtonian``)."""
 from __future__ import annotations
 
 import math
@@ -59,16 +42,9 @@ def sutherland(o: More, t):
 
 
 def build(g: Graph, inp, faces=None):
-    """(skin friction coefficient field on q_inf, coefficient dict) for inputs ``inp(name)``.
-
-    The edge's total pressure is the Rayleigh pitot pressure behind a normal shock above Mach 1 and the
-    freestream's isentropic total pressure below it (no shock), condition by condition.
-    ``faces``: a connection (ModelInput) to a real point map of surface points with their areas as values; the
-    coefficients are then sums over those points instead of Surface Integrals over the body.
-    """
+    """(skin friction coefficient field on q_inf, coefficient dict) for inputs ``inp(name)``."""
     o = More(g)
-    g.comment("**1. Flight axes and freestream**, as in the Modified Newtonian blocks: x along Aft Axis, z toward Up Axis, "
-              "V = cos(a)cos(b) x - sin(b) y + sin(a)cos(b) z.")
+    g.comment("**1.")
     x, y, z, v, (ca, sa, cb, sb) = newtonian.freestream(o, inp)
     body, mach, gamma = inp("Body"), inp("Mach"), inp("Gamma")
     grad = o.grad(body)
@@ -77,9 +53,7 @@ def build(g: Graph, inp, faces=None):
     sine = o.fmul(o.fdot(normal, v_f), o.field("-1"))  # sin(delta), positive windward
     delta = o.fasin(o.fclamp(sine, o.field("-1"), o.field("1")))
 
-    g.comment("**2. Freestream constants.** Pitot Ratio: p02/p_inf behind a normal shock (Rayleigh) above Mach 1, the "
-              "isentropic p0/p_inf = (1 + (gamma-1)/2 M^2)^(gamma/(gamma-1)) below it. Total Temperature "
-              "T0 = T_inf (1 + (gamma-1)/2 M^2).")
+    g.comment("**2.")
     one = o.real(1.0)
     half_gm1 = o.mul(o.sub(gamma, one), o.real(0.5))
     p_inf = o.div(inp("Freestream Pressure"), o.real(1.0, PRESSURE))
@@ -91,9 +65,7 @@ def build(g: Graph, inp, faces=None):
     pitot = o.blend(w, pitot_sup, pitot_sub, name="Pitot Ratio")
     total_t = o.mul(t_inf, o.add(one, o.mul(half_gm1, m2)), name="Total Temperature")
 
-    g.comment("**3. Edge state** from the inviscid Cp: p/p_inf = 1 + gamma M^2 Cp/2; edge Mach isentropic from p02 "
-              "(p/p02 = (1 + (gamma-1)/2 Me^2)^(-gamma/(gamma-1))); Edge Temperature = T0 / (1 + (gamma-1)/2 Me^2); density "
-              "and speed of a perfect gas (R = 287.05); Sutherland viscosity.")
+    g.comment("**3.")
     p_ratio = o.fadd(o.field("1"), o.fmul(inp("Pressure Coefficient"), o.mul(o.mul(gamma, m2), o.real(0.5))))
     q = o.fclamp(o.fdiv(p_ratio, pitot), o.field("1e-12"), o.field("1"))
     exponent = o.neg(o.div(o.sub(gamma, one), gamma))
@@ -104,9 +76,7 @@ def build(g: Graph, inp, faces=None):
     speed2 = o.fmul(o.fmul(edge_m2, t_e), o.mul(gamma, o.real(GAS_CONSTANT)))
     mu_e = sutherland(o, t_e)
 
-    g.comment("**4. Running length.** Distance downstream of the body's most upstream point (Closest Point from 100 m "
-              "upstream) along V, over the cosine of the local inclination. Exact on flat plates and on cones at zero "
-              "incidence; an approximation of the surface streamline length elsewhere. Reynolds number on it at the edge state.")
+    g.comment("**4.")
     far = o.vscale(v, o.real(-100.0, LENGTH))
     front = g.block("closest_point_on_implicit<implicit,point,real>[1.2.0]", "closest_point_properties",
                     [body, o.point(o.comp(far, "x"), o.comp(far, "y"), o.comp(far, "z")), o.real(1e-8, LENGTH)], top=False)
@@ -125,17 +95,14 @@ def build(g: Graph, inp, faces=None):
         adiabatic = o.fmul(t_e, o.fadd(o.field("1"), o.fmul(energy, o.field(repr(recovery)))))
         return adiabatic, o.fadd(o.fmul(adiabatic, o.sub(one, fixed)), o.fmul(o.field("1"), o.mul(t_fixed, fixed)))
 
-    g.comment("**5. Laminar Cf**: Blasius 0.664 / sqrt(Re*) at Eckert's reference temperature "
-              "T* = Te + 0.5 (Tw - Te) + 0.22 (Taw - Te), recovery factor Pr^1/2. Wall adiabatic or fixed (Wall dropdown).")
+    g.comment("**5.")
     t_aw, t_w = wall(PRANDTL ** 0.5)
     t_star = o.fadd(o.fadd(t_e, o.fmul(o.fsub(t_w, t_e), o.field("0.5"))), o.fmul(o.fsub(t_aw, t_e), o.field("0.22")))
     density_ratio = o.fdiv(t_e, t_star)
     reduced = o.fmax(o.fmul(o.fmul(reynolds, density_ratio), o.fdiv(mu_e, sutherland(o, t_star))), o.field("1"))
     cf_lam = o.fmul(density_ratio, o.fdiv(o.field("0.664"), o.fsqrt(reduced)), name="Laminar Cf")
 
-    g.comment("**6. Turbulent Cf**: White's closed form of van Driest II, 0.455 / (S^2 ln^2(0.06 Re mu_e/mu_w sqrt(Te/Tw) / S)), "
-              "recovery factor Pr^1/3. **Turbulent** switches suddenly at the Transition Reynolds Number (0 for Fully "
-              "Turbulent, never for Laminar).")
+    g.comment("**6.")
     t_aw_t, t_w_t = wall(PRANDTL ** (1.0 / 3.0))
     m = o.fmax(o.fmul(energy, o.field(repr(PRANDTL ** (1.0 / 3.0)))), o.field("1e-6"))
     ratio = o.fdiv(t_w_t, t_e)
@@ -151,8 +118,7 @@ def build(g: Graph, inp, faces=None):
     turbulent = o.fclamp(o.fadd(o.fsub(reynolds, transition), o.field("0.5")), o.field("0"), o.field("1"), name="Turbulent")
     cf_edge = o.fadd(o.fmul(turbulent, cf_turb), o.fmul(o.fsub(o.field("1"), turbulent), cf_lam))
 
-    g.comment("**7. Skin Friction Coefficient** = wall shear / q_inf = Cf rho_e U_e^2 / 2 / q_inf, faded out smoothly between "
-              "30 and 60 degrees of leeward inclination, where the flow separates.")
+    g.comment("**7.")
     t = o.fclamp(o.fdiv(o.fsub(o.fmul(delta, o.field("-1")), o.field(repr(SEPARATION_START))),
                         o.field(repr(SEPARATION_END - SEPARATION_START))), o.field("0"), o.field("1"))
     attached = o.fsub(o.field("1"), o.fmul(o.fsq(t), o.fsub(o.field("3"), o.fmul(t, o.field("2")))))
@@ -160,13 +126,9 @@ def build(g: Graph, inp, faces=None):
     cf = o.fdiv(o.fmul(o.fmul(o.fmul(cf_edge, rho), speed2), o.fmul(attached, o.field("0.5"))), q_inf, name="Skin Friction Coefficient")
 
     if faces is None:
-        g.comment("**8. Friction forces and moments.** Shear acts along the surface flow t = (V - (V.n) n) / |...|. "
-                  "C.e = (1/S_ref) * integral of Cf (t.e) dA; moments (1/(S_ref L_ref)) * integral of Cf t.(e x (r - c)) dA.")
+        g.comment("**8.")
     else:
-        g.comment("**8. Friction forces and moments.** Shear acts along the surface flow t = (V - (V.n) n) / |...|. "
-                  "C.e = (1/S_ref) * sum over the Mesh Faces points of Cf (t.e) A; moments (1/(S_ref L_ref)) * sum of "
-                  "Cf t.(e x (r - c)) A, A being each point's area (the point map's value, m^2). Evaluate Field gives "
-                  "the integrand at every point at once, which is far faster than Surface Integral.")
+        g.comment("**8.")
     tangential = o.vfsub(v_f, o.vfscale(o.fdot(v_f, normal), normal))
     size = o.fmax(o.fsqrt(o.fdot(tangential, tangential)), o.field("1e-9"))
     direction = o._b("divide<vector_field,real_field>", "vector_field", [tangential, size])

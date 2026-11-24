@@ -1,29 +1,4 @@
-"""Ducts: the side wall of an implicit body between two planar ends, as an open OpenVSP Fuselage.
-
-The body is closed (a flow passage, or a tube with a wall) and its two ends lie in planes the user gives: the
-inlet plane and the outlet plane, not necessarily parallel. The duct is the body's side surface between them; the
-end faces are left out, so the OpenVSP Fuselage is open at both ends (no caps).
-
-Sections. nTop cuts the body with ``n`` planes that turn gradually from the inlet plane to the outlet plane: plane
-``k`` passes through the point ``(1 - s) p_in + s p_out`` with the normal ``(1 - s) n_in + s n_out`` (normalised),
-``s`` running 0 to 1 with OpenVSP's clustering function. Slicing normal to one axis instead would leave pieces
-of the surface between the last full slice and a tilted end that are very short on one side of the duct and long
-on the other, and OpenVSP's skinning spline overshoots there (5 cm on a 1 m tube with a 25 degree end). The end
-sections are cut a little inside the body (``inset``, a fraction of the distance between the end planes, since a
-cut exactly on an end face is degenerate) and moved onto their end plane along the duct's axis (inlet point to
-outlet point): along the cutting normal instead, a tilted end's contour moved off the wall (1.35 mm on the 1 m
-tube with a 25 degree end).
-
-Each section is one contour of its cut: the outer one, or the hole for the inner wall of a tube. OpenVSP places a
-section at its centre and turns it by XRotate, YRotate, ZRotate (rotation matrix Rx Ry Rz, found by testing
-OpenVSP 3.56); the fit uses XRotate = 0, so the section's normal fixes the other two, and writes the contour in the
-section's own y and z axes as a file cross-section.
-
-Skinning. Every side of every section is left free (no angles, strengths or slews) with the top/bottom and
-left/right symmetries and the left/right equalities off. OpenVSP's defaults couple the sides (each side copies the
-top), which bowed a round tube with tilted ends out by 0.1 m on a 1 m radius; uncoupled, the same tube came back
-within 0.2 mm. Standard library only.
-"""
+"""Ducts: the side wall of an implicit body between two planar ends, as an open OpenVSP Fuselage."""
 from __future__ import annotations
 
 import math
@@ -51,9 +26,8 @@ def unit(a):
 
 
 def rotation(n):
-    """OpenVSP section rotation (XRotate, YRotate, ZRotate in degrees, XRotate = 0) turning the section's x axis
-    onto ``n``, and its columns (the section's x, y and z axes in the world). OpenVSP's matrix is Rx Ry Rz, so with
-    XRotate = 0 the x axis goes to (cos b cos g, sin g, -sin b cos g)."""
+    """OpenVSP section rotation (XRotate, YRotate, ZRotate in degrees, XRotate = 0) turning the section's x axis onto
+    ``n``, and its columns (the section's x, y and z axes in the world)."""
     n = unit(n)
     g = math.asin(max(-1.0, min(1.0, n[1])))
     b = math.atan2(-n[2], n[0])
@@ -123,19 +97,18 @@ def pick_loop(loops, wall):
 
 def fit_duct(cuts, end_planes, per_quarter=24):
     """``cuts``: per section, the chosen contour as world points [(x, y, z)] and its cutting plane (point, normal),
-    inlet to outlet. ``end_planes``: ((p_in, n_in), (p_out, n_out)); the first and last contours are moved along
-    their cutting normal onto these planes."""
+    inlet to outlet. ``end_planes``: ((p_in, n_in), (p_out, n_out))."""
     sections, notes = [], []
     axis = unit(add(end_planes[1][0], end_planes[0][0], -1.0))
     for k, (loop, (p, n)) in enumerate(cuts):
         if k in (0, len(cuts) - 1):
             pe, ne = end_planes[0 if k == 0 else 1]
-            # along the duct's axis (inlet point to outlet point) onto the end plane, which becomes the section plane
+            # along the duct's axis (inlet point to outlet point) onto the end plane
             loop = [add(q, axis, dot(add(pe, q, -1.0), ne) / dot(axis, ne)) for q in loop]
             p, n = pe, unit(ne)
         angles, ex, ey, ez = rotation(n)
         local = [(dot(add(q, p, -1.0), ey), dot(add(q, p, -1.0), ez)) for q in loop]
-        off = sum(dot(add(q, p, -1.0), ex) for q in loop) / len(loop)  # 0 up to rounding: the loop is in the plane
+        off = sum(dot(add(q, p, -1.0), ex) for q in loop) / len(loop)  # 0 up to rounding
         uc, vc, w, h, pts, _ = F._section_curve(local, per_quarter)
         centre = add(add(add(p, ex, off), ey, uc), ez, vc)
         sections.append(DuctSection(centre, angles, w, h, pts, loop))

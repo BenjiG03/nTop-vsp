@@ -1,11 +1,4 @@
-"""Derive notebooks from the X-59 hackathon starter: keep its parametric geometry and append blocks to it.
-
-The starter (``x59-hackathon-starter.ntop``, MIT License, Copyright (c) 2026 matthewmuellernTop) is a parametric
-nTop model of an X-59-style supersonic demonstrator whose fuselage, wing, canards, tails and nacelle are separate
-implicit bodies driven by notebook variables. ``Derived`` loads it, keeps the blocks a set of named variables
-depends on (the mass statement, the AeroSandbox Run Command, the area-ruling table and the reference mesh are
-dropped), turns chosen variables into notebook inputs, and saves the result with more blocks appended.
-"""
+"""Derive notebooks from the X-59 hackathon starter: keep its parametric geometry and append blocks to it."""
 from __future__ import annotations
 
 import json

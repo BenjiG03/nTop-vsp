@@ -1,14 +1,4 @@
-"""Aero buildup blocks: contributions from any analysis, the Aero Database that sums them, its readers and plots.
-
-A **contribution** tells the database where one source of forces and moments is and how to use it. Every
-contribution is made by one block, **Aero Contribution (VSP)**, whose inputs all have defaults; the per-source
-blocks (VSPAERO, Wave Drag, Parasite Drag, Coefficients, nTop Fluids Contribution) wrap it with that source's
-defaults and only the inputs that matter for it. Its output is a few ``contribution.<key> = <value>`` lines, one
-setting per line, so names and paths may hold any character but a line break. **Aero Database (VSP)** takes a
-Flight Condition (its conditions and reference) and a list of contributions; it takes each at the database's
-conditions (interpolating where needed), moves it to the reference and moment point, keeps it only inside its Mach
-range, and sums them (``vsp_ntop.run_database``).
-"""
+"""Aero buildup blocks: contributions from any analysis, the Aero Database that sums them, its readers and plots."""
 from __future__ import annotations
 
 from ntopfile import Graph, InputSpec
@@ -46,7 +36,7 @@ def range_inputs(mach_min=0.0, mach_max=1000.0):
     )
 
 
-# --- the common contribution block ------------------------------------------------------------------------------------
+# --- the common contribution block
 
 def contribution_block():
     specs = (
@@ -155,7 +145,7 @@ def coefficients_contribution_block(base=None):
                     "interpolates.", base)
 
 
-# --- database ----------------------------------------------------------------------------------------------------------
+# --- database
 
 def _list_default(values, units=None):
     return lambda g: g.block("core.list<real>", "list<real>", [g.real(v, units) for v in values], top=False)
@@ -181,18 +171,10 @@ def database_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**Aero database.** A Python driver sums the contributions at every condition of the flight condition. "
-              "Each contribution applies only inside its Mach range (and, for coefficient tables, where it has values); "
-              "it is taken at the condition or interpolated (multilinear in Mach, alpha and beta; Wave and Parasite "
-              "Drag in Mach, at the condition's altitude), turned into body-axis forces and moments, moved to the "
-              "flight condition's moment point (M + r x F) and normalised by its reference. The totals give CL, CD, "
-              "CY (wind axes, VSPAERO's convention) and Cl, Cm, Cn (aircraft body-axis signs: right wing down, nose "
-              "up, nose right).")
+    g.comment("**Aero database.** A Python driver sums the contributions at every condition of the flight condition.")
     g.comment("**Outputs.** `<Case Name>.ntvsp.database.csv`: design variables, Mach, Altitude, AoA, Beta, CL, CD, "
-              "CY, Cl, Cm, "
-              "Cn, L_over_D, CA, CN, then each contribution's own six coefficients (columns named after it). Also the "
-              "centre of pressure and aerodynamic centre files read by **Center of Pressure (VSP)**. With Append To, "
-              "the rows are added to that file as well.")
+              "CY, Cl, Cm, Cn, L_over_D, CA, CN, then each contribution's own six coefficients (columns named after "
+              "it).")
     contrib = k.cat([k.join(inp("Contributions"), "\n"), "\n"])
     lines = [
         contrib,
@@ -205,12 +187,11 @@ def database_block():
     out = analysis(g, k, inp, "run_database", lambda ready: [], lines, "Aero Database", needs_openvsp=False)
     return make_block(
         "aero_database", "Aero Database (VSP)",
-        "A six-degree-of-freedom aero database on a Flight Condition from any mix of contributions: VSPAERO, Wave Drag, "
-        "Parasite Drag, and coefficients computed in nTop (Modified Newtonian, Viscous Correction, Aero "
+        "A six-degree-of-freedom aero database on a Flight Condition from any mix of contributions: VSPAERO, Wave "
+        "Drag, Parasite Drag, and coefficients computed in nTop (Modified Newtonian, Viscous Correction, Aero "
         "Coefficients). Each applies within its own Mach range and is converted to the flight condition's reference "
         "and moment point; the sum gives CL, CD, CY, Cl, Cm and Cn at every condition (Mach, altitude, angle of "
-        "attack, sideslip), with each contribution's share in its own columns. Outputs the results path for the database readers, Center of Pressure and Polar Plot (VSP); Append "
-        "To collects runs with different design variables into one design-of-experiments file.",
+        "attack, sideslip), with each contribution's share in its own columns.",
         specs, "text", g, out)
 
 
@@ -227,8 +208,7 @@ def database_coefficient_block():
     g = Graph()
     k = Kit(g)
     inp = model_inputs(specs)
-    g.comment("**Database column.** Import Table reads `<Case Name>.ntvsp.database.csv`; the chosen column comes out "
-              "as a list of reals, one per flight condition.")
+    g.comment("**Database column.** Import Table reads `<Case Name>.ntvsp.database.csv`.")
     table = g.block("import_table<file_path,bool>", "table", [k.cat([inp("Results"), ".ntvsp.database.csv"]),
                                                               g.boolean(True)], "Import Database")
     col = g.block("extract_column<table,text>", "list<text>", [table, k.pick(inp("Coefficient"), DATABASE_COLUMNS)],
@@ -251,7 +231,7 @@ def database_table_block():
                       "The whole Aero Database (VSP) as a table.", specs, "table", g, out)
 
 
-# --- plots -------------------------------------------------------------------------------------------------------------
+# --- plots
 
 PLOT_COLUMNS = ("CL", "CD", "CY", "Cl", "Cm", "Cn", "L_over_D", "CA", "CN", "AoA", "Beta", "Mach", "Altitude")
 ALONG = ("Angle of attack", "Sideslip", "Mach number")
@@ -281,10 +261,7 @@ def plot_block():
     k = Kit(g)
     inp = model_inputs(specs)
     g.comment("**Polar plot.** A Python driver plots the chosen columns of each database with matplotlib, one curve "
-              "per combination of the conditions that are not along the curve. Curves of one result are shaded from "
-              "light to dark by condition, results are told apart by line style (or by colour when each result has "
-              "one curve). The image is `<Case Name>.png` in the Working Directory; Show Window opens it in a window "
-              "too. Needs matplotlib in the Python of `NTOP_PYTHON_PATH`.")
+              "per combination of the conditions that are not along the curve.")
     lines = [
         k.line("results", k.join(inp("Results"))),
         k.line("labels", k.join(inp("Labels"))),

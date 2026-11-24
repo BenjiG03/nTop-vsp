@@ -1,13 +1,4 @@
-"""Read the VSPAERO panel file (``.vspgeom`` v3) that OpenVSP writes for a model.
-
-Layout: a header (version, number of mesh levels, then ``nodes faces max_nodes_per_face``), the nodes, the
-faces (``n node ...``, 1-based), one tag line per face (``part tag u v ...``), one face-map line per face, the
-wakes (``count`` then ``n part node ...`` per wake, wrapped at 10 nodes a line), and, when faces have more than
-three nodes, a triangulation of each face (``face ntri node ...``) followed by its tag lines.
-
-VSPAERO solves on the faces (its level 1) and stores surface results per triangle of the triangulation (level 0),
-in file order; ``level0`` lists those triangles. Standard library only.
-"""
+"""Read the VSPAERO panel file (``.vspgeom`` v3) that OpenVSP writes for a model."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -19,7 +10,7 @@ class VSPGeom:
     faces: list            # [node index, ...], 0-based
     parts: list            # part number of each face (1-based, as in the .vkey file)
     wakes: list            # (part, [node index, ...])
-    triangles: list = field(default_factory=list)  # per face: [(a, b, c), ...]; empty for an all-triangle file
+    triangles: list = field(default_factory=list)  # per face: [(a, b, c), ...].
 
 
 def _tokens(lines, pos):

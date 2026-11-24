@@ -1,21 +1,4 @@
-"""Local-inclination pressure laws for the mesh driver (``run_newtonian_mesh``), after hypanel's ``methods.py``.
-
-Each face's pressure depends only on its impact angle delta, the angle between the face and the freestream
-(sin delta = -n . V, positive windward), and the freestream Mach number. Supersonic only (Mach > 1).
-
-* **Tangent wedge** (windward): the exact two-dimensional oblique shock that turns the flow through delta (the weak
-  solution), Cp = 2 / (gamma M^2) (p2 / p1 - 1) with p2 / p1 = 1 + 2 gamma / (gamma + 1) (M^2 sin^2 beta - 1). Above
-  the detachment angle delta_max (no attached shock), Cp is scaled with sin^2 delta from the detachment value to
-  Cp_max at delta = 90 degrees, so it rises continuously to the stagnation value (hypanel's ``_detached_bridge``).
-* **Tangent cone** (windward): the exact cone of half angle delta (Taylor-Maccoll, weak shock), tabulated per Mach
-  number from the shock angle (hypanel's ``conical``), with the same bridge to Cp_max above the cone's detachment.
-* **Prandtl-Meyer** (leeward): the isentropic expansion from the freestream through -delta, nu(M2) = nu(M) - delta,
-  limited at vacuum. Faces turned more than 30 degrees away blend (smoothstep) to a separated-flow value by 60 degrees:
-  freestream pressure (Cp 0) or Gabeaud's base pressure -1 / M^2.
-* **Newtonian shadow** (leeward): Cp 0.
-
-Numpy, vectorised over faces.
-"""
+"""Local-inclination pressure laws for the mesh driver (``run_newtonian_mesh``), after hypanel's ``methods.py``."""
 from __future__ import annotations
 
 import math
@@ -44,9 +27,7 @@ def max_deflection(mach, gamma=1.4):
 
 
 def oblique_shock_cp(delta, mach, gamma=1.4):
-    """Cp behind the weak oblique shock of deflection ``delta`` (array, radians, 0 <= delta <= delta_max).
-
-    Shock angle from Thompson's closed form of the cubic in tan beta (the weak root)."""
+    """Cp behind the weak oblique shock of deflection ``delta`` (array, radians, 0 <= delta <= delta_max)."""
     np = _np()
     d = np.clip(delta, 1e-10, None)
     m2 = mach * mach
@@ -120,11 +101,7 @@ def _normal_shock_total_pressure_ratio(mn, gamma):
 
 def _cones_from_shocks(beta, mach, gamma, steps=400):
     """(cone half angle, surface Cp) behind conical shocks of angle ``beta`` (array): the Taylor-Maccoll equation
-    integrated from the shock to the cone surface by RK4 in V_theta (hypanel's ``conical.cone_from_shock``).
-
-    In theta the equation is singular at the Mach cone; in V_theta it is regular, and V_theta grows monotonically from
-    its value behind the shock to zero at the surface, so the end point is known. Both ends get small steps:
-    V_theta = V_shock (1 - S^2), S the smoothstep of t in [0, 1]. Velocities are over the limiting speed."""
+    integrated from the shock to the cone surface by RK4 in V_theta (hypanel's ``conical.cone_from_shock``)."""
     np = _np()
     sb = np.sin(beta)
     mn = np.maximum(mach * sb, 1.0)
@@ -163,10 +140,7 @@ def _cones_from_shocks(beta, mach, gamma, steps=400):
 
 
 def cone_table(mach, gamma=1.4, points=320, thin_points=64):
-    """Weak-branch exact cone solutions from half angle 0 to the detachment angle: (theta, Cp), theta increasing.
-
-    Thin cones need shock angles very close to the Mach angle (geometric spacing there), the rest quadratic spacing
-    (hypanel's ``conical.cone_table``). Cached per Mach number."""
+    """Weak-branch exact cone solutions from half angle 0 to the detachment angle: (theta, Cp), theta increasing."""
     key = ("cone", round(mach, 9), gamma)
     if key not in _TABLES:
         np = _np()
@@ -194,8 +168,8 @@ IMPACTS = ("wedge", "cone")
 def tangent_wedge_cp(delta, mach, cp_max, gamma=1.4, expansion="prandtl_meyer", separated="freestream", limit=None,
                      impact="wedge"):
     """Face Cp from the impact angle ``delta`` (array, radians): windward the tangent wedge (``impact = wedge``, the
-    oblique shock) or tangent cone (``cone``, the exact Taylor-Maccoll cone), bridged to ``cp_max`` above detachment;
-    leeward Prandtl-Meyer or Newtonian shadow."""
+    oblique shock) or tangent cone (``cone``, the exact Taylor-Maccoll cone), bridged to ``cp_max`` above detachment.
+    """
     np = _np()
     if mach <= 1.0:
         raise ValueError("the tangent wedge and cone need a supersonic freestream (Mach > 1)")

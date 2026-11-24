@@ -1,32 +1,10 @@
-"""Write a lofted body (``loft.Loft``) as a STEP file: one closed solid of B-spline faces and flat caps.
-
-STEP in one paragraph (docs/STEP_FORMAT.md has the long version): a STEP file (ISO 10303-21, ".stp") is a list of
-numbered records, ``#12=CARTESIAN_POINT('',(0.,1.,2.));``, each an instance of an entity type from an "application
-protocol" schema; records refer to each other by number. Geometry (points, curves, surfaces) is separate from
-topology (vertices, edges, loops, faces, shells, solids): a face says which surface it lies on and which edges bound
-it; an edge says which curve it follows and which two vertices it runs between. Above the solid sits a small
-"product" wrapper (what part this is, its units and tolerance) that CAD systems need to import it.
-
-The body written here (AP214, millimetres):
-
-    MANIFOLD_SOLID_BREP ── CLOSED_SHELL ── 4 side faces (+ a flat cap at each blunt end)
-    side face q (q = 0..3, a quarter of the way round: right→bottom, bottom→left, left→top, top→right)
-        surface: B_SPLINE_SURFACE_WITH_KNOTS (bicubic, clamped; loft.Patch)
-        bound:   seam edge q (nose→tail) + end edge at the tail + seam edge q+1 reversed + end edge at the nose
-                 (at a pointed end there is no end edge: both seams meet at the tip vertex, the "pole")
-    seam edge q: the curve w = q/4 along the body, shared by faces q-1 and q (each uses it once, opposite ways)
-    end edge:    the patch's boundary curve on a blunt end, shared with the cap
-    cap:         PLANE face bounded by the end edges (one per side face)
-
-(The driver can cut more faces round the body: the same layout with n side faces.)
-
-Standard library only (numbers come in as nested lists or numpy arrays)."""
+"""Write a lofted body (``loft.Loft``) as a STEP file: one closed solid of B-spline faces and flat caps."""
 from __future__ import annotations
 
 import datetime
 import math
 
-MM = 1000.0  # file unit: millimetres; the loft is in metres
+MM = 1000.0  # file unit: millimetres.
 
 
 def real(v):
@@ -58,7 +36,7 @@ class StepFile:
         self.records.append(body)
         return len(self.records)
 
-    # --- geometry ---
+    # --- geometry
     def point(self, p):
         return self.add(f"CARTESIAN_POINT('',({','.join(real(c * MM) for c in p)}))")
 
@@ -102,7 +80,7 @@ class StepFile:
                         f".F.,.F.,.F.,({','.join(map(str, mu))}),({','.join(map(str, mw))}),"
                         f"({','.join(real(v) for v in ku)}),({','.join(real(v) for v in kw)}),.UNSPECIFIED.)")
 
-    # --- topology ---
+    # --- topology
     def vertex(self, p):
         return self.add(f"VERTEX_POINT('',#{self.point(p)})")
 
@@ -181,7 +159,7 @@ def _solid(sf, lf, name):
     """Add one lofted body's MANIFOLD_SOLID_BREP to ``sf``; returns (record, faces, caps, w reversed?)."""
     patches = lf.patches
     ez = lf.frame.ez
-    # orientation: the side faces' normal (dS/du x dS/dw) must point out of the body; flip w if it does not
+    # orientation: the side faces' normal (dS/du x dS/dw) must point out of the body.
     flip = _normal_points_in(lf)
     if flip:
         patches = _reverse_w(patches)
@@ -223,8 +201,7 @@ def _solid(sf, lf, name):
     for end, edges, sign, label in ((lf.end, e_end, 1.0, "end"), (lf.start, e_start, -1.0, "start")):
         if not edges:
             continue
-        # the cap's normal points out of the body (+ez at the tail, -ez at the nose); its loop runs the end edges
-        # the other way from the side faces
+        # the cap's normal points out of the body (+ez at the tail, -ez at the nose).
         axis = tuple(sign * c for c in ez)
         ref = _perpendicular(axis)
         plane = sf.add(f"PLANE('',#{sf.placement(end.point, axis, ref)})")

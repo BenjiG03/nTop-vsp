@@ -1,24 +1,6 @@
 """Body (nose) lift of an OpenVSP model's fuselages from their section-area distribution, driven from nTop.
 
     python -m vsp_ntop.run_body_lift SETTINGS_FILE
-
-The chosen fuselages (``components``: names separated by ``|``, or empty for every fuselage) are sampled on their
-OpenVSP surface (CompPnt01) in ``slices`` rings of 64 points; OpenVSP's fuselage cross-sections are planes normal to
-x, so each ring gives the section area S(x) and its centroid (the tessellation-based Planar Slice was too coarse at
-the nose: 80% off there on a rocket). Several fuselages add on one x grid. On that area
-distribution, at every (Mach, AoA, Beta) of the flight condition within Mach Min to Mach Max, with alpha_t the total
-angle of attack (acos(cos a cos b)) and the force along the crossflow:
-
-* potential lift (``potential = slender``): slender-body theory, the normal force per length
-  dCN/dx = (dS/dx / Sref) sin(2 alpha_t) cos(alpha_t / 2) (Munk; the large-angle form of Jorgensen, NASA TR R-474,
-  equation 2.12), so lift sits where the area grows (the nose), none on a constant section, negative on a boattail;
-* viscous crossflow (``crossflow = jorgensen``): Allen and Perkins, dCN/dx = eta Cdn (2 r(x) / Sref) sin^2(alpha_t),
-  r the radius of the circle of equal area, Cdn of a circular cylinder against the crossflow Mach number M sin(alpha_t)
-  (TR R-474 Figure 1) and eta against fineness and crossflow Mach (Figures 4 and 6), as in hypanel's body_lift.
-
-Writes ``<case>.ntvsp.coefficients.csv`` (Mach, AoA, Beta, CA, CY, CN, Cl, Cm, Cn about x aft, y right, z up, with the
-flight condition's reference: Cl and Cn over Sref bref, Cm over Sref cref) for Coefficients Contribution (VSP), and
-``<case>.ntvsp.body_sections.csv`` (x, S, centroid). Standard library only.
 """
 from __future__ import annotations
 
@@ -121,11 +103,10 @@ def apparent_mass(pts):
 
 
 def _panel_mass(pts):
-    """The 2D apparent-mass tensor of a closed section per unit fluid density, [[m_yy, m_yz], [m_zy, m_zz]] (m^2), from
-    ``pts`` [(y, z)] around it: the exterior potential flow of the section moving with unit velocity along y and along
-    z (constant-strength source panels, ``d phi / d n = n . e`` on the contour), m_jk = -(contour integral of
-    phi_j n_k ds), n out of the body. A circle gives its area times the identity, an ellipse with semi-axes a (along
-    y) and b gives m_zz = pi a^2 and m_yy = pi b^2, a flat plate of width w moving across itself pi w^2 / 4."""
+    """The 2D apparent-mass tensor of a closed section per unit fluid density, [[m_yy, m_yz], [m_zy, m_zz]] (m^2),
+    from ``pts`` [(y, z)] around it: the exterior potential flow of the section moving with unit velocity along y and
+    along z (constant-strength source panels, ``d phi / d n = n . e`` on the contour), m_jk = -(contour integral of
+    phi_j n_k ds), n out of the body."""
     pts = list(pts)
     area2 = sum(pts[i - 1][0] * pts[i][1] - pts[i][0] * pts[i - 1][1] for i in range(len(pts)))
     if area2 < 0.0:
@@ -185,9 +166,7 @@ def rings(text, shape=False):
         raw.setdefault(p[1], []).append((sum(q[0] for q in pts) / len(pts), pts))
     comps = []
     for rl in raw.values():
-        # OpenVSP's end caps are several rings in one plane, sweeping across the cap: partial outlines, not sections.
-        # A cap group at the front becomes a point (its area enters as the step to the first section, as for a blunt
-        # nose); one further aft (a flat base) is left out, so the body does not seem to shrink before its base.
+        # OpenVSP's end caps are several rings in one plane, sweeping across the cap
         groups = []
         for x, pts in rl:
             if groups and abs(x - groups[-1][0][0]) <= 1e-9:
@@ -245,9 +224,7 @@ def combine(parts, n):
 
 
 def body_loads(xs, areas, centres, conds, ref, potential, crossflow, masses=None):
-    """Coefficient rows (HEADER) for each condition. With ``masses`` (apparent-mass tensors per station), the potential
-    force per length follows d(M e)/dx, e the crossflow direction, instead of (dS/dx) e: the same for round sections,
-    and a force off the crossflow where the section is not symmetric about it."""
+    """Coefficient rows (HEADER) for each condition."""
     sref, bref, cref, (xr, yr, zr) = ref
     x0, x1 = xs[0], xs[-1]
     radius = [math.sqrt(max(a, 0.0) / math.pi) for a in areas]
@@ -261,7 +238,7 @@ def body_loads(xs, areas, centres, conds, ref, potential, crossflow, masses=None
         ey, ez = (vy / s, vz / s) if s > 1e-12 else (0.0, 0.0)
         mn = c["Mach"] * math.sin(at)
         k_v = crossflow_factor(fineness, mn) * crossflow_drag(mn) if crossflow else 0.0
-        cn = my = mz = 0.0  # normal force along the crossflow, moments of it about the reference point
+        cn = my = mz = 0.0  # normal force along the crossflow
         sy = sz = 0.0  # the force's y and z components (off the crossflow too, with section shapes)
         mx = 0.0
         for i in range(len(xs) - 1):

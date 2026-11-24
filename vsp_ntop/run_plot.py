@@ -1,14 +1,6 @@
 """Polar plots of aero databases with matplotlib, driven from nTop.
 
     python -m vsp_ntop.run_plot SETTINGS_FILE [--show]
-
-Settings: ``results`` (``;``-separated results paths of Aero Database runs, or database CSV files), ``labels``
-(``;``-separated, one per result; empty: the file names), ``x`` and ``y`` (database columns), ``along`` (the
-condition that varies along each curve: AoA, Beta or Mach; every combination of the other two is one curve),
-``title``, ``show`` (1: open the plot in a window), ``work_dir`` and ``case``.
-
-Writes ``<case>.png`` in the working directory. With ``show`` the same figure opens in a window from a separate,
-detached process (``--show``), so nTop does not wait for the window to be closed.
 """
 from __future__ import annotations
 
@@ -83,9 +75,9 @@ def figure(s: Settings):
     fig, ax = plt.subplots(figsize=(9, 5.5))
     for label, key, xs, ys in curves:
         r = names.index(label)
-        if len(keys) == 1:  # the results are all that differ: one hue each, in a fixed order
+        if len(keys) == 1:  # the results are all that differ
             color, style = CATEGORICAL[r], "-"
-        else:  # the conditions are ordered: one hue, light to dark; results by line style
+        else:  # the conditions are ordered
             t = keys.index(key) / max(1, len(keys) - 1)
             color, style = RAMP(t), STYLES[r]
         parts = ([label] if len(names) > 1 or not vary else []) + [f"{SYMBOLS[others[j]]} {key[j]:g}" for j in vary]

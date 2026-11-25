@@ -1,11 +1,13 @@
 """Build OpenVSP Fuselage and Wing components from fitted sections (``fit.py``)."""
 from __future__ import annotations
 
-import math
 import os
 import xml.etree.ElementTree as ET
 
+import numpy as np
+
 from . import fit as F
+from .geometry import arc_length
 
 THICK_SET, THIN_SET = 3, 4  # OpenVSP's SET_FIRST_USER and the next one
 
@@ -27,8 +29,8 @@ def _sets(gid, set_name):
 
 def tess_split(lengths, total, minimum=2):
     """Share ``total`` tessellation points between sections in proportion to their lengths."""
-    whole = sum(lengths) or 1.0
-    return [max(minimum, int(round(total * l / whole)) + 1) for l in lengths]
+    lengths = np.asarray(lengths, float)
+    return np.maximum(minimum, np.round(total * lengths / (lengths.sum() or 1.0)).astype(int) + 1).tolist()
 
 
 def fuselage_lines(k, name, f: F.FuselageFit, set_name, tess_w):
@@ -69,40 +71,32 @@ def _parm(group, name, value):
 def axial_points(secs, tess_w, aspect):
     """Tessellation points along each section interval, so panels are about ``aspect`` times as long (along x) as they
     are wide (around the body): the width is the smaller of the two sections' perimeters over ``tess_w - 1``."""
-    def perimeter(s):
-        if s.is_point:
-            return 0.0
-        pts = [(a * s.width, b * s.height) for a, b in s.points]
-        return sum(math.dist(p, q) for p, q in zip(pts, pts[1:]))
-    out = []
-    for a, b in zip(secs, secs[1:]):
-        per = [p for p in (perimeter(a), perimeter(b)) if p > 0]
-        width = min(per) / max(1, tess_w - 1)
-        out.append(max(2, int(math.ceil((b.x - a.x) / (aspect * width))) + 1))
-    return out
+    per = np.array([np.inf if s.is_point else arc_length(s.points * [s.width, s.height])[-1] for s in secs])
+    width = np.minimum(per[:-1], per[1:]) / max(1, tess_w - 1)
+    dx = np.diff([s.x for s in secs])
+    return np.maximum(2, np.ceil(dx / (aspect * width)).astype(int) + 1).tolist()
 
 
 def skin_angles(secs):
     """Skinning angle (degrees, from the x axis, positive where the side moves away from the axis going aft) of the
     top, right, bottom and left sides at every section: the body's own slopes from the nTop slices around it (the
     fit's ``slopes``), or else central differences of the sections' extents."""
-    def sides(s):
-        if s.is_point:
-            return (s.zc, s.yc, -s.zc, -s.yc)
-        return (s.zc + 0.5 * s.height, s.yc + 0.5 * s.width, -(s.zc - 0.5 * s.height), -(s.yc - 0.5 * s.width))
-    ext = [sides(s) for s in secs]
+    x = np.array([s.x for s in secs])
+    half = np.array([(0.0, 0.0) if s.is_point else (0.5 * s.height, 0.5 * s.width) for s in secs])
+    c = np.array([(s.zc, s.yc) for s in secs])
+    ext = np.column_stack([c[:, 0] + half[:, 0], c[:, 1] + half[:, 1], half[:, 0] - c[:, 0], half[:, 1] - c[:, 1]])
     n = len(secs)
+    a, b = np.maximum(np.arange(n) - 1, 0), np.minimum(np.arange(n) + 1, n - 1)
+    dx = (x[b] - x[a])[:, None]
+    central = np.where(dx > 0, np.degrees(np.arctan2(ext[b] - ext[a], dx)), 0.0)
     out = []
     for i, s in enumerate(secs):
         if s.is_point and s.tip_angle is not None:
             out.append((s.tip_angle,) * 4)
-            continue
-        if s.slopes is not None:  # the body's own slopes
-            out.append(tuple(math.degrees(math.atan(v)) for v in s.slopes))
-            continue
-        a, b = (i - 1 if i > 0 else i), (i + 1 if i < n - 1 else i)
-        dx = secs[b].x - secs[a].x
-        out.append(tuple(math.degrees(math.atan2(ext[b][k] - ext[a][k], dx)) if dx > 0 else 0.0 for k in range(4)))
+        elif s.slopes is not None:  # the body's own slopes
+            out.append(tuple(np.degrees(np.arctan(s.slopes))))
+        else:
+            out.append(tuple(central[i]))
     return out
 
 
@@ -186,6 +180,9 @@ def set_duct_sections(vsp3_in, vsp3_out, fits):
 
 
 SYMMETRY_FLAGS = {"none": "0", "xz": "SYM_XZ", "xy": "SYM_XY", "xzxy": "SYM_XZ | SYM_XY"}
+# the copies each symmetry makes, as (1, y sign, z sign)
+MIRRORS = {"none": [(1, 1, 1)], "xz": [(1, 1, 1), (1, -1, 1)], "xy": [(1, 1, 1), (1, 1, -1)],
+           "xzxy": [(1, 1, 1), (1, -1, 1), (1, 1, -1), (1, -1, -1)]}
 
 
 def wing_lines(k, name, f: F.WingFit, set_name, symmetry, tess_u, tess_w, le_cluster=0.25, te_cluster=0.25,
@@ -197,7 +194,7 @@ def wing_lines(k, name, f: F.WingFit, set_name, symmetry, tess_u, tess_w, le_clu
     fr = f.frame
     s_axis = fr.ez
     root = fr.point(st[0].le[0], st[0].le[1], st[0].z)
-    cant = math.degrees(math.atan2(s_axis[2], s_axis[1]))
+    cant = np.degrees(np.arctan2(s_axis[2], s_axis[1]))
     gid = f"g{k}"
     L = [f"    // wing: {name}",
          f'    string {gid} = AddGeom( "WING", "" );',

@@ -1,16 +1,20 @@
 """Section contours of an implicit body, as nTop's Slice Body block exports them (CLI, ASCII)."""
 from __future__ import annotations
 
-import math
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from .geometry import arc_length, at_arc, shoelace
 
 
+@dataclass
 class Layer:
-    """One slicing plane: ``z`` along the slicing direction, ``loops`` closed polylines [(u, v), ...] (first
-    point not repeated) with the outside on the right of a clockwise loop (holes have negative area)."""
+    """One slicing plane: ``z`` along the slicing direction, ``loops`` closed (n, 2) contours in (u, v) (first point
+    not repeated), holes with negative area."""
 
-    def __init__(self, z, loops):
-        self.z = z
-        self.loops = loops
+    z: float
+    loops: list = field(default_factory=list)
 
 
 def read_cli(path):
@@ -24,14 +28,13 @@ def read_cli(path):
             elif line.startswith("$$BINARY"):
                 raise ValueError(f"{path}: binary CLI; export the slices as ASCII")
             elif line.startswith("$$LAYER/"):
-                layers.append(Layer(float(line.split("/", 1)[1]) * unit_mm * 1e-3, []))
+                layers.append(Layer(float(line.split("/", 1)[1]) * unit_mm * 1e-3))
             elif line.startswith("$$POLYLINE/"):
                 v = line.split("/", 1)[1].split(",")
                 n = int(v[2])
-                s = unit_mm * 1e-3
-                pts = [(float(v[3 + 2 * i]) * s, float(v[4 + 2 * i]) * s) for i in range(n)]
-                if len(pts) > 1 and pts[0] == pts[-1]:
-                    pts.pop()
+                pts = np.array(v[3:3 + 2 * n], float).reshape(n, 2) * (unit_mm * 1e-3)
+                if n > 1 and (pts[0] == pts[-1]).all():
+                    pts = pts[:-1]
                 if len(pts) >= 3 and layers:
                     layers[-1].loops.append(pts)
     layers.sort(key=lambda l: l.z)
@@ -40,101 +43,52 @@ def read_cli(path):
 
 def area(loop):
     """Signed area (positive counter-clockwise in u, v)."""
-    s = 0.0
-    for i in range(len(loop)):
-        x0, y0 = loop[i - 1]
-        x1, y1 = loop[i]
-        s += x0 * y1 - x1 * y0
-    return 0.5 * s
+    return shoelace(loop)[0]
 
 
 def centroid(loop):
-    a = cx = cy = 0.0
-    for i in range(len(loop)):
-        x0, y0 = loop[i - 1]
-        x1, y1 = loop[i]
-        w = x0 * y1 - x1 * y0
-        a += w
-        cx += (x0 + x1) * w
-        cy += (y0 + y1) * w
-    if abs(a) < 1e-300:
-        n = len(loop)
-        return sum(p[0] for p in loop) / n, sum(p[1] for p in loop) / n
-    return cx / (3.0 * a), cy / (3.0 * a)
+    return shoelace(loop)[1]
 
 
 def bounds(loop):
-    us = [p[0] for p in loop]
-    vs = [p[1] for p in loop]
-    return min(us), max(us), min(vs), max(vs)
+    p = np.asarray(loop)
+    (u0, v0), (u1, v1) = p.min(axis=0), p.max(axis=0)
+    return u0, u1, v0, v1
 
 
 def perimeter(loop):
-    return sum(math.dist(loop[i - 1], loop[i]) for i in range(len(loop)))
+    return arc_length(loop, closed=True)[-1]
+
+
+def inside(loop, u, v):
+    """Whether (u, v) is inside the closed polygon (even-odd rule)."""
+    p = np.asarray(loop)
+    x0, y0 = np.roll(p, 1, axis=0).T
+    x1, y1 = p.T
+    spans = (y0 > v) != (y1 > v)
+    dy = np.where(spans, y1 - y0, 1.0)
+    return bool(np.count_nonzero(spans & (u < x0 + (v - y0) * (x1 - x0) / dy)) % 2)
 
 
 def outer_loops(layer: Layer, min_fraction=0.02):
     """The layer's outer contours (not holes), largest first, dropping slivers below ``min_fraction`` of the
     largest area."""
     sized = sorted(((abs(area(l)), l) for l in layer.loops), key=lambda t: -t[0])
-    if not sized:
-        return []
     keep = []
     for a, l in sized:
         if a < min_fraction * sized[0][0]:
             break
-        cu, cv = centroid(l)
-        if any(inside(o, cu, cv) for o in keep):  # a hole or an island inside a larger contour
-            continue
-        keep.append(l)
+        if not any(inside(o, *centroid(l)) for o in keep):  # not a hole or island in a larger contour
+            keep.append(l)
     return keep
-
-
-def inside(loop, u, v):
-    n = False
-    for i in range(len(loop)):
-        x0, y0 = loop[i - 1]
-        x1, y1 = loop[i]
-        if (y0 > v) != (y1 > v) and u < x0 + (v - y0) * (x1 - x0) / (y1 - y0):
-            n = not n
-    return n
 
 
 def resample(points, n, closed=False):
     """``n`` points evenly spaced by arc length along a polyline (ends included when open)."""
-    pts = list(points) + ([points[0]] if closed else [])
-    cum = [0.0]
-    for a, b in zip(pts, pts[1:]):
-        cum.append(cum[-1] + math.dist(a, b))
-    total = cum[-1]
-    out = []
-    k = 0
-    count = n if closed else n - 1
-    for i in range(n):
-        s = total * i / count
-        while k < len(cum) - 2 and cum[k + 1] < s:
-            k += 1
-        span = cum[k + 1] - cum[k]
-        t = 0.0 if span <= 0 else min(1.0, max(0.0, (s - cum[k]) / span))
-        out.append((pts[k][0] + t * (pts[k + 1][0] - pts[k][0]), pts[k][1] + t * (pts[k + 1][1] - pts[k][1])))
-    return out
+    total = arc_length(points, closed)[-1]
+    return at_arc(points, total * np.arange(n) / (n if closed else n - 1), closed)
 
 
 def at_fractions(points, fractions):
     """Points at the given arc-length fractions (0 to 1) of an open polyline."""
-    cum = [0.0]
-    for a, b in zip(points, points[1:]):
-        cum.append(cum[-1] + math.dist(a, b))
-    total = cum[-1]
-    out = []
-    k = 0
-    for f in fractions:
-        s = total * min(1.0, max(0.0, f))
-        while k < len(cum) - 2 and cum[k + 1] < s:
-            k += 1
-        while k > 0 and cum[k] > s:
-            k -= 1
-        span = cum[k + 1] - cum[k]
-        t = 0.0 if span <= 0 else (s - cum[k]) / span
-        out.append((points[k][0] + t * (points[k + 1][0] - points[k][0]), points[k][1] + t * (points[k + 1][1] - points[k][1])))
-    return out
+    return at_arc(points, arc_length(points)[-1] * np.clip(fractions, 0.0, 1.0))

@@ -4,29 +4,24 @@
 """
 from __future__ import annotations
 
-import math
 import os
 
+import numpy as np
 
 from . import duct as D
 from . import fit as F
 from . import slices as S
 from . import vspmodel as M
 from .common import openvsp_dir, DriverError, Log, Settings, main_wrapper, run_vspscript, vsp_path, write_csv
+from .geometry import polygon_distance
 
-X, Y, Z = (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)
-
-
-def dot(a, b):
-    return sum(p * q for p, q in zip(a, b))
+X, Y, Z = np.eye(3)
 
 
 PER_BODY = ("file", "ox", "oy", "oz", "sx", "sy", "sz", "bx0", "bx1")
 
 CARRY_COLS = ["Name", "Copy", "Body", "Sx", "Sy", "Sz", "Nx", "Ny", "Nz", "Qx", "Qy", "Qz", "Root", "Semispan",
               "Root_Chord", "Tip_Chord", "LE_Slope", "Planform", "Body_Width", "Body_Length"]
-FLIPS = {"none": [(1, 1)], "xz": [(1, 1), (-1, 1)], "xy": [(1, 1), (1, -1)],
-         "xzxy": [(1, 1), (-1, 1), (1, -1), (-1, -1)]}
 
 
 def carryover_fins(name, frame, z0, stations, symmetry, fuse_fits):
@@ -42,27 +37,27 @@ def carryover_fins(name, frame, z0, stations, symmetry, fuse_fits):
     x_le = frame.origin[0] + root.le[1]
     x_tip = frame.origin[0] + tip.le[1]
     slope = (semispan - r) / max(x_tip - x_le, 1e-3 * (semispan - r))
-    planform = sum(0.5 * (a.chord + b.chord) * (b.z - a.z) for a, b in zip(stations, stations[1:]))
+    planform = np.trapezoid([st.chord for st in stations], [st.z for st in stations])
+    bodies = []  # per fuselage: section stations (x), their contours in the world, its aft end
+    for body, ff in fuse_fits.items():
+        secs = [sec for sec in ff.sections if len(sec.loop)]
+        bodies.append((body, np.array([ff.frame.origin[0] + sec.x for sec in secs]),
+                       [ff.frame.point(sec.loop[:, 0], sec.loop[:, 1], sec.x) for sec in secs],
+                       max(ff.frame.origin[0] + sec.x for sec in ff.sections)))
     rows = []
-    for copy, (fy, fz) in enumerate(FLIPS[symmetry], start=1):
-        m = lambda v: (v[0], fy * v[1], fz * v[2])  # noqa: E731
-        s, n = m(frame.ez), m(frame.ex)
-        q = m(frame.point(root.le[0], root.le[1], root.z))
-        mid = m(frame.point(root.le[0], root.le[1] + 0.5 * root.chord, root.z))
+    for copy, m in enumerate(M.MIRRORS[symmetry], start=1):
+        s, n = m * frame.ez, m * frame.ex
+        q = m * frame.point(root.le[0], root.le[1], root.z)
+        mid = m * frame.point(root.le[0], root.le[1] + 0.5 * root.chord, root.z)
         best = None
-        for body, ff in fuse_fits.items():
-            secs = [sec for sec in ff.sections if sec.loop]
-            pts = [[ff.frame.point(u, v, sec.x) for u, v in sec.loop] for sec in secs]
-            xs = [ff.frame.origin[0] + sec.x for sec in secs]
-            near = min(range(len(secs)), key=lambda i: abs(xs[i] - mid[0]))
-            gap = min(math.dist(p, mid) for p in pts[near])
+        for body, xs, pts, end in bodies:
+            near = int(np.argmin(np.abs(xs - mid[0])))
+            gap = np.linalg.norm(pts[near] - mid, axis=1).min()
             if best is None or gap < best[0]:
-                over = [i for i, x in enumerate(xs) if x_le <= x <= x_le + root.chord] or [near]
-                # across the body in the fin's plane
-                band = [dot(p, s) for i in over for p in pts[i] if abs(dot(p, n) - dot(q, n)) <= 0.2 * r]
-                low = min(band or [dot(p, s) for i in over for p in pts[i]])
-                end = max(ff.frame.origin[0] + sec.x for sec in ff.sections)
-                best = (gap, body, low, end)
+                over = [pts[i] for i in np.flatnonzero((x_le <= xs) & (xs <= x_le + root.chord))] or [pts[near]]
+                over = np.vstack(over)
+                band = over[np.abs((over - q) @ n) <= 0.2 * r] @ s  # across the body in the fin's plane
+                best = (gap, body, (band if len(band) else over @ s).min(), end)
         _, body, low, end = best
         rows.append({"Name": name, "Copy": copy, "Body": body, **{f"S{a}": v for a, v in zip("xyz", s)},
                      **{f"N{a}": v for a, v in zip("xyz", n)}, **{f"Q{a}": v for a, v in zip("xyz", q)},
@@ -125,9 +120,8 @@ def slicer_basis(d, ex, ey):
     """The in-plane axes nTop's Slice Body writes contours in: the frame's own, except for slicing along a world
     axis, where it uses world axes (u, v) with u x v the slicing direction: the cyclic ones for +x, +y, +z and
     (z, y), (x, z), (y, x) for -x, -y, -z (found by testing nTop 6.3.3; the four fins of a cruciform rocket)."""
-    neg = lambda a: tuple(-c for c in a)  # noqa: E731
-    for axis, basis in ((X, (Y, Z)), (Y, (Z, X)), (Z, (X, Y)), (neg(X), (Z, Y)), (neg(Y), (X, Z)), (neg(Z), (Y, X))):
-        if dot(d, axis) > 1.0 - 1e-9:
+    for axis, basis in ((X, (Y, Z)), (Y, (Z, X)), (Z, (X, Y)), (-X, (Z, Y)), (-Y, (X, Z)), (-Z, (Y, X))):
+        if np.dot(d, axis) > 1.0 - 1e-9:
             return basis
     return ex, ey
 
@@ -139,11 +133,10 @@ def contours(c, frame: F.Frame):
     if not os.path.isfile(path):
         raise DriverError(f"component {c['name']}: section file {path} not found")
     layers = S.read_cli(path)
-    bu, bv = slicer_basis(frame.ez, frame.ex, frame.ey)
-    m = [[dot(bu, frame.ex), dot(bv, frame.ex)], [dot(bu, frame.ey), dot(bv, frame.ey)]]
-    if not (abs(m[0][0] - 1) < 1e-9 and abs(m[1][1] - 1) < 1e-9):
+    m = np.vstack(slicer_basis(frame.ez, frame.ex, frame.ey)) @ np.column_stack([frame.ex, frame.ey])
+    if not (abs(m[0, 0] - 1) < 1e-9 and abs(m[1, 1] - 1) < 1e-9):  # (u, v) in the slicer's basis to the frame's
         for l in layers:
-            l.loops = [[(m[0][0] * u + m[0][1] * v, m[1][0] * u + m[1][1] * v) for u, v in loop] for loop in l.loops]
+            l.loops = [loop @ m for loop in l.loops]
     return [l for l in layers if l.loops]
 
 
@@ -151,7 +144,7 @@ def _vec(c, key):
     v = [x.strip() for x in c[key].split(",")]
     if len(v) != 3:
         raise DriverError(f"component {c.get('name')}: {key} = '{c[key]}' is not x, y, z")
-    return tuple(float(x) for x in v)
+    return np.array(v, float)
 
 
 def duct_cuts(c):
@@ -168,10 +161,9 @@ def duct_cuts(c):
     for i, path in enumerate(files):
         if not os.path.isfile(path):
             raise DriverError(f"duct {c['name']}: section file {path} not found")
-        o = (per["px"][i], per["py"][i], per["pz"][i])
-        ex = F.unit((per["ux"][i], per["uy"][i], per["uz"][i]))
-        ey = F.unit((per["vx"][i], per["vy"][i], per["vz"][i]))
-        n = F.cross(ex, ey)
+        o, ex, ey = (np.array([per[k + c][i] for c in "xyz"]) for k in "puv")
+        ex, ey = D.unit(ex), D.unit(ey)
+        n = np.cross(ex, ey)
         bu, bv = slicer_basis(n, ex, ey)
         layers = [l for l in S.read_cli(path) if l.loops]
         if not layers:
@@ -182,8 +174,7 @@ def duct_cuts(c):
             loop = D.pick_loop(layer.loops, wall)
         except F.FitError as e:
             raise DriverError(f"duct {c['name']}, cut {i + 1}: {e}")
-        pts = [tuple(o[j] + u * bu[j] + v * bv[j] + layer.z * n[j] for j in range(3)) for u, v in loop]
-        cuts.append((pts, (o, n)))
+        cuts.append((o + loop @ np.vstack([bu, bv]) + layer.z * n, (o, n)))
     return cuts
 
 
@@ -197,38 +188,17 @@ def duct_deviation(points, f):
         if a % per:
             continue
         loop = f.sections[a // per].loop3d
-        loop = loop[::max(1, len(loop) // 720)]  # at most ~720 points
-        q = (x, y, z)
-        best = 1e300
-        for i in range(len(loop)):
-            p0, p1 = loop[i - 1], loop[i]
-            d = tuple(b1 - b0 for b0, b1 in zip(p0, p1))
-            l2 = sum(c * c for c in d)
-            t = 0.0 if l2 == 0 else max(0.0, min(1.0, sum((qq - pp) * dd for qq, pp, dd in zip(q, p0, d)) / l2))
-            best = min(best, math.dist(q, tuple(pp + t * dd for pp, dd in zip(p0, d))))
-        out.append(best)
+        out.append(polygon_distance((x, y, z), loop[::max(1, len(loop) // 720)]))  # at most ~720 points
     if not out:
         return float("nan"), float("nan"), 0
-    return sum(out) / len(out), max(out), len(out)
+    return float(np.mean(out)), max(out), len(out)
 
 
 def frame_of(c):
-    o = (num(c, "ox"), num(c, "oy"), num(c, "oz"))
+    o = np.array([num(c, "ox"), num(c, "oy"), num(c, "oz")])
     if c["kind"] == "fuselage":
         return F.fuselage_frame(o)
     return F.wing_frame(o, (num(c, "sx"), num(c, "sy"), num(c, "sz")))
-
-
-def _dist_loop(loop, u, v):
-    best = 1e300
-    for i in range(len(loop)):
-        ax, ay = loop[i - 1]
-        bx, by = loop[i]
-        dx, dy = bx - ax, by - ay
-        l2 = dx * dx + dy * dy
-        t = 0.0 if l2 == 0 else max(0.0, min(1.0, ((u - ax) * dx + (v - ay) * dy) / l2))
-        best = min(best, (u - ax - t * dx) ** 2 + (v - ay - t * dy) ** 2)
-    return math.sqrt(best)
 
 
 def deviation(points, layers, frame: F.Frame, skip_ends):
@@ -240,22 +210,21 @@ def deviation(points, layers, frame: F.Frame, skip_ends):
         loops.append((l.z, S.resample(loop, min(len(loop), 240), closed=True)))
     if len(loops) < 2:
         return float("nan"), float("nan"), 0
-    zs = [z for z, _ in loops]
+    zs = np.array([z for z, _ in loops])
     n_u = max(a for a, *_ in points) or 1
+    pts = np.array([p for p in points if skip_ends * n_u - 1e-9 <= p[0] <= (1 - skip_ends) * n_u + 1e-9])
+    if not len(pts):
+        return float("nan"), float("nan"), 0
+    uvh = (pts[:, 2:] - frame.origin) @ np.column_stack([frame.ex, frame.ey, frame.ez])
+    uvh = uvh[(uvh[:, 2] > zs[0] + 1e-7) & (uvh[:, 2] < zs[-1] - 1e-7)]  # between the first and last slice
     out = []
-    for a, b, x, y, z in points:
-        if a < skip_ends * n_u - 1e-9 or a > (1 - skip_ends) * n_u + 1e-9:
-            continue
-        rel = (x - frame.origin[0], y - frame.origin[1], z - frame.origin[2])
-        u, v, h = dot(rel, frame.ex), dot(rel, frame.ey), dot(rel, frame.ez)
-        if h <= zs[0] + 1e-7 or h >= zs[-1] - 1e-7:  # outside the slices
-            continue
-        j = max(0, min(len(zs) - 2, next((i for i in range(len(zs) - 1) if zs[i + 1] >= h), len(zs) - 2)))
+    for u, v, h in uvh:
+        j = min(max(int(np.searchsorted(zs, h)) - 1, 0), len(zs) - 2)
         t = (h - zs[j]) / (zs[j + 1] - zs[j]) if zs[j + 1] > zs[j] else 0.0
-        out.append((1 - t) * _dist_loop(loops[j][1], u, v) + t * _dist_loop(loops[j + 1][1], u, v))
+        out.append((1 - t) * polygon_distance((u, v), loops[j][1]) + t * polygon_distance((u, v), loops[j + 1][1]))
     if not out:
         return float("nan"), float("nan"), 0
-    return sum(out) / len(out), max(out), len(out)
+    return float(np.mean(out)), max(out), len(out)
 
 
 def main(settings_path):
@@ -295,7 +264,7 @@ def main(settings_path):
             lines += D.duct_lines(k, name, f, set_name, tess_w, M._sets)
             duct_fits[name] = (f, tess_w, num(c, "panel_aspect", 1.5))
             duct_checks.append(name)
-            length = sum(math.dist(a.centre, b.centre) for a, b in zip(f.sections, f.sections[1:]))
+            length = np.linalg.norm(np.diff([sec.centre for sec in f.sections], axis=0), axis=1).sum()
             rows.append({"Name": name, "Type": "Duct", "Set": set_name.capitalize(), "Sections": len(f.sections),
                          "Slices": len(cuts), "Size": length})
             log(f"{name}: duct of {len(f.sections)} sections ({c.get('wall', 'outer')} wall), centre line "
@@ -305,7 +274,7 @@ def main(settings_path):
         layers = contours(c, frame)
         try:
             if kind == "fuselage":
-                if abs(dot(frame.ez, X) - 1.0) > 1e-9:
+                if abs(frame.ez @ X - 1.0) > 1e-9:
                     raise DriverError(f"{name}: a fuselage is sliced along +x")
                 bounds = None
                 if "bx0" in c and "bx1" in c:  # the bounding box's x range
@@ -324,11 +293,11 @@ def main(settings_path):
                 if symmetry not in M.SYMMETRY_FLAGS:
                     raise DriverError(f"{name}: symmetry '{symmetry}': expected none, xz, xy or xzxy")
                 if symmetry != "none":
-                    o_s = dot(frame.origin, frame.ez)
+                    o_s = frame.origin @ frame.ez
                     layers = [l for l in layers if o_s + l.z >= -1e-6]
                 f = F.fit_wing(layers, frame, int(num(c, "sections", 8)), int(num(c, "airfoil_points", 41)),
                                num(c, "section_tolerance", 0.01), num(c, "min_section_span", 0.04))
-                z0 = -dot(frame.origin, frame.ez)  # the plane through the origin normal to the span axis
+                z0 = -frame.origin @ frame.ez  # the plane through the origin normal to the span axis
                 root_span = f.stations[0].z - z0  # from that plane to where the wing body starts
                 exposed_stations = list(f.stations)
                 extension = num(c, "extend", 0.0)

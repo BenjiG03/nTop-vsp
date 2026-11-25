@@ -20,17 +20,16 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import os
-import subprocess
-import time
+
+from vsp_ntop.geometry import ls_slope
+from vsp_ntop.ntopcl import run_notebook
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 NOTEBOOK = os.path.join(HERE, "X-59 Aero Database.ntop")
 TABLE = os.path.join(ROOT, "runs", "x59_doe.csv")
 WORK = os.path.join(ROOT, "runs", "doe")
-NTOPCL = r"C:\Program Files\nTopology\nTopology\ntopcl.exe"
 
 # (wing span mm, inner quarter-chord sweep deg): the baseline, then one variable at a time
 DESIGNS = [(9000.0, 68.3), (8000.0, 68.3), (10000.0, 68.3), (9000.0, 65.0), (9000.0, 71.0)]
@@ -38,41 +37,16 @@ DESIGNS = [(9000.0, 68.3), (8000.0, 68.3), (10000.0, 68.3), (9000.0, 65.0), (900
 
 def run(span_mm, sweep_deg, tag, timeout=7200):
     os.makedirs(WORK, exist_ok=True)
-    inputs = {"description": "X-59 DOE point", "title": "X-59 Aero Database", "inputs": [
-        {"name": "Wing Span", "type": "real", "units": "mm", "value": span_mm},
-        {"name": "Wing Inner Sweep", "type": "real", "units": "deg", "value": sweep_deg}]}
-    jpath = os.path.join(WORK, f"{tag}.input.json")
-    json.dump(inputs, open(jpath, "w"), indent=1)
-    out = os.path.join(WORK, f"{tag}.output.json")
-    if os.path.exists(out):
-        os.remove(out)
-    log_path = os.path.join(WORK, f"{tag}.log")
-    t0 = time.time()
-    with open(log_path, "w", encoding="utf-8", errors="replace") as logf:
-        p = subprocess.Popen([NTOPCL, "--trustnotebook", "-v", "2", "-j", jpath, "-o", out, NOTEBOOK], stdout=logf,
-                             stderr=subprocess.STDOUT)
-        # ntopcl can write its output and then not exit after Run Command blocks: stop it once the output settles.
-        last = -1
-        while p.poll() is None and time.time() - t0 < timeout:
-            time.sleep(3)
-            if os.path.exists(out):
-                size = os.path.getsize(out)
-                if size == last and size > 0:
-                    break
-                last = size
-        if p.poll() is None:
-            p.kill()
-            p.wait()
-    errors = [l for l in open(log_path, encoding="utf-8", errors="replace") if "[E]" in l]
-    return time.time() - t0, os.path.exists(out), errors
+    inputs = [{"name": "Wing Span", "type": "real", "units": "mm", "value": span_mm},
+              {"name": "Wing Inner Sweep", "type": "real", "units": "deg", "value": sweep_deg}]
+    base = os.path.join(WORK, tag)
+    log, dt = run_notebook(NOTEBOOK, inputs, base, {"description": "X-59 DOE point", "title": "X-59 Aero Database"},
+                           timeout=timeout)
+    return dt, os.path.exists(base + ".output.json"), [l for l in log.splitlines() if "[E]" in l]
 
 
 def slope(rows, x, y):
-    n = len(rows)
-    mx = sum(float(r[x]) for r in rows) / n
-    my = sum(float(r[y]) for r in rows) / n
-    sxx = sum((float(r[x]) - mx) ** 2 for r in rows)
-    return sum((float(r[x]) - mx) * (float(r[y]) - my) for r in rows) / sxx
+    return ls_slope([float(r[x]) for r in rows], [float(r[y]) for r in rows])
 
 
 def summary():

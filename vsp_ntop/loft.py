@@ -1,7 +1,6 @@
 """A smooth B-spline surface through an implicit body's nTop slices: the CAD surface without OpenVSP's skinning."""
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -150,41 +149,38 @@ def _row_samples(loop, per_quarter):
     """Contour points of one slice in the surface's w order, (4 per_quarter, 2) in the slice's (u, v), split at the
     widest points (OpenVSP Model's sections, fit._section_curve)."""
     uc, vc, w, h, pts, params = F._section_curve(loop, per_quarter)
-    return np.array([(uc + a * w, vc + b * h) for a, b in pts[:-1]]), (uc, vc)
+    return pts[:-1] * [w, h] + [uc, vc], (uc, vc)
 
 
 def _crossings(pts, axis, value):
-    """Where the closed polyline crosses the line (coordinate ``axis`` = value): [(segment index, point)]."""
-    out = []
-    n = len(pts)
-    for i in range(n):
-        a, b = pts[i], pts[(i + 1) % n]
-        da, db = a[axis] - value, b[axis] - value
-        if da == 0.0 or (da < 0.0) != (db < 0.0):
-            t = 0.0 if da == 0.0 else da / (da - db)
-            out.append((i, (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))))
-    return out
+    """Where the closed polyline crosses the line (coordinate ``axis`` = value): (segment indices, points)."""
+    a, b = pts, np.roll(pts, -1, axis=0)
+    da, db = a[:, axis] - value, b[:, axis] - value
+    i = np.flatnonzero((da == 0.0) | ((da < 0.0) != (db < 0.0)))
+    t = np.where(da[i] == 0.0, 0.0, da[i] / np.where(da[i] == db[i], 1.0, da[i] - db[i]))
+    return i, a[i] + t[:, None] * (b[i] - a[i])
 
 
 def _ring_samples(loop, per_quarter, widest=(False, False)):
     """Contour points of one slice in the surface's w order, (4 per_quarter, 2) in the slice's (u, v)."""
     u0, u1, v0, v1 = S.bounds(loop)
     uc, vc = 0.5 * (u0 + u1), 0.5 * (v0 + v1)
-    pts = list(loop) if S.area(loop) < 0 else list(reversed(loop))  # clockwise in (u, v)
+    pts = np.asarray(loop) if S.area(loop) < 0 else np.asarray(loop)[::-1]  # clockwise in (u, v)
     n = len(pts)
-    horiz, vert = _crossings(pts, 1, vc), _crossings(pts, 0, uc)
-    if not horiz or not vert:
+    (hi, hp), (vi, vp) = _crossings(pts, 1, vc), _crossings(pts, 0, uc)
+    if not len(hi) or not len(vi):
         return _row_samples(loop, per_quarter)
 
     def widest_point(sign):
-        i = max(range(n), key=lambda k: sign * pts[k][0])
+        i = int(np.argmax(sign * pts[:, 0]))
         return i, pts[i]
 
-    right = widest_point(1.0) if widest[0] else max(horiz, key=lambda c: c[1][0])
-    left = widest_point(-1.0) if widest[1] else min(horiz, key=lambda c: c[1][0])
-    bottom = min(vert, key=lambda c: c[1][1])
-    top = max(vert, key=lambda c: c[1][1])
-    anchors = [right, bottom, left, top]
+    def pick(idx, cp, k):
+        return int(idx[k]), cp[k]
+
+    right = widest_point(1.0) if widest[0] else pick(hi, hp, np.argmax(hp[:, 0]))
+    left = widest_point(-1.0) if widest[1] else pick(hi, hp, np.argmin(hp[:, 0]))
+    anchors = [right, pick(vi, vp, np.argmin(vp[:, 1])), left, pick(vi, vp, np.argmax(vp[:, 1]))]
     # walking forward from the right
     pos = [(a[0] - right[0]) % n for a in anchors]
     if not pos[0] <= pos[1] <= pos[2] <= pos[3]:
@@ -192,15 +188,9 @@ def _ring_samples(loop, per_quarter, widest=(False, False)):
     out = []
     for q in range(4):
         (ia, pa), (ib, pb) = anchors[q], anchors[(q + 1) % 4]
-        poly = [pa]
-        k = (ia + 1) % n
-        steps = (ib - ia) % n
-        for _ in range(steps):
-            poly.append(pts[k])
-            k = (k + 1) % n
-        poly.append(pb)
-        out += S.resample(poly, per_quarter + 1)[:-1]
-    return np.array(out), (uc, vc)
+        poly = np.vstack([pa, pts[(ia + 1 + np.arange((ib - ia) % n)) % n], pb])
+        out.append(S.resample(poly, per_quarter + 1)[:-1])
+    return np.vstack(out), (uc, vc)
 
 
 CREASE_ANGLE = 30.0  # degrees: a quarter point where the contours typically turn by more is a crease
@@ -238,11 +228,12 @@ def loft_body(layers, frame: F.Frame, nw=48, per_quarter=24, rows_per_ctrl=2.0, 
         used.append(S.Layer(l.z, [outer[0]]))
     if len(used) < 6:
         raise F.FitError(f"only {len(used)} slices cut the body; use more slices")
-    spacing = (used[-1].z - used[0].z) / (len(used) - 1)
-    areas = [abs(S.area(l.loops[0])) for l in used]
+    zs = np.array([l.z for l in used])
+    spacing = (zs[-1] - zs[0]) / (len(used) - 1)
+    areas = np.array([abs(S.area(l.loops[0])) for l in used])
     b0, b1 = bounds if bounds else (None, None)
-    x0, pointed0, _ = F._end(used, areas, True, spacing, b0)
-    x1, pointed1, _ = F._end(used, areas, False, spacing, b1)
+    x0, pointed0, _ = F._end(zs, areas, True, spacing, b0)
+    x1, pointed1, _ = F._end(zs, areas, False, spacing, b1)
 
     # sharp edges along the body at the four split points (chines)
     first_pass = np.stack([_row_samples(l.loops[0], per_quarter)[0] for l in used])
@@ -280,12 +271,11 @@ def loft_body(layers, frame: F.Frame, nw=48, per_quarter=24, rows_per_ctrl=2.0, 
     z = np.array([r[0] for r in rows])
     P2 = np.stack([r[1] for r in rows])                              # (n_rows, m, 2)
     P = np.empty(P2.shape[:2] + (3,))
-    o, ex, ey, ez = (np.array(v) for v in (frame.origin, frame.ex, frame.ey, frame.ez))
-    P[:] = o + P2[..., :1] * ex + P2[..., 1:] * ey + z[:, None, None] * ez
+    P[:] = frame.point(P2[..., 0], P2[..., 1], z[:, None])
 
     # u: distance along the body on the centres and the equivalent radii
     cen = P.mean(axis=1)
-    rad = np.sqrt(np.array([0.0 if pointed0 else areas[0]] + areas + [0.0 if pointed1 else areas[-1]]) / math.pi)
+    rad = np.sqrt(np.concatenate([[0.0 if pointed0 else areas[0]], areas, [0.0 if pointed1 else areas[-1]]]) / np.pi)
     step = np.sqrt(np.sum(np.diff(cen, axis=0) ** 2, axis=1) + np.diff(rad) ** 2)
     step = np.maximum(step, 1e-9)
     u = np.concatenate([[0.0], np.cumsum(step)])
@@ -331,7 +321,7 @@ def loft_body(layers, frame: F.Frame, nw=48, per_quarter=24, rows_per_ctrl=2.0, 
     # a blunt end's boundary must lie in the end plane exactly (the cap is planar)
     for idx, pointed, x in ((0, pointed0, x0), (-1, pointed1, x1)):
         if not pointed:
-            C[idx] += np.outer(x - (C[idx] - o) @ ez, ez)
+            C[idx] += np.outer(x - (C[idx] - frame.origin) @ frame.ez, frame.ez)
 
     # how closely the surface passes through the contour points
     # (across the surface: the gap along the local normal, so sliding along the surface is not counted)

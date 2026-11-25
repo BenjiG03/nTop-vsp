@@ -2,8 +2,9 @@
 """
 from __future__ import annotations
 
-import math
 import re
+
+import numpy as np
 
 _ENTITY = re.compile(r"#(\d+)\s*=\s*(.*?);\s*(?=#\d+\s*=|$)", re.S)
 _REF = re.compile(r"#(\d+)")
@@ -59,22 +60,6 @@ def _refs(text):
     return [int(r) for r in _REF.findall(text)]
 
 
-def _sub(a, b):
-    return tuple(p - q for p, q in zip(a, b))
-
-
-def _cross(a, b):
-    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
-
-
-def _dot(a, b):
-    return sum(p * q for p, q in zip(a, b))
-
-
-def _norm(a):
-    return math.sqrt(_dot(a, a))
-
-
 class Step:
     def __init__(self, text):
         self.text = text
@@ -91,8 +76,7 @@ class Step:
         return i
 
     def point(self, i):
-        a = _args(self.ents[i])
-        return tuple(float(v) for v in a[1].strip("()").split(","))
+        return np.array(_args(self.ents[i])[1].strip("()").split(","), float)
 
     def surface_net(self, i):
         """Control points of a B-spline surface (simple or complex entity) as rows, or None."""
@@ -106,7 +90,7 @@ class Step:
                 return None
             net = b[2]
         rows = re.findall(r"\(([^()]*)\)", net)
-        return [[self.point(int(r)) for r in _REF.findall(row)] for row in rows]
+        return np.array([[self.point(int(r)) for r in _REF.findall(row)] for row in rows])
 
     def curve_points(self, i):
         """Control points of an edge's 3D curve (through SURFACE_CURVE / SEAM_CURVE), in its parameter order."""
@@ -126,27 +110,24 @@ class Step:
 
 
 def _plane_of(pts, tol):
-    """(unit normal, offset) of the plane through ``pts`` if they all lie in one (within ``tol``), else None."""
-    c = tuple(sum(p[i] for p in pts) / len(pts) for i in range(3))
-    far = max(pts, key=lambda p: _norm(_sub(p, c)))
-    best, n = 0.0, None
-    for p in pts:
-        w = _cross(_sub(far, c), _sub(p, c))
-        m = _norm(w)
-        if m > best:
-            best, n = m, tuple(x / m for x in w)
-    if n is None:
+    """(unit normal, offset) of the plane through ``pts`` (n, 3) if they all lie in one (within ``tol``), else None."""
+    c = pts.mean(axis=0)
+    far = pts[np.argmax(np.linalg.norm(pts - c, axis=1))]
+    w = np.cross(far - c, pts - c)
+    m = np.linalg.norm(w, axis=1)
+    k = int(np.argmax(m))
+    if m[k] <= 0.0:
         return None
-    off = _dot(n, c)
-    if max(abs(_dot(n, p) - off) for p in pts) > tol:
+    n = w[k] / m[k]
+    off = n @ c
+    if np.abs(pts @ n - off).max() > tol:
         return None
     return n, off
 
 
 def _collapsed(net, tol):
-    """Whether a boundary row or column of the control net is a single point."""
-    rows = [net[0], net[-1], [r[0] for r in net], [r[-1] for r in net]]
-    return any(max(_norm(_sub(p, row[0])) for p in row) <= tol for row in rows)
+    """Whether a boundary row or column of the control net (rows, cols, 3) is a single point."""
+    return any(np.linalg.norm(edge - edge[0], axis=1).max() <= tol for edge in (net[0], net[-1], net[:, 0], net[:, -1]))
 
 
 def planar_caps(text, log=print):
@@ -169,10 +150,10 @@ def planar_caps(text, log=print):
             bounds = _refs(fa[1])
             surf = _refs(fa[2])[0]
             net = s.surface_net(surf)
-            if not net:
+            if net is None or not net.size:
                 continue
-            pts = [p for row in net for p in row]
-            ext = max(_norm(_sub(p, pts[0])) for p in pts)
+            pts = net.reshape(-1, 3)
+            ext = np.linalg.norm(pts - pts[0], axis=1).max()
             tol = 1e-7 * max(ext, 1e-12)
             pl = _plane_of(pts, tol * 10)
             if pl is None:
@@ -204,7 +185,7 @@ def planar_caps(text, log=print):
                         continue
                     (ng, og), (nh, oh) = info[g]["plane"], info[h]["plane"]
                     scale = max(info[g]["ext"], info[h]["ext"])
-                    coplanar = abs(abs(_dot(ng, nh)) - 1.0) < 1e-6 and abs(og - (oh if _dot(ng, nh) > 0 else -oh)) < 1e-6 * scale
+                    coplanar = abs(abs(ng @ nh) - 1.0) < 1e-6 and abs(og - (oh if ng @ nh > 0 else -oh)) < 1e-6 * scale
                     if coplanar and set(info[g]["edges"]) & set(info[h]["edges"]):
                         seen.add(h)
                         stack.append(h)
@@ -252,11 +233,9 @@ def planar_caps(text, log=print):
                     if (ec[4].strip() == ".T.") != fwd:
                         pts = pts[::-1]
                     poly += pts[:-1] if len(pts) > 1 else pts
-                c = tuple(sum(p[i] for p in poly) / len(poly) for i in range(3))
-                area = (0.0, 0.0, 0.0)
-                for p, q in zip(poly, poly[1:] + poly[:1]):
-                    area = tuple(x + y for x, y in zip(area, _cross(_sub(p, c), _sub(q, c))))
-                return area, c
+                poly = np.array(poly)
+                c = poly.mean(axis=0)
+                return np.cross(poly - c, np.roll(poly, -1, axis=0) - c).sum(axis=0), c
 
             def settle(chain):
                 """Turn a loop to run each edge opposite to a side face that shares it (side faces, unlike OpenVSP's
@@ -269,22 +248,21 @@ def planar_caps(text, log=print):
 
             settled = [settle(ch) for ch in loops]
             measured = [travel(ch) for ch in loops]
-            outer = max(range(len(loops)), key=lambda k: abs(_dot(measured[k][0], n)))
+            outer = max(range(len(loops)), key=lambda k: abs(measured[k][0] @ n))
             if settled[outer] is None:
                 log(f"planar caps: a cap in shell #{sid} touches no side face; left as it is")
                 continue
             loops[outer] = settled[outer]
             area, c = travel(loops[outer])
-            if _dot(area, n) < 0:  # the outer bound runs counter-clockwise about the face normal
-                n = tuple(-x for x in n)
+            if area @ n < 0:  # the outer bound runs counter-clockwise about the face normal
+                n = -n
             for k in range(len(loops)):
                 if k != outer:  # holes run clockwise about it
                     loops[k] = settled[k] if settled[k] is not None else loops[k]
-                    if _dot(travel(loops[k])[0], n) > 0:
+                    if travel(loops[k])[0] @ n > 0:
                         loops[k] = [(x, not d) for x, d in reversed(loops[k])]
-            ref = (1.0, 0.0, 0.0) if abs(n[0]) < 0.9 else (0.0, 1.0, 0.0)
-            xd = _cross(_cross(n, ref), n)
-            xd = tuple(x / _norm(xd) for x in xd)
+            xd = np.cross(np.cross(n, (1.0, 0.0, 0.0) if abs(n[0]) < 0.9 else (0.0, 1.0, 0.0)), n)
+            c, n, xd = c.tolist(), n.tolist(), (xd / np.linalg.norm(xd)).tolist()
             name = _args(ents[info[group[0]]["surf"]])[0] if _kind(ents[info[group[0]]["surf"]]) != "(complex)" else "''"
             name = name[:-1] + " planar cap'" if name.endswith("'") and len(name) > 2 else "'planar cap'"
             p0 = s.add(f"CARTESIAN_POINT('',({c[0]!r},{c[1]!r},{c[2]!r}))")

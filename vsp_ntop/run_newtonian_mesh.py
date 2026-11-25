@@ -5,34 +5,28 @@
 """
 from __future__ import annotations
 
-import math
 import os
 import struct
 import sys
 
+import numpy as np
+
+from . import local_methods as lm
 from . import pressure
-from .common import DriverError, Log, Settings, conda_dll_dirs, main_wrapper, write_csv
+from .common import DriverError, Log, Settings, main_wrapper, write_csv, write_point_map
 from .flight import Flight, _rows
+from .geometry import wind_axes
 
 MM = 0.001
 ALIGNED_DEG = 25.0  # a face is aligned when the Body's normal at its centroid is within this of its own normal
-ALIGNED_COS = math.cos(math.radians(ALIGNED_DEG))
+ALIGNED_COS = np.cos(np.radians(ALIGNED_DEG))
 MIN_ALIGNED_SHARE = 0.5  # below this share of the mesh area aligned
 CP_MAX_MODES = ("modified", "classical", "user")
 HEADER = ("Mach", "AoA", "Beta", "CA", "CY", "CN", "Cl", "Cm", "Cn", "Sref", "Bref", "Cref", "Xref", "Yref", "Zref")
 
 
-def _np():
-    try:
-        import numpy
-    except ImportError:  # pragma: no cover
-        raise DriverError("Modified Newtonian on Mesh needs numpy in the Python named by NTOP_PYTHON_PATH")
-    return numpy
-
-
 def read_stl(path):
     """Triangles of an ASCII or binary STL as an (n, 3, 3) array, in the file's units."""
-    np = _np()
     if not os.path.isfile(path):
         raise DriverError(f"mesh file {path} not found")
     with open(path, "rb") as f:
@@ -52,7 +46,6 @@ def read_stl(path):
 
 def faces(stl_path):
     """(centroids, vector areas) of the mesh's non-degenerate triangles, in the file's units."""
-    np = _np()
     tri = read_stl(stl_path)
     vec = 0.5 * np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
     area = np.linalg.norm(vec, axis=1)
@@ -62,10 +55,8 @@ def faces(stl_path):
 
 def write_faces(stl_path, out_csv):
     """Step 1: the faces' centroids and areas as a point map for nTop (x, y, z, area; no header)."""
-    np = _np()
     c, s = faces(stl_path)
-    area = np.linalg.norm(s, axis=1)
-    np.savetxt(out_csv, np.column_stack([c, area]), delimiter=",", fmt="%.9g")
+    write_point_map(out_csv, c, np.linalg.norm(s, axis=1))
     return len(c)
 
 
@@ -83,7 +74,6 @@ def cp_max_stagnation(mach, gamma=1.4):
 
 
 def frame(aft, up):
-    np = _np()
     x = np.asarray(aft, float)
     x = x / np.linalg.norm(x)
     z = np.asarray(up, float)
@@ -98,21 +88,18 @@ def coefficients(centroids, vector_areas, normals, cp_max_field, conditions, mod
                  method="newtonian", expansion="prandtl_meyer", separated="freestream", impact="wedge",
                  on_cp=None):
     """Rows of HEADER for each condition (dict with Mach, AoA, Beta). Lengths in metres, areas in m^2."""
-    np = _np()
     x, y, z = axes
     sref, _, cref, centre = ref
     arm = centroids - np.asarray(centre, float)
     moment_area = np.cross(arm, vector_areas)  # (r - c) x S per face
     rows = []
     for c in conditions:
-        a, b = math.radians(c["AoA"]), math.radians(c["Beta"])
-        v = x * math.cos(a) * math.cos(b) - y * math.sin(b) + z * math.sin(a) * math.cos(b)
+        v = np.column_stack([x, y, z]) @ wind_axes(c["AoA"], c["Beta"])[0]  # the freestream in the mesh's axes
         if mode == "user":
             cpm = cp_max_field
         else:
             cpm = cp_max_stagnation(c["Mach"], gamma) if mode == "modified" else 2.0
         if method == "tangent_wedge":
-            from . import local_methods as lm
             delta = np.arcsin(np.clip(-(normals @ v), -1.0, 1.0))
             cp = lm.tangent_wedge_cp(delta, c["Mach"], cpm, gamma, expansion, separated, impact=impact)
         else:
@@ -130,7 +117,6 @@ def coefficients(centroids, vector_areas, normals, cp_max_field, conditions, mod
 def read_values(base, centroids_mm, user_cp_max):
     """nTop's values at the face centroids: (Cp Max Field or None, gradient (n, 3)), from its point-map exports (x, y,
     z in mm, then the value or vector), checked to list the faces in order."""
-    np = _np()
     out = []
     for suffix, width in (("cp_max", 4), ("gradient", 6)):
         path = f"{base}.ntvsp.mesh_{suffix}.csv"
@@ -152,7 +138,6 @@ def read_values(base, centroids_mm, user_cp_max):
 
 def unit_normals(gradients, vector_areas, log):
     """The implicit's unit normals; where its gradient vanishes or is not finite, the face's own normal."""
-    np = _np()
     g = np.where(np.isfinite(gradients), gradients, 0.0)
     norm = np.linalg.norm(g, axis=1)
     bad = norm < 1e-9
@@ -185,14 +170,12 @@ def unit_normals(gradients, vector_areas, log):
 def face_normals(vector_areas, centroids):
     """Unit outward normals of the faces. The mesh should be closed with outward faces; one whose faces point inward
     on the whole (negative enclosed volume) is turned round."""
-    np = _np()
     n = vector_areas / np.linalg.norm(vector_areas, axis=1)[:, None]
     volume = (centroids * vector_areas).sum() / 3.0
     return (n, False) if volume >= 0.0 else (-n, True)
 
 
 def main(settings_path):
-    np = _np()
     s = Settings(settings_path)
     work = os.path.abspath(s.text("work_dir"))
     case = s.text("case")
@@ -268,7 +251,6 @@ def _faces_main():
     if len(sys.argv) != 4:
         sys.stderr.write("usage: python -m vsp_ntop.run_newtonian_mesh faces STL_FILE FACES_CSV\n")
         sys.exit(2)
-    conda_dll_dirs()
     try:
         n = write_faces(sys.argv[2], sys.argv[3])
         print(f"{n} faces")

@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import datetime
-import math
+
+import numpy as np
+
+from . import loft as L
+from .geometry import unit
 
 MM = 1000.0  # file unit: millimetres.
 
@@ -41,8 +45,7 @@ class StepFile:
         return self.add(f"CARTESIAN_POINT('',({','.join(real(c * MM) for c in p)}))")
 
     def direction(self, d):
-        n = math.sqrt(sum(c * c for c in d))
-        return self.add(f"DIRECTION('',({','.join(real(c / n) for c in d)}))")
+        return self.add(f"DIRECTION('',({','.join(real(c) for c in unit(d))}))")
 
     def placement(self, origin, axis, ref):
         """AXIS2_PLACEMENT_3D: a local frame (origin, z axis, x axis); planes and the model origin use it."""
@@ -202,7 +205,7 @@ def _solid(sf, lf, name):
         if not edges:
             continue
         # the cap's normal points out of the body (+ez at the tail, -ez at the nose).
-        axis = tuple(sign * c for c in ez)
+        axis = sign * np.asarray(ez)
         ref = _perpendicular(axis)
         plane = sf.add(f"PLANE('',#{sf.placement(end.point, axis, ref)})")
         if sign > 0:
@@ -217,17 +220,12 @@ def _solid(sf, lf, name):
 
 
 def _perpendicular(a):
-    t = (1.0, 0.0, 0.0) if abs(a[0]) < 0.9 else (0.0, 1.0, 0.0)
-    c = (a[1] * t[2] - a[2] * t[1], a[2] * t[0] - a[0] * t[2], a[0] * t[1] - a[1] * t[0])
-    n = math.sqrt(sum(x * x for x in c))
-    return tuple(x / n for x in c)
+    return unit(np.cross(a, (1.0, 0.0, 0.0) if abs(a[0]) < 0.9 else (0.0, 1.0, 0.0)))
 
 
 def _normal_points_in(lf):
     """True when dS/du x dS/dw points into the body, judged at the middle of every patch against the section's
     centre."""
-    from . import loft as L
-    import numpy as np
     score = 0.0
     for p in lf.patches:
         a, b = p.w_range
@@ -243,10 +241,8 @@ def _normal_points_in(lf):
 
 def _reverse_w(patches):
     """The same surface with w running the other way round: patches in reverse order, each mirrored in w."""
-    from . import loft as L
     out = []
     for p in reversed(patches):
         a, b = p.w_range
-        knots = [1.0 - k for k in p.knots_w[::-1]]  # w -> 1 - w
-        out.append(L.Patch(p.ctrl[:, ::-1].copy(), p.knots_u, __import__("numpy").array(knots), (1.0 - b, 1.0 - a)))
+        out.append(L.Patch(p.ctrl[:, ::-1].copy(), p.knots_u, 1.0 - np.asarray(p.knots_w)[::-1], (1.0 - b, 1.0 - a)))
     return out

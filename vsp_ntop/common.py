@@ -7,6 +7,8 @@ import subprocess
 import sys
 import time
 
+import numpy as np
+
 LENGTH_UNITS = {  # VSP's LEN_* enum: name, metres per unit
     0: ("mm", 0.001), 1: ("cm", 0.01), 2: ("m", 1.0), 3: ("in", 0.0254), 4: ("ft", 0.3048), 5: ("yd", 0.9144),
     6: ("unitless", 1.0),
@@ -82,10 +84,7 @@ class Log:
 
 def linspace(start, end, n):
     """VSP's sweep points: n values from start to end inclusive (start alone when n is 1)."""
-    n = max(1, int(n))
-    if n == 1:
-        return [start]
-    return [start + i * (end - start) / (n - 1) for i in range(n)]
+    return np.linspace(start, end, max(1, int(n))).tolist()
 
 
 def fmt(x):
@@ -153,11 +152,16 @@ def write_csv(path, header, rows):
             w.writerow(r)
 
 
-def write_point_map(path, points, values):
+POINT_MAP_LINE = "%.9g,%.9g,%.9g,%.9g\n"
+
+
+def write_point_map(path, points, values, chunk=100_000):
     """CSV for nTop's Import Scalar Point Map: x, y, z, value per row, no header."""
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        for p, v in zip(points, values):
-            f.write(f"{p[0]:.9g},{p[1]:.9g},{p[2]:.9g},{v:.9g}\n")
+    rows = np.column_stack([np.asarray(points, float).reshape(-1, 3), np.asarray(values, float)])
+    with open(path, "w", encoding="utf-8") as f:
+        for start in range(0, len(rows), chunk):  # one % per chunk
+            part = rows[start:start + chunk]
+            f.write((POINT_MAP_LINE * len(part)) % tuple(part.ravel()))
 
 
 def read_vsp_results_csv(path):
@@ -179,35 +183,12 @@ def read_vsp_results_csv(path):
     return results
 
 
-def conda_dll_dirs():
-    """Put a conda Python's DLL folders on PATH. nTop starts the Python of NTOP_PYTHON_PATH without activating its
-    environment, so numpy's BLAS/LAPACK DLLs are not found at its first matrix product and the process dies with no
-    traceback."""
-    if os.name != "nt":
-        return
-    dirs = [os.path.join(sys.prefix, *p) for p in (("Library", "mingw-w64", "bin"), ("Library", "usr", "bin"),
-                                                   ("Library", "bin"), ("Scripts",))]
-    base = getattr(sys, "base_prefix", sys.prefix)
-    if base != sys.prefix:  # a venv made from a conda Python
-        dirs += [os.path.join(base, *p) for p in (("Library", "mingw-w64", "bin"), ("Library", "bin"))]
-    dirs = [d for d in dirs if os.path.isdir(d)]
-    if not dirs:
-        return
-    os.environ["PATH"] = os.pathsep.join(dirs + [os.environ.get("PATH", "")])
-    for d in dirs:
-        try:
-            os.add_dll_directory(d)
-        except (AttributeError, OSError):
-            pass
-
-
 def main_wrapper(fn):
-    """Run ``fn(settings_path)`` after ``conda_dll_dirs``; print a one-line error and exit 1 on failure (nTop shows
+    """Run ``fn(settings_path)``; print a one-line error and exit 1 on failure (nTop shows
     stderr)."""
     if len(sys.argv) != 2:
         sys.stderr.write(f"usage: python -m vsp_ntop.{os.path.splitext(os.path.basename(sys.argv[0]))[0]} SETTINGS_FILE\n")
         sys.exit(2)
-    conda_dll_dirs()
     try:
         fn(sys.argv[1])
     except DriverError as e:

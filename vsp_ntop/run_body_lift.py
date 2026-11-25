@@ -4,12 +4,13 @@
 """
 from __future__ import annotations
 
-import bisect
-import math
 import os
+
+import numpy as np
 
 from .common import DriverError, Log, Settings, main_wrapper, openvsp_dir, run_vspscript, vsp_path, write_csv
 from .flight import Flight, _rows
+from .geometry import shoelace
 
 # NASA TR R-474 (Jorgensen, 1977), read from its figures (the tables of hypanel's body_lift module).
 CDN_MACH = (0.0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0, 1.1, 1.2, 1.4, 1.6, 2.0, 2.4, 2.8, 3.2, 4.0,
@@ -23,25 +24,15 @@ ETA_MACH_VALUE = (0.69, 0.70, 0.72, 0.78, 0.82, 0.88, 0.99, 0.98, 0.77, 0.91, 0.
 HEADER = ("Mach", "AoA", "Beta", "CA", "CY", "CN", "Cl", "Cm", "Cn", "Sref", "Bref", "Cref", "Xref", "Yref", "Zref")
 
 
-def interp(x, xs, ys):
-    if x <= xs[0]:
-        return ys[0]
-    if x >= xs[-1]:
-        return ys[-1]
-    j = bisect.bisect_right(xs, x)
-    t = (x - xs[j - 1]) / (xs[j] - xs[j - 1])
-    return ys[j - 1] + t * (ys[j] - ys[j - 1])
-
-
 def crossflow_drag(mn):
-    return interp(mn, CDN_MACH, CDN_VALUE)
+    return np.interp(mn, CDN_MACH, CDN_VALUE)
 
 
 def crossflow_factor(fineness, mn):
     """Allen and Perkins' eta: Figure 4 against fineness, its rise with crossflow Mach (Figure 6, for fineness 10 to
     12) rescaled to start from the Figure 4 value (hypanel's assumption)."""
-    low = interp(fineness, ETA_LENGTH, ETA_VALUE)
-    measured = interp(mn, ETA_MACH, ETA_MACH_VALUE)
+    low = np.interp(fineness, ETA_LENGTH, ETA_VALUE)
+    measured = np.interp(mn, ETA_MACH, ETA_MACH_VALUE)
     return low + (measured - ETA_MACH_VALUE[0]) * (1.0 - low) / (1.0 - ETA_MACH_VALUE[0])
 
 
@@ -69,131 +60,86 @@ def ring_script(model, names, n_u, n_w):
         '    Print( "NTVSP_OK" );', "}"]) + "\n"
 
 
-def _solve(a, rhs):
-    """Gaussian elimination with partial pivoting: a (n x n) times columns = rhs columns (list of lists)."""
-    n = len(a)
-    m = [row[:] + [r[i] for r in rhs] for i, row in enumerate(a)]
-    k = len(rhs)
-    for c in range(n):
-        p = max(range(c, n), key=lambda r: abs(m[r][c]))
-        m[c], m[p] = m[p], m[c]
-        piv = m[c][c]
-        for r in range(c + 1, n):
-            f = m[r][c] / piv
-            if f:
-                rr, rc = m[r], m[c]
-                for j in range(c, n + k):
-                    rr[j] -= f * rc[j]
-    out = [[0.0] * n for _ in range(k)]
-    for j in range(k):
-        for r in range(n - 1, -1, -1):
-            s = m[r][n + j] - sum(m[r][c] * out[j][c] for c in range(r + 1, n))
-            out[j][r] = s / m[r][r]
-    return out
-
-
 def apparent_mass(pts):
     """The section's apparent-mass tensor (``_panel_mass``), Richardson-extrapolated from the ring's own edges and
     each edge split in two: the constant-source panels converge to first order (a 64-point circle: +2.2% on 64
     panels, +1.1% on 128, -0.02% extrapolated)."""
-    fine = [(p[0] + (q[0] - p[0]) * j / 2, p[1] + (q[1] - p[1]) * j / 2)
-            for p, q in zip(pts, pts[1:] + pts[:1]) for j in range(2)]
-    m1, m2 = _panel_mass(pts), _panel_mass(fine)
-    return [[2.0 * m2[r][c] - m1[r][c] for c in range(2)] for r in range(2)]
+    pts = np.asarray(pts, float)
+    fine = np.stack([pts, pts + 0.5 * (np.roll(pts, -1, axis=0) - pts)], axis=1).reshape(-1, 2)
+    return 2.0 * _panel_mass(fine) - _panel_mass(pts)
 
 
 def _panel_mass(pts):
     """The 2D apparent-mass tensor of a closed section per unit fluid density, [[m_yy, m_yz], [m_zy, m_zz]] (m^2),
-    from ``pts`` [(y, z)] around it: the exterior potential flow of the section moving with unit velocity along y and
+    from ``pts`` (y, z) around it: the exterior potential flow of the section moving with unit velocity along y and
     along z (constant-strength source panels, ``d phi / d n = n . e`` on the contour), m_jk = -(contour integral of
     phi_j n_k ds), n out of the body."""
-    pts = list(pts)
-    area2 = sum(pts[i - 1][0] * pts[i][1] - pts[i][0] * pts[i - 1][1] for i in range(len(pts)))
-    if area2 < 0.0:
+    pts = np.asarray(pts, float)
+    if shoelace(pts)[0] < 0.0:
         pts = pts[::-1]
-    pan = []
-    for i in range(len(pts)):
-        a, b = pts[i], pts[(i + 1) % len(pts)]
-        L = math.hypot(b[0] - a[0], b[1] - a[1])
-        if L <= 1e-15:
-            continue
-        t = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
-        pan.append((a, L, t, (t[1], -t[0]), (0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]))))  # n out of a CCW loop
-    n = len(pan)
-    if n < 3:
-        return [[0.0, 0.0], [0.0, 0.0]]
+    a, d = pts, np.roll(pts, -1, axis=0) - pts
+    L = np.hypot(d[:, 0], d[:, 1])
+    keep = L > 1e-15
+    a, d, L = a[keep], d[keep], L[keep]
+    if len(L) < 3:
+        return np.zeros((2, 2))
+    t = d / L[:, None]
+    nrm = np.column_stack([t[:, 1], -t[:, 0]])  # out of a counter-clockwise loop
+    c = a + 0.5 * d
+    rel = c[:, None, :] - a[None, :, :]  # collocation point i relative to panel k's start
+    x, z = (rel * t[None]).sum(axis=2), (rel * nrm[None]).sum(axis=2)
+    Lk = L[None, :]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ux = (np.log(x * x + z * z) - np.log((x - Lk) ** 2 + z * z)) / (4.0 * np.pi)
+        w = np.where(np.abs(z) > 1e-15, (np.arctan((Lk - x) / z) + np.arctan(x / z)) / (2.0 * np.pi), 0.0)
 
-    def F(u, z):
-        r2 = u * u + z * z
-        return (u * math.log(r2) if r2 > 0.0 else 0.0) - 2.0 * u + (2.0 * z * math.atan(u / z) if z != 0.0 else 0.0)
-
-    A = [[0.0] * n for _ in range(n)]
-    P = [[0.0] * n for _ in range(n)]
-    for i, (_, Li, _, ni, ci) in enumerate(pan):
-        for k, (ak, Lk, tk, nk, _) in enumerate(pan):
-            dx, dz = ci[0] - ak[0], ci[1] - ak[1]
-            x, z = dx * tk[0] + dz * tk[1], dx * nk[0] + dz * nk[1]
-            if i == k:
-                A[i][k] = 0.5
-                P[i][k] = (Lk * math.log(0.25 * Lk * Lk) - 2.0 * Lk) / (4.0 * math.pi)
-                continue
-            ux = (math.log(x * x + z * z) - math.log((x - Lk) ** 2 + z * z)) / (4.0 * math.pi)
-            w = (math.atan((Lk - x) / z) + math.atan(x / z)) / (2.0 * math.pi) if abs(z) > 1e-15 else 0.0
-            vy, vz = ux * tk[0] + w * nk[0], ux * tk[1] + w * nk[1]
-            A[i][k] = vy * ni[0] + vz * ni[1]
-            P[i][k] = (F(Lk - x, z) - F(-x, z)) / (4.0 * math.pi)
-    sig = _solve(A, [[p[3][0] for p in pan], [p[3][1] for p in pan]])
-    m = [[0.0, 0.0], [0.0, 0.0]]
-    for j in range(2):
-        phi = [sum(P[i][k] * sig[j][k] for k in range(n)) for i in range(n)]
-        for kk in range(2):
-            m[j][kk] = -sum(phi[i] * pan[i][3][kk] * pan[i][1] for i in range(n))
-    off = 0.5 * (m[0][1] + m[1][0])
-    return [[m[0][0], off], [off, m[1][1]]]
+        def F(u, z):
+            r2 = u * u + z * z
+            return (np.where(r2 > 0.0, u * np.log(r2), 0.0) - 2.0 * u
+                    + np.where(z != 0.0, 2.0 * z * np.arctan(u / z), 0.0))
+        P = (F(Lk - x, z) - F(-x, z)) / (4.0 * np.pi)
+    A = ux * (nrm @ t.T) + w * (nrm @ nrm.T)  # normal velocity at i of panel k's unit source
+    diag = np.arange(len(L))
+    A[diag, diag] = 0.5
+    P[diag, diag] = (L * np.log(0.25 * L * L) - 2.0 * L) / (4.0 * np.pi)
+    phi = P @ np.linalg.solve(A, nrm)  # columns: motion along y, along z
+    m = -(phi * L[:, None]).T @ nrm
+    off = 0.5 * (m[0, 1] + m[1, 0])
+    return np.array([[m[0, 0], off], [off, m[1, 1]]])
 
 
 def rings(text, shape=False):
     """Per component: [(x, area, (y, z) centroid, apparent mass)] along the body, caps (rings at the same x) dropped;
     the apparent-mass tensor (``apparent_mass``) only with ``shape``, else the area times the identity."""
-    comps = {}
     raw = {}
     for line in text.splitlines():
         p = line.split()
         if len(p) < 9 or p[0] != "NTVSP_RING":
             continue
-        v = [float(t) for t in p[3:]]
-        pts = [v[i:i + 3] for i in range(0, len(v) - 2, 3)]
-        raw.setdefault(p[1], []).append((sum(q[0] for q in pts) / len(pts), pts))
+        v = np.array(p[3:3 + 3 * ((len(p) - 3) // 3)], float).reshape(-1, 3)
+        raw.setdefault(p[1], []).append((v[:, 0].mean(), v[:, 1:]))
     comps = []
     for rl in raw.values():
         # OpenVSP's end caps are several rings in one plane, sweeping across the cap
         groups = []
-        for x, pts in rl:
+        for x, yz in rl:
             if groups and abs(x - groups[-1][0][0]) <= 1e-9:
-                groups[-1].append((x, pts))
+                groups[-1].append((x, yz))
             else:
-                groups.append([(x, pts)])
+                groups.append([(x, yz)])
         out = []
         for gi, grp in enumerate(groups):
             if len(grp) > 1:
                 if gi == 0:
-                    pts = [q for _, ring in grp for q in ring]
-                    centre = (sum(q[1] for q in pts) / len(pts), sum(q[2] for q in pts) / len(pts))
-                    out.append((grp[0][0], 0.0, centre, [[0.0, 0.0], [0.0, 0.0]]))
+                    out.append((grp[0][0], 0.0, np.vstack([yz for _, yz in grp]).mean(axis=0), np.zeros((2, 2))))
                 continue
-            x, pts = grp[0]
-            a2 = sum(pts[i][1] * pts[i - 1][2] - pts[i - 1][1] * pts[i][2] for i in range(len(pts)))
-            area = 0.5 * abs(a2)
-            if area > 1e-30:
-                cy = sum((pts[i][1] + pts[i - 1][1]) * (pts[i][1] * pts[i - 1][2] - pts[i - 1][1] * pts[i][2])
-                         for i in range(len(pts))) / (3.0 * a2)
-                cz = sum((pts[i][2] + pts[i - 1][2]) * (pts[i][1] * pts[i - 1][2] - pts[i - 1][1] * pts[i][2])
-                         for i in range(len(pts))) / (3.0 * a2)
-            else:
-                cy, cz = (sum(q[1] for q in pts) / len(pts), sum(q[2] for q in pts) / len(pts))
-            mass = (apparent_mass([(q[1], q[2]) for q in pts]) if shape and area > 1e-30
-                    else [[area, 0.0], [0.0, area]])
-            out.append((x, area, (cy, cz), mass))
+            x, yz = grp[0]
+            a, c = shoelace(yz)
+            area = abs(a)
+            if area <= 1e-30:
+                c = yz.mean(axis=0)
+            mass = apparent_mass(yz) if shape and area > 1e-30 else area * np.eye(2)
+            out.append((x, area, c, mass))
         comps.append(out)
     return comps
 
@@ -202,78 +148,57 @@ def combine(parts, n):
     """Several fuselages on one x grid: areas and apparent-mass tensors add (no interference between fuselages),
     centroids are area-weighted."""
     x0, x1 = min(p[0][0] for p in parts), max(p[-1][0] for p in parts)
-    xs = [x0 + (x1 - x0) * i / n for i in range(n + 1)]
-    areas, centres, masses = [], [], []
-    for x in xs:
-        tot = cy = cz = 0.0
-        mm = [0.0, 0.0, 0.0]
-        for p in parts:
-            if not p[0][0] <= x <= p[-1][0]:
-                continue
-            px = [q[0] for q in p]
-            a = interp(x, px, [q[1] for q in p])
-            tot += a
-            cy += a * interp(x, px, [q[2][0] for q in p])
-            cz += a * interp(x, px, [q[2][1] for q in p])
-            for j, (r, c) in enumerate(((0, 0), (0, 1), (1, 1))):
-                mm[j] += interp(x, px, [q[3][r][c] for q in p])
-        areas.append(tot)
-        centres.append((cy / tot, cz / tot) if tot > 0 else (0.0, 0.0))
-        masses.append(((mm[0], mm[1]), (mm[1], mm[2])))
+    xs = x0 + (x1 - x0) * np.arange(n + 1) / n
+    areas, first = np.zeros(n + 1), np.zeros((n + 1, 2))
+    masses = np.zeros((n + 1, 2, 2))
+    for p in parts:
+        px = np.array([q[0] for q in p])
+        on = (px[0] <= xs) & (xs <= px[-1])
+        a = np.interp(xs, px, [q[1] for q in p])
+        areas += np.where(on, a, 0.0)
+        for k in range(2):
+            first[:, k] += np.where(on, a * np.interp(xs, px, [q[2][k] for q in p]), 0.0)
+        for r, c in ((0, 0), (0, 1), (1, 1)):
+            masses[:, r, c] += np.where(on, np.interp(xs, px, [q[3][r][c] for q in p]), 0.0)
+    masses[:, 1, 0] = masses[:, 0, 1]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        centres = np.where(areas[:, None] > 0, first / areas[:, None], 0.0)
     return xs, areas, centres, masses
 
 
 def body_loads(xs, areas, centres, conds, ref, potential, crossflow, masses=None):
     """Coefficient rows (HEADER) for each condition."""
-    sref, bref, cref, (xr, yr, zr) = ref
-    x0, x1 = xs[0], xs[-1]
-    radius = [math.sqrt(max(a, 0.0) / math.pi) for a in areas]
-    fineness = (x1 - x0) / max(2.0 * max(radius), 1e-12)
+    sref, bref, cref, xyz_ref = ref
+    xs, areas, centres = np.asarray(xs), np.asarray(areas), np.asarray(centres)
+    radius = np.sqrt(np.maximum(areas, 0.0) / np.pi)
+    fineness = (xs[-1] - xs[0]) / max(2.0 * radius.max(), 1e-12)
+    dx = np.diff(xs)
+    ok = dx > 0.0
+    arm = np.column_stack([0.5 * (xs[1:] + xs[:-1]), 0.5 * (centres[1:] + centres[:-1])]) - xyz_ref
     rows = []
     for c in conds:
-        a, b = math.radians(c["AoA"]), math.radians(c["Beta"])
-        vy, vz = -math.sin(b), math.sin(a) * math.cos(b)
-        s = math.hypot(vy, vz)
-        at = math.atan2(s, math.cos(a) * math.cos(b))
-        ey, ez = (vy / s, vz / s) if s > 1e-12 else (0.0, 0.0)
-        mn = c["Mach"] * math.sin(at)
-        k_v = crossflow_factor(fineness, mn) * crossflow_drag(mn) if crossflow else 0.0
-        cn = my = mz = 0.0  # normal force along the crossflow
-        sy = sz = 0.0  # the force's y and z components (off the crossflow too, with section shapes)
-        mx = 0.0
-        for i in range(len(xs) - 1):
-            dx = xs[i + 1] - xs[i]
-            if dx <= 0.0:
-                continue
-            xm = 0.5 * (xs[i] + xs[i + 1])
-            ym = 0.5 * (centres[i][0] + centres[i + 1][0])
-            zm = 0.5 * (centres[i][1] + centres[i + 1][1])
-            f = 0.0
-            fy = fz = 0.0
-            if potential:
-                k_p = math.sin(2.0 * at) * math.cos(0.5 * at) / sref
-                if masses is None:
-                    f += (areas[i + 1] - areas[i]) * k_p
-                    fy, fz = f * ey, f * ez
-                else:
-                    (a0, b0), (_, c0) = masses[i]
-                    (a1, b1), (_, c1) = masses[i + 1]
-                    fy = ((a1 - a0) * ey + (b1 - b0) * ez) * k_p
-                    fz = ((b1 - b0) * ey + (c1 - c0) * ez) * k_p
-                    f = fy * ey + fz * ez
-            if crossflow:
-                g = k_v * (radius[i] + radius[i + 1]) * dx / sref * math.sin(at) ** 2
-                f += g
-                fy, fz = fy + g * ey, fz + g * ez
-            cn += f
-            sy, sz = sy + fy, sz + fz
-            rx, ry, rz = xm - xr, ym - yr, zm - zr
-            mx += ry * fz - rz * fy
-            my += -rx * fz
-            mz += rx * fy
-        fy_t, fz_t = (cn * ey, cn * ez) if masses is None else (sy, sz)
+        a, b = np.radians(c["AoA"]), np.radians(c["Beta"])
+        vy, vz = -np.sin(b), np.sin(a) * np.cos(b)
+        s = np.hypot(vy, vz)
+        at = np.arctan2(s, np.cos(a) * np.cos(b))
+        e = np.array([vy, vz]) / s if s > 1e-12 else np.zeros(2)  # the crossflow direction in (y, z)
+        mn = c["Mach"] * np.sin(at)
+        fyz = np.zeros((len(dx), 2))  # each section's force (y, z)
+        if potential:
+            k_p = np.sin(2.0 * at) * np.cos(0.5 * at) / sref
+            if masses is None:
+                fyz += np.outer(np.diff(areas) * k_p, e)
+            else:
+                fyz += np.diff(masses, axis=0) @ e * k_p
+        if crossflow:
+            k_v = crossflow_factor(fineness, mn) * crossflow_drag(mn)
+            fyz += np.outer(k_v * (radius[:-1] + radius[1:]) * dx / sref * np.sin(at) ** 2, e)
+        fyz[~ok] = 0.0
+        force = np.column_stack([np.zeros(len(dx)), fyz])
+        mx, my, mz = np.cross(arm, force).sum(axis=0)
+        fy_t, fz_t = (fyz @ e).sum() * e if masses is None else fyz.sum(axis=0)
         rows.append([c["Mach"], c["AoA"], c["Beta"], 0.0, fy_t, fz_t, mx / bref, my / cref, mz / bref,
-                     sref, bref, cref, xr, yr, zr])
+                     sref, bref, cref, *xyz_ref])
     return rows, fineness
 
 
@@ -312,7 +237,7 @@ def main(settings_path):
     write_csv(os.path.join(work, case + ".ntvsp.body_sections.csv"), ["x", "Area", "Yc", "Zc", "M_yy", "M_yz", "M_zz"],
               [[x, a, c[0], c[1], m[0][0], m[0][1], m[1][1]] for x, a, c, m in zip(xs, areas, centres, masses)])
     if shape:
-        big = max(range(len(xs)), key=lambda i: areas[i])
+        big = int(np.argmax(areas))
         log(f"section apparent mass at the largest section (x = {xs[big]:.4f} m): M_yy {masses[big][0][0]:.6g}, M_zz "
             f"{masses[big][1][1]:.6g}, M_yz {masses[big][0][1]:.3g} m^2 against its area {areas[big]:.6g} m^2")
     write_csv(os.path.join(work, case + ".ntvsp.coefficients.csv"), HEADER, out)

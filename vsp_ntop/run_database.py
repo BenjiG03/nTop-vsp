@@ -5,12 +5,15 @@
 from __future__ import annotations
 
 import csv
-import math
+import itertools
 import os
 import re
 
+import numpy as np
+
 from .common import DriverError, Log, Settings, main_wrapper, write_csv
 from .flight import Flight, same
+from .geometry import ls_slope, wind_axes
 
 COEFFICIENTS = ("CL", "CD", "CY", "Cl", "Cm", "Cn")
 TOL = 1e-6
@@ -18,29 +21,14 @@ TOL = 1e-6
 
 # --- axes
 
-def axes(alpha_deg, beta_deg):
-    """Unit freestream, lift and side-force directions in x aft, y right, z up."""
-    a, b = math.radians(alpha_deg), math.radians(beta_deg)
-    ca, sa, cb, sb = math.cos(a), math.sin(a), math.cos(b), math.sin(b)
-    return (ca * cb, -sb, sa * cb), (-sa, 0.0, ca), (ca * sb, cb, sa * sb)
-
-
-def dot(u, v):
-    return u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
-
-
-def cross(u, v):
-    return (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
-
-
 def wind_to_body(cd, cy, cl, alpha, beta):
-    v, lift, side = axes(alpha, beta)
-    return tuple(cd * v[i] + cy * side[i] + cl * lift[i] for i in range(3))
+    v, lift, side = wind_axes(alpha, beta)
+    return cd * v + cy * side + cl * lift
 
 
 def body_to_wind(f, alpha, beta):
-    v, lift, side = axes(alpha, beta)
-    return dot(f, lift), dot(f, v), dot(f, side)  # CL, CD, CY
+    v, lift, side = wind_axes(alpha, beta)
+    return lift @ f, v @ f, side @ f  # CL, CD, CY
 
 
 # --- interpolation
@@ -50,69 +38,66 @@ def _key(v):
 
 
 class Grid:
-    """Values on a Mach x alpha x beta tensor grid (some axes may hold one value), interpolated multilinearly."""
+    """Values on a Mach x alpha x beta tensor grid (some axes may hold one value, some points may be missing),
+    interpolated multilinearly."""
 
     def __init__(self, name, points):
         self.name = name
-        self.data = {}
-        for (m, a, b), vals in points:
-            k = (_key(m), _key(a), _key(b))
-            if k in self.data:
+        keys = np.round([p for p, _ in points], 6).reshape(-1, 3)
+        seen = set()
+        for k, (m, a, b) in zip(map(tuple, keys), (p for p, _ in points)):
+            if k in seen:
                 raise DriverError(f"{name}: two sets of values at Mach {m:g}, alpha {a:g}, beta {b:g}")
-            self.data[k] = vals
-        self.axes = [sorted({k[i] for k in self.data}) for i in range(3)]
-        self.order = [p for p, _ in points]
+            seen.add(k)
+        self.axes = [np.unique(keys[:, i]) for i in range(3)]
+        idx = tuple(np.searchsorted(ax, keys[:, i]) for i, ax in enumerate(self.axes))
+        self.values = np.full(tuple(len(ax) for ax in self.axes) + (len(points[0][1]) if points else 0,), np.nan)
+        self.values[idx] = [v for _, v in points]
 
     def _bracket(self, i, x, what, cond):
+        """(index, weight) of the grid values around ``x`` on axis ``i``."""
         ax = self.axes[i]
         if len(ax) == 1:
             if abs(ax[0] - x) > TOL:
                 raise DriverError(f"{self.name} has {what} {ax[0]:g} only; the database asks for {what} {x:g} ({cond})")
-            return [(ax[0], 1.0)]
+            return [(0, 1.0)]
         if x < ax[0] - TOL or x > ax[-1] + TOL:
             raise DriverError(f"{self.name} covers {what} {ax[0]:g} to {ax[-1]:g}; the database asks for {what} {x:g} "
                               f"({cond})")
-        for x0, x1 in zip(ax, ax[1:]):
-            if x0 - TOL <= x <= x1 + TOL:
-                t = min(1.0, max(0.0, (x - x0) / (x1 - x0)))
-                return [(x0, 1.0 - t), (x1, t)]
-        return [(ax[-1], 1.0)]
+        j = int(np.clip(np.searchsorted(ax, x - TOL) - 1, 0, len(ax) - 2))  # the first interval holding x
+        t = float(np.clip((x - ax[j]) / (ax[j + 1] - ax[j]), 0.0, 1.0))
+        return [(j, 1.0 - t), (j + 1, t)]
 
     def at(self, m, a, b):
         """The values at a condition it has, else interpolated between the grid points around it."""
         cond = f"Mach {m:g}, alpha {a:g}, beta {b:g}"
-        for k, vals in self.data.items():
-            if abs(k[0] - m) <= TOL and abs(k[1] - a) <= TOL and abs(k[2] - b) <= TOL:
-                return list(vals)
-        out = None
-        for mm, wm in self._bracket(0, m, "Mach", cond):
-            for aa, wa in self._bracket(1, a, "alpha", cond):
-                for bb, wb in self._bracket(2, b, "beta", cond):
-                    w = wm * wa * wb
-                    if w == 0.0:
-                        continue
-                    if (mm, aa, bb) not in self.data:
-                        raise DriverError(f"{self.name} has no values at {cond} and cannot interpolate there: it lacks "
-                                          f"Mach {mm:g}, alpha {aa:g}, beta {bb:g}. Interpolation needs every "
-                                          "combination of the neighbouring Mach numbers and angles; or compute it at "
-                                          "the database's conditions")
-                    vals = self.data[(mm, aa, bb)]
-                    out = [w * v for v in vals] if out is None else [o + w * v for o, v in zip(out, vals)]
+        near = [np.flatnonzero(np.abs(ax - x) <= TOL) for ax, x in zip(self.axes, (m, a, b))]
+        if all(len(k) for k in near) and not np.isnan(self.values[near[0][0], near[1][0], near[2][0]]).any():
+            return self.values[near[0][0], near[1][0], near[2][0]].copy()
+        out = 0.0
+        for (i, wm), (j, wa), (k, wb) in itertools.product(*(self._bracket(n, x, w, cond) for n, (x, w) in
+                                                             enumerate(((m, "Mach"), (a, "alpha"), (b, "beta"))))):
+            w = wm * wa * wb
+            if w == 0.0:
+                continue
+            vals = self.values[i, j, k]
+            if np.isnan(vals).any():
+                mm, aa, bb = self.axes[0][i], self.axes[1][j], self.axes[2][k]
+                raise DriverError(f"{self.name} has no values at {cond} and cannot interpolate there: it lacks "
+                                  f"Mach {mm:g}, alpha {aa:g}, beta {bb:g}. Interpolation needs every "
+                                  "combination of the neighbouring Mach numbers and angles; or compute it at "
+                                  "the database's conditions")
+            out = out + w * vals
         return out
 
 
 def interp_mach(name, points, m):
-    pts = sorted(points)
-    for x, y in pts:
-        if abs(x - m) <= TOL:
-            return y
-    if not pts or m < pts[0][0] - TOL or m > pts[-1][0] + TOL:
-        raise DriverError(f"{name} was run from Mach {pts[0][0]:g} to {pts[-1][0]:g} but applies at Mach {m:g}: run it "
+    x, y = np.array(sorted(points), float).reshape(-1, 2).T
+    if not len(x) or m < x[0] - TOL or m > x[-1] + TOL:
+        raise DriverError(f"{name} was run from Mach {x[0]:g} to {x[-1]:g} but applies at Mach {m:g}: run it "
                           "over the Mach numbers where it applies, or narrow its Mach range")
-    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
-        if x0 <= m <= x1:
-            return y0 + (y1 - y0) * (m - x0) / (x1 - x0)
-    return pts[-1][1]
+    exact = np.flatnonzero(np.abs(x - m) <= TOL)
+    return float(y[exact[0]] if len(exact) else np.interp(m, x, y))
 
 
 # --- contributions
@@ -232,14 +217,14 @@ class Contribution:
     def body(self, cond):
         m, h, a, b = cond["Mach"], cond["Altitude"], cond["AoA"], cond["Beta"]
         if self.kind == "vspaero":
-            grid = self.grids[min(self.grids, key=lambda re_: abs(math.log(max(re_, 1.0)) -
-                                                                  math.log(max(cond["Re_cref"], 1.0))))]
+            grid = self.grids[min(self.grids, key=lambda re_: abs(np.log(max(re_, 1.0)) -
+                                                                  np.log(max(cond["Re_cref"], 1.0))))]
             if not grid.axes[0][0] - TOL <= m <= grid.axes[0][-1] + TOL:
                 return None  # outside the Mach numbers VSPAERO ran
             v = grid.at(m, a, b)
         elif self.kind == "coefficients":
             grid = self._at_altitude(self.grids, h)
-            if grid is None or not grid.axes[0] or not grid.axes[0][0] - TOL <= m <= grid.axes[0][-1] + TOL:
+            if grid is None or not len(grid.axes[0]) or not grid.axes[0][0] - TOL <= m <= grid.axes[0][-1] + TOL:
                 return None  # computed only over its own Mach range (and altitudes)
             v = grid.at(m, a, b)
         else:
@@ -250,15 +235,13 @@ class Contribution:
             if not pts or not min(x for x, _ in pts) - TOL <= m <= max(x for x, _ in pts) + TOL:
                 return None  # outside the Mach numbers it ran (wave drag: subsonic)
             cd = interp_mach(self.name, pts, m)
-            v = list(wind_to_body(cd, 0.0, 0.0, a, b)) + [0.0, 0.0, 0.0]
-        force, moment = tuple(v[:3]), tuple(v[3:])
-        vel = axes(a, b)[0]
+            v = np.concatenate([wind_to_body(cd, 0.0, 0.0, a, b), np.zeros(3)])
+        force, moment = np.asarray(v[:3], float), np.asarray(v[3:], float)
+        vel = wind_axes(a, b)[0]
         if self.use == "drag":
-            d = dot(force, vel)
-            force, moment = tuple(d * x for x in vel), (0.0, 0.0, 0.0)
+            force, moment = (force @ vel) * vel, np.zeros(3)
         elif self.use == "nodrag":
-            d = dot(force, vel)
-            force = tuple(f - d * x for f, x in zip(force, vel))
+            force = force - (force @ vel) * vel
         return force, moment
 
     def on(self, ref, cond):
@@ -268,13 +251,12 @@ class Contribution:
         if got is None:
             return None
         force, moment = got
-        s, k = self.sref, self.scale
-        f = tuple(k * x * s for x in force)  # per dynamic pressure
-        mom = (k * moment[0] * s * self.bref, k * moment[1] * s * self.cref, k * moment[2] * s * self.bref)
-        arm = tuple(p - q for p, q in zip(self.point or ref[3], ref[3]))
-        mom = tuple(x + y for x, y in zip(mom, cross(arm, f)))
+        k, lengths = self.scale * self.sref, np.array([self.bref, self.cref, self.bref])
+        f = k * force  # per dynamic pressure
+        arm = np.subtract(self.point or ref[3], ref[3])
+        mom = k * moment * lengths + np.cross(arm, f)
         S, B, C = ref[0], ref[1], ref[2]
-        return tuple(x / S for x in f), (mom[0] / (S * B), mom[1] / (S * C), mom[2] / (S * B))
+        return f / S, mom / (S * np.array([B, C, B]))
 
 
 def parse_contributions(path):
@@ -298,7 +280,7 @@ def parse_contributions(path):
 
 def coefficients(force, moment, a, b):
     cl, cd, cy = body_to_wind(force, a, b)
-    return [cl, cd, cy, -moment[0], moment[1], -moment[2]]
+    return [float(v) for v in (cl, cd, cy, -moment[0], moment[1], -moment[2])]
 
 
 def column_name(name):
@@ -322,13 +304,9 @@ def centers(work, case, rows, ref, log):
         groups.setdefault((r["Mach"], r["Altitude"], r["Beta"]), []).append(r)
     ac = []
     for (m, h, b), g in groups.items():
-        f, c = [r["CN"] for r in g], [r["Cm"] for r in g]
-        n = len(f)
-        mf, mc = sum(f) / n, sum(c) / n
-        sff = sum((x - mf) ** 2 for x in f)
-        if n < 2 or sff < 1e-12:
+        slope = ls_slope([r["CN"] for r in g], [r["Cm"] for r in g])
+        if slope is None:
             continue
-        slope = sum((x - mf) * (y - mc) for x, y in zip(f, c)) / sff
         ac.append([m, h, b, xr - slope * cref, yr, zr, slope])
     write_csv(os.path.join(work, case + ".ntvsp.aerodynamic_center.csv"),
               ["Mach", "Altitude", "Beta", "X", "Y", "Z", "dCm_dCN"], ac)
@@ -369,7 +347,7 @@ def main(settings_path):
     rows, table, used = [], [], {}
     for cond in conds:
         m, h, a, b = cond["Mach"], cond["Altitude"], cond["AoA"], cond["Beta"]
-        tf, tm, own = [0.0] * 3, [0.0] * 3, []
+        tf, tm, own = np.zeros(3), np.zeros(3), []
         for p, n in zip(parts, names):
             got = p.on(ref, cond) if p.applies(m) else None
             if got is None:
@@ -377,12 +355,12 @@ def main(settings_path):
                 continue
             f, mo = got
             used.setdefault((m, h), []).append(n) if n not in used.get((m, h), []) else None
-            tf = [x + y for x, y in zip(tf, f)]
-            tm = [x + y for x, y in zip(tm, mo)]
+            tf, tm = tf + f, tm + mo
             own += coefficients(f, mo, a, b)
         tot = coefficients(tf, tm, a, b)
-        rows.append(dict(zip(COEFFICIENTS, tot), Mach=m, Altitude=h, AoA=a, Beta=b, CA=tf[0], CN=tf[2]))
-        table.append(values + [m, h, a, b] + tot + [tot[0] / tot[1] if tot[1] else 0.0, tf[0], tf[2]] + own)
+        rows.append(dict(zip(COEFFICIENTS, tot), Mach=m, Altitude=h, AoA=a, Beta=b, CA=float(tf[0]), CN=float(tf[2])))
+        table.append(values + [m, h, a, b] + tot + [tot[0] / tot[1] if tot[1] else 0.0, float(tf[0]), float(tf[2])]
+                     + own)
     for p in flight.points:
         key = next((k for k in used if same(k[0], p["Mach"]) and abs(k[1] - p["Altitude"]) <= ALT_TOL), None)
         log(f"Mach {p['Mach']:g} at {p['Altitude']:g} m: " + (", ".join(used[key]) if key else "no contribution applies"))

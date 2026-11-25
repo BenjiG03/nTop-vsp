@@ -40,8 +40,8 @@ Viscous Correction are pure nTop block graphs.
 ## Setup
 
 1. Unpack OpenVSP 3.56 (Windows 64-bit).
-2. `pip install -e .` into a Python 3.8+ (installs `ambiance` and matplotlib). A conda Python works without
-   activating its environment.
+2. `pip install -e .` into a Python 3.8+ (installs `ambiance`, matplotlib and numpy; `.[test]` adds pytest and
+   scipy). A conda Python works without activating its environment.
 3. Set, then restart nTop:
    - `NTOP_PYTHON_PATH`: that Python's executable;
    - `VSP_PATH`: the folder with `vspscript.exe` and `vspaero.exe`;
@@ -125,7 +125,7 @@ Untrimmed surfaces, always declared in metres. Optional **Planar End Caps** rebu
 (`step_caps.py`). Use Stitched for nTop: it round-trips within 0.05 mm, Trimmed does not, and Trimmed drops a duct's
 inner wall. Results: `validation/cad_export/results.txt`.
 
-**Lofted CAD Export (VSP)** (`loft.py`, `step_write.py`; numpy only) skips OpenVSP's skinning, which cannot follow a
+**Lofted CAD Export (VSP)** (`loft.py`, `step_write.py`) skips OpenVSP's skinning, which cannot follow a
 flattened section. One bicubic B-spline surface is least-squares fitted through every slice, split at the four
 centre-line crossings; corners over 30° become sharp edges (chines). The surface is cut into clamped B-spline faces,
 one closed solid per body, AP214 in millimetres (`docs/STEP_FORMAT.md`). Against exact bodies the loft is within
@@ -180,7 +180,7 @@ coefficient table. The fitted design is within 1 to 2% of hand-written designs.
   Integral per component. Cp_max: Rayleigh pitot (Modified), 2 (Classical) or a **Cp Max Field**. No
   self-shadowing.
 - **Modified Newtonian on Mesh (VSP)**: the same pressure from the implicit **Body**, integrated over a **Mesh** of it
-  by `run_newtonian_mesh.py` (numpy). The log reports how well the Body's normals match the Mesh; under half the area
+  by `run_newtonian_mesh.py`. The log reports how well the Body's normals match the Mesh; under half the area
   within 25° is an error (a misplaced or wrongly scaled mesh). An OpenVSP Model Mesh is accepted (CN within 1 to 4%,
   CA about 10% of nTop's mesh).
 - **Tangent Wedge on Mesh (VSP)** (`local_methods.py`): windward **Tangent Wedge** (exact oblique shock) or **Tangent

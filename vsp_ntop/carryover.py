@@ -1,8 +1,6 @@
 """Lift a fin carries onto the body, after Pitts, Nielsen and Kaattari (NACA TR 1307)."""
 from __future__ import annotations
 
-import math
-
 import numpy as np
 
 SONIC_BAND = 0.02  # beta m within this of 1 blends the two leading-edge solutions
@@ -17,9 +15,9 @@ _W = 0.5 * _WEIGHTS
 def slender_factors(ratio):
     """(K_W(B), K_B(W)) of slender-body theory, TR 1307 equations 14 and 21, at root distance / semispan ``ratio``."""
     tau = min(max(float(ratio), 1e-9), 0.999)
-    brace = ((1.0 + tau**4) * (0.5 * math.atan(0.5 * (1.0 / tau - tau)) + 0.25 * math.pi)
-             - tau**2 * ((1.0 / tau - tau) + 2.0 * math.atan(tau)))
-    k_wb = 2.0 / math.pi * brace / (1.0 - tau) ** 2
+    brace = ((1.0 + tau**4) * (0.5 * np.atan(0.5 * (1.0 / tau - tau)) + 0.25 * np.pi)
+             - tau**2 * ((1.0 / tau - tau) + 2.0 * np.atan(tau)))
+    k_wb = 2.0 / np.pi * brace / (1.0 - tau) ** 2
     return k_wb, (1.0 + tau) ** 2 - k_wb
 
 
@@ -31,12 +29,12 @@ def strip_pressure(xi, eta, beta, m):
     def supersonic(bm_edge):
         slope = bm_edge / beta
         arg = (xi / beta + bm_edge * eta) / np.maximum(eta + slope * xi, tiny)
-        return bm_edge / (math.pi * math.sqrt(bm_edge**2 - 1.0)) * np.arccos(np.clip(arg, -1.0, 1.0 - 1e-12))
+        return bm_edge / (np.pi * np.sqrt(bm_edge**2 - 1.0)) * np.arccos(np.clip(arg, -1.0, 1.0 - 1e-12))
 
     def subsonic(bm_edge):
         slope = bm_edge / beta
         root = np.sqrt(np.maximum(xi / beta - eta, tiny)) / np.sqrt(np.maximum(slope * xi + eta, tiny))
-        return 2.0 * bm_edge**1.5 / (math.pi * (bm_edge + 1.0)) * root
+        return 2.0 * bm_edge**1.5 / (np.pi * (bm_edge + 1.0)) * root
 
     blend = min(max((bm - (1.0 - SONIC_BAND)) / (2.0 * SONIC_BAND), 0.0), 1.0)
     value = 0.0
@@ -72,7 +70,7 @@ def body_factor(mach, root, semispan, root_chord, tip_chord, slope, planform, wi
     root) and which method set it ("planar" or "slender")."""
     if mach <= 1.0 + 1e-6:  # no Mach lines: slender-body theory
         return slender_factors(root / semispan)[1], 0.5 * root_chord, 0.5 * width, "slender"
-    beta = math.sqrt(mach * mach - 1.0)
+    beta = np.sqrt(mach * mach - 1.0)
     exposed = semispan - root
     aspect = 4.0 * exposed / (root_chord + tip_chord)  # the exposed pair joined at the root
     taper = tip_chord / root_chord

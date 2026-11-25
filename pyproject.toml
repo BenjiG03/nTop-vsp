@@ -9,7 +9,10 @@ description = "Drivers for the nTop_vsp custom blocks: nTop implicit bodies to O
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
-dependencies = ["ambiance", "matplotlib"]
+dependencies = ["ambiance", "matplotlib", "numpy>=2"]
+
+[project.optional-dependencies]
+test = ["pytest", "scipy"]
 
 [tool.setuptools]
 packages = ["vsp_ntop"]

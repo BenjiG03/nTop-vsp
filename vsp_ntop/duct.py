@@ -1,49 +1,36 @@
 """Ducts: the side wall of an implicit body between two planar ends, as an open OpenVSP Fuselage."""
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
+
+import numpy as np
 
 from . import fit as F
 from . import slices as S
+from .geometry import arc_length, unit as _unit
 
 SIDES = ("Top", "Right", "Bottom", "Left")
 
 
-def dot(a, b):
-    return sum(p * q for p, q in zip(a, b))
-
-
-def add(a, b, s=1.0):
-    return tuple(p + s * q for p, q in zip(a, b))
-
-
 def unit(a):
-    n = math.sqrt(dot(a, a))
-    if n == 0:
-        raise F.FitError("zero-length direction")
-    return tuple(c / n for c in a)
+    return _unit(a, F.FitError)
 
 
 def rotation(n):
     """OpenVSP section rotation (XRotate, YRotate, ZRotate in degrees, XRotate = 0) turning the section's x axis onto
     ``n``, and its columns (the section's x, y and z axes in the world)."""
     n = unit(n)
-    g = math.asin(max(-1.0, min(1.0, n[1])))
-    b = math.atan2(-n[2], n[0])
-    cb, sb, cg, sg = math.cos(b), math.sin(b), math.cos(g), math.sin(g)
-    ex = (cb * cg, sg, -sb * cg)
-    ey = (-cb * sg, cg, sb * sg)
-    ez = (sb, 0.0, cb)
-    return (0.0, math.degrees(b), math.degrees(g)), ex, ey, ez
+    g = np.arcsin(np.clip(n[1], -1.0, 1.0))
+    b = np.arctan2(-n[2], n[0])
+    cb, sb, cg, sg = np.cos(b), np.sin(b), np.cos(g), np.sin(g)
+    return ((0.0, np.degrees(b), np.degrees(g)), np.array([cb * cg, sg, -sb * cg]), np.array([-cb * sg, cg, sb * sg]),
+            np.array([sb, 0.0, cb]))
 
 
 def orient(n_in, n_out, p_in, p_out):
     """Both end normals pointing from the inlet towards the outlet."""
-    d = add(p_out, p_in, -1.0)
-    n_in = unit(n_in if dot(n_in, d) >= 0 else tuple(-c for c in n_in))
-    n_out = unit(n_out if dot(n_out, d) >= 0 else tuple(-c for c in n_out))
-    return n_in, n_out
+    d = np.subtract(p_out, p_in)
+    return tuple(unit(np.asarray(nn, float) if np.dot(nn, d) >= 0 else -np.asarray(nn, float)) for nn in (n_in, n_out))
 
 
 def plane_fractions(n, a=1.0, b=1.0, inset=1e-3):
@@ -51,7 +38,7 @@ def plane_fractions(n, a=1.0, b=1.0, inset=1e-3):
     at the outlet), the ends ``inset`` inside."""
     if n < 3:
         raise F.FitError("a duct needs at least 3 sections")
-    s = [F.cluster(k / (n - 1), a, b) for k in range(n)]
+    s = F.cluster(np.arange(n) / (n - 1), a, b)
     s[0], s[-1] = inset, 1.0 - inset
     return s
 
@@ -59,22 +46,18 @@ def plane_fractions(n, a=1.0, b=1.0, inset=1e-3):
 def section_planes(p_in, n_in, p_out, n_out, s_list):
     """(point, unit normal) of each cutting plane."""
     n_in, n_out = orient(n_in, n_out, p_in, p_out)
-    out = []
-    for s in s_list:
-        p = add(tuple((1 - s) * c for c in p_in), p_out, s)
-        n = unit(add(tuple((1 - s) * c for c in n_in), n_out, s))
-        out.append((p, n))
-    return out
+    p_in, p_out = np.asarray(p_in, float), np.asarray(p_out, float)
+    return [((1 - s) * p_in + s * p_out, unit((1 - s) * n_in + s * n_out)) for s in s_list]
 
 
 @dataclass
 class DuctSection:
-    centre: tuple          # world position of the section's centre (bounding box in its own y, z)
+    centre: np.ndarray     # world position of the section's centre (bounding box in its own y, z)
     angles: tuple          # (XRotate, YRotate, ZRotate) degrees
     width: float
     height: float
-    points: list = field(default_factory=list)  # [(y/width, z/height)] about the centre, closed
-    loop3d: list = field(default_factory=list)  # the contour in the world (for checks)
+    points: np.ndarray = field(default_factory=lambda: np.empty((0, 2)))  # (y/width, z/height) about the centre
+    loop3d: np.ndarray = field(default_factory=lambda: np.empty((0, 3)))  # the contour in the world (for checks)
 
 
 @dataclass
@@ -96,23 +79,22 @@ def pick_loop(loops, wall):
 
 
 def fit_duct(cuts, end_planes, per_quarter=24):
-    """``cuts``: per section, the chosen contour as world points [(x, y, z)] and its cutting plane (point, normal),
+    """``cuts``: per section, the chosen contour as (n, 3) world points and its cutting plane (point, normal),
     inlet to outlet. ``end_planes``: ((p_in, n_in), (p_out, n_out))."""
-    sections, notes = [], []
-    axis = unit(add(end_planes[1][0], end_planes[0][0], -1.0))
+    sections = []
+    axis = unit(np.subtract(end_planes[1][0], end_planes[0][0]))
     for k, (loop, (p, n)) in enumerate(cuts):
-        if k in (0, len(cuts) - 1):
-            pe, ne = end_planes[0 if k == 0 else 1]
-            # along the duct's axis (inlet point to outlet point) onto the end plane
-            loop = [add(q, axis, dot(add(pe, q, -1.0), ne) / dot(axis, ne)) for q in loop]
+        loop = np.asarray(loop, float)
+        if k in (0, len(cuts) - 1):  # along the duct's axis onto the end plane
+            pe, ne = (np.asarray(v, float) for v in end_planes[0 if k == 0 else 1])
+            loop = loop + np.outer((pe - loop) @ ne / (axis @ ne), axis)
             p, n = pe, unit(ne)
         angles, ex, ey, ez = rotation(n)
-        local = [(dot(add(q, p, -1.0), ey), dot(add(q, p, -1.0), ez)) for q in loop]
-        off = sum(dot(add(q, p, -1.0), ex) for q in loop) / len(loop)  # 0 up to rounding
-        uc, vc, w, h, pts, _ = F._section_curve(local, per_quarter)
-        centre = add(add(add(p, ex, off), ey, uc), ez, vc)
+        rel = loop - p
+        uc, vc, w, h, pts, _ = F._section_curve(rel @ np.column_stack([ey, ez]), per_quarter)
+        centre = p + (rel @ ex).mean() * ex + uc * ey + vc * ez  # the mean along ex is 0 up to rounding
         sections.append(DuctSection(centre, angles, w, h, pts, loop))
-    return DuctFit(sections, notes)
+    return DuctFit(sections, [])
 
 
 def duct_lines(k, name, f: DuctFit, set_name, tess_w, sets):
@@ -139,25 +121,18 @@ def duct_lines(k, name, f: DuctFit, set_name, tess_w, sets):
 def placement(f: DuctFit):
     """Fuselage origin and length so that every section's XLocPercent lies in [0, 1]: origin at the smallest
     centre x (y and z of the first centre), length the largest extent of the centres along any axis."""
-    cs = [s.centre for s in f.sections]
-    x0 = min(c[0] for c in cs)
-    origin = (x0, cs[0][1], cs[0][2])
-    length = max(max(c[i] for c in cs) - min(c[i] for c in cs) for i in range(3))
-    return origin, max(length, 1e-6)
+    cs = np.array([s.centre for s in f.sections])
+    origin = np.array([cs[:, 0].min(), cs[0, 1], cs[0, 2]])
+    return origin, max(np.ptp(cs, axis=0).max(), 1e-6)
 
 
 def axial_points(f: DuctFit, tess_w, aspect):
     """Tessellation points along each section interval, as ``vspmodel.axial_points``: panels about ``aspect``
-    times as long as wide; the length is the largest distance between the two contours' matching points."""
-    def perim(s):
-        pts = [(a * s.width, b * s.height) for a, b in s.points]
-        return sum(math.dist(p, q) for p, q in zip(pts, pts[1:]))
-    out = []
-    for a, b in zip(f.sections, f.sections[1:]):
-        width = min(perim(a), perim(b)) / max(1, tess_w - 1)
-        gap = max(math.dist(a.centre, b.centre), 1e-12)
-        out.append(max(2, int(math.ceil(gap / (aspect * width))) + 1))
-    return out
+    times as long as wide; the length is the distance between the two sections' centres."""
+    per = np.array([arc_length(s.points * [s.width, s.height])[-1] for s in f.sections])
+    gap = np.maximum(np.linalg.norm(np.diff([s.centre for s in f.sections], axis=0), axis=1), 1e-12)
+    width = np.minimum(per[:-1], per[1:]) / max(1, tess_w - 1)
+    return np.maximum(2, np.ceil(gap / (aspect * width)).astype(int) + 1).tolist()
 
 
 def write_sections(geom, f: DuctFit, tess_w, aspect, continuity=2, parm=None):
@@ -174,7 +149,7 @@ def write_sections(geom, f: DuctFit, tess_w, aspect, continuity=2, parm=None):
     u_pts = axial_points(f, tess_w, aspect)
     for i, (xe, s) in enumerate(zip(xsecs, f.sections)):
         g = xe.find("ParmContainer/XSec")
-        rel = add(s.centre, origin, -1.0)
+        rel = s.centre - origin
         parm(g, "XLocPercent", rel[0] / length)
         parm(g, "YLocPercent", rel[1] / length)
         parm(g, "ZLocPercent", rel[2] / length)

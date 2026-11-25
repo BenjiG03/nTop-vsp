@@ -4,13 +4,13 @@
 """
 from __future__ import annotations
 
-import bisect
-import math
 import os
 import re
 import subprocess
 import time
 import xml.sax.saxutils as xs
+
+import numpy as np
 
 from .common import DriverError, Log, Settings, main_wrapper, openvsp_dir, run_vspscript, vsp_path, write_csv
 from .flight import Flight
@@ -28,37 +28,35 @@ def ogive(t, fineness):
     """Tangent ogive r / R at x / L = t for L / R = 2 fineness."""
     lr = 2.0 * fineness
     rho = (1.0 + lr * lr) / 2.0
-    return math.sqrt(max(rho * rho - (lr * (1.0 - t)) ** 2, 0.0)) + 1.0 - rho
+    return np.sqrt(np.maximum(rho * rho - (lr * (1.0 - t)) ** 2, 0.0)) + 1.0 - rho
 
 
 def von_karman(t):
-    th = math.acos(1.0 - 2.0 * t)
-    return math.sqrt((th - math.sin(2.0 * th) / 2.0) / math.pi)
+    th = np.arccos(1.0 - 2.0 * t)
+    return np.sqrt((th - np.sin(2.0 * th) / 2.0) / np.pi)
 
 
 def body_radius(radius):
     """The body tube's radius: the largest radius the body holds over at least a fifth of its stations (so a
     local bulge, such as a skinning overshoot near a base, does not count)."""
-    ordered = sorted(radius)
-    return ordered[int(0.8 * (len(ordered) - 1))]
+    return np.sort(radius)[int(0.8 * (len(radius) - 1))]
 
 
 def fit_nose(xs, radius):
-    """(length, radius, shape name, RMS of r/R) of the nose: from the tip to where r first reaches 99% of the
-    body tube's radius."""
+    """(length, radius, shape name, RMS of r/R) of the nose: from the tip to where r first reaches 99.9% (else 99%)
+    of the body tube's radius."""
+    xs, radius = np.asarray(xs), np.asarray(radius)
     big = body_radius(radius)
-    j = next((i for i, r in enumerate(radius) if r >= 0.999 * big), None)
-    if j is None:
-        j = next(i for i, r in enumerate(radius) if r >= 0.99 * big)
-    x0, length = xs[0], xs[j] - xs[0]
+    reach = np.flatnonzero(radius >= 0.999 * big)
+    j = reach[0] if len(reach) else np.flatnonzero(radius >= 0.99 * big)[0]
+    length = xs[j] - xs[0]
     if length <= 0.0:
         raise DriverError("the body has no nose: its radius is largest at the front")
     fineness = length / (2.0 * big)
-    pts = [((x - x0) / length, r / big) for x, r in zip(xs[:j + 1], radius[:j + 1])]
-    shapes = {"Conical": lambda t: t, "Tangent Ogive": lambda t: ogive(t, fineness), "Von Karman Ogive": von_karman}
-    rms = {n: math.sqrt(sum((f(t) - y) ** 2 for t, y in pts) / len(pts)) for n, f in shapes.items()}
-    best = min(rms, key=rms.get)
-    return length, big, best, rms
+    t, y = (xs[:j + 1] - xs[0]) / length, radius[:j + 1] / big
+    shapes = {"Conical": t, "Tangent Ogive": ogive(t, fineness), "Von Karman Ogive": von_karman(t)}
+    rms = {n: float(np.sqrt(np.mean((f - y) ** 2))) for n, f in shapes.items()}
+    return length, big, min(rms, key=rms.get), rms
 
 
 def wing_script(model, names, n_u=60, n_w=64):
@@ -92,44 +90,36 @@ def wing_rings(text):
         p = line.split()
         if len(p) < 9 or p[0] != "NTVSP_WING":
             continue
-        v = [float(t) for t in p[3:]]
-        out.setdefault(p[1], []).append([v[i:i + 3] for i in range(0, len(v) - 2, 3)])
+        out.setdefault(p[1], []).append(np.array(p[3:3 + 3 * ((len(p) - 3) // 3)], float).reshape(-1, 3))
     return out
 
 
 def fin_planform(ring_list, body_radius_at):
     """Exposed trapezoid of one fin surface: (root LE x, root chord, tip chord, span, sweep distance, thickness,
     LE bevel, TE bevel), outboard of the body."""
+    def plane(ring):
+        """The ring's centre in (y, z) and the unit normal to the fin's plane there."""
+        c = ring[:, 1:].mean(axis=0)
+        return c, np.array([-c[1], c[0]]) / (np.hypot(*c) or 1.0)
+
     def spread(ring):
-        cy, cz = sum(q[1] for q in ring) / len(ring), sum(q[2] for q in ring) / len(ring)
-        n = math.hypot(cy, cz) or 1.0
-        h = [((q[1] - cy) * -cz + (q[2] - cz) * cy) / n for q in ring]
-        return max(h) - min(h)
+        c, n = plane(ring)
+        h = (ring[:, 1:] - c) @ n
+        return h.max() - h.min()
 
     # OpenVSP's wing surface starts and ends with its end caps
     by_rho = {}
     for ring in ring_list:
-        rho = math.hypot(sum(q[1] for q in ring) / len(ring), sum(q[2] for q in ring) / len(ring))
-        key = round(rho, 6)
+        key = round(float(np.hypot(*ring[:, 1:].mean(axis=0))), 6)
         if key not in by_rho or spread(ring) > spread(by_rho[key]):
             by_rho[key] = ring
-    stations = []
-    for rho, ring in by_rho.items():
-        le = min(ring, key=lambda q: q[0])
-        te = max(ring, key=lambda q: q[0])
-        stations.append((rho, le[0], te[0], ring))
-    stations.sort(key=lambda s: s[0])
-    rhos = [s[0] for s in stations]
+    stations = sorted((rho, ring[:, 0].min(), ring[:, 0].max(), ring) for rho, ring in by_rho.items())
     tip = stations[-1]
     # root: where the planform crosses the body surface (or the innermost station if the fin stops outside it)
-    root = None
-    for s in stations:
-        if s[0] >= body_radius_at(s[1]) - 1e-9:
-            root = s
-            break
-    if root is None:
+    i = next((k for k, st in enumerate(stations) if st[0] >= body_radius_at(st[1]) - 1e-9), None)
+    if i is None:
         raise DriverError("a fin lies entirely inside the body")
-    i = stations.index(root)
+    root = stations[i]
     rb = body_radius_at(root[1])
     if i > 0 and stations[i - 1][0] < rb < root[0]:
         a, b = stations[i - 1], root
@@ -139,26 +129,22 @@ def fin_planform(ring_list, body_radius_at):
         rb, le_x, te_x = root[0], root[1], root[2]
     chord, tip_chord = te_x - le_x, tip[2] - tip[1]
     # thickness and bevels from the root ring
-    ring = root[3]
-    cy = sum(q[1] for q in ring) / len(ring)
-    cz = sum(q[2] for q in ring) / len(ring)
-    ny, nz = -cz, cy  # normal to the fin's plane in y-z
-    nn = math.hypot(ny, nz) or 1.0
-    ny, nz = ny / nn, nz / nn
-    pts = [(q[0], (q[1] - cy) * ny + (q[2] - cz) * nz) for q in ring]
+    c, nrm = plane(root[3])
+    x, h = root[3][:, 0], (root[3][:, 1:] - c) @ nrm
     n = 40
     x0, x1 = root[1], root[2]
-    thick = []
-    for k in range(n + 1):
-        x = x0 + (x1 - x0) * k / n
-        near = [h for xx, h in pts if abs(xx - x) <= (x1 - x0) / n]
-        thick.append(max(near) - min(near) if len(near) >= 2 else 0.0)
-    tmax = max(thick)
+    thick = np.zeros(n + 1)
+    for k, xk in enumerate(x0 + (x1 - x0) * np.arange(n + 1) / n):
+        near = h[np.abs(x - xk) <= (x1 - x0) / n]
+        thick[k] = np.ptp(near) if len(near) >= 2 else 0.0
+    tmax = thick.max()
+    full = np.flatnonzero(thick >= 0.95 * tmax)
     cr = x1 - x0
-    le_bevel = next((k for k, t in enumerate(thick) if t >= 0.95 * tmax), 0) * cr / n
-    te_bevel = (n - max(k for k, t in enumerate(thick) if t >= 0.95 * tmax)) * cr / n
-    return {"root_le_x": le_x, "root_chord": chord, "tip_chord": tip_chord, "span": tip[0] - rb,
-            "sweep": tip[1] - le_x, "thickness": tmax, "le_bevel": le_bevel, "te_bevel": te_bevel, "root_radius": rb}
+    le_bevel = full[0] * cr / n
+    te_bevel = (n - full[-1]) * cr / n
+    return {k: float(v) for k, v in (("root_le_x", le_x), ("root_chord", chord), ("tip_chord", tip_chord),
+                                      ("span", tip[0] - rb), ("sweep", tip[1] - le_x), ("thickness", tmax),
+                                      ("le_bevel", le_bevel), ("te_bevel", te_bevel), ("root_radius", rb))}
 
 
 def design_xml(nose, body, fins, n_fins, altitude_ft, turbulent, surface):
@@ -309,11 +295,8 @@ def at_mach(table, mach):
     ms = sorted(table)
     if not ms[0] - 1e-9 <= mach <= ms[-1] + 1e-9:
         raise DriverError(f"Mach {mach:g} is outside RASAero II's range ({ms[0]:g} to {ms[-1]:g})")
-    j = min(max(bisect.bisect_left(ms, mach), 1), len(ms) - 1)
-    m0, m1 = ms[j - 1], ms[j]
-    t = 0.0 if m1 == m0 else (mach - m0) / (m1 - m0)
-    t = min(max(t, 0.0), 1.0)
-    return tuple((1 - t) * a + t * b for a, b in zip(table[m0], table[m1]))
+    values = np.array([table[m] for m in ms])
+    return tuple(float(np.interp(mach, ms, values[:, k])) for k in range(values.shape[1]))
 
 
 def main(settings_path):
@@ -344,32 +327,26 @@ def main(settings_path):
     if len(parts) != 1:
         raise DriverError(f"RASAero II needs one body: the model has {len(parts)} fuselages (name it in Body)")
     xs, areas, centres, _ = combine(parts, 300)
-    radius = [math.sqrt(max(a, 0.0) / math.pi) for a in areas]
+    radius = np.sqrt(np.maximum(areas, 0.0) / np.pi)
     nose = fit_nose(xs, radius)
     n_len, big, shape, rms = nose
-    tail = [i for i in range(len(xs)) if xs[i] > xs[0] + n_len]
-    drop = [i for i in tail if radius[i] < 0.95 * big]  # a real boattail
+    tail = np.flatnonzero(xs > xs[0] + n_len)
+    drop = tail[radius[tail] < 0.95 * big]  # a real boattail
     boattail = None
-    if drop and drop[0] > tail[0]:
+    if len(drop) and drop[0] > tail[0]:
         start = xs[drop[0] - 1]
         boattail = (start, xs[-1] - start, 2.0 * radius[-1])
     body = (xs[0], xs[-1], boattail)
-    axis_y = sum(c[0] for c in centres) / len(centres)
-    axis_z = sum(c[1] for c in centres) / len(centres)
+    axis_y, axis_z = centres.mean(axis=0)
 
     def body_radius_at(x):
-        if x <= xs[0] or x >= xs[-1]:
-            return 0.0
-        j = bisect.bisect_right(xs, x)
-        t = (x - xs[j - 1]) / (xs[j] - xs[j - 1])
-        return radius[j - 1] + t * (radius[j] - radius[j - 1])
+        return float(np.interp(x, xs, radius)) if xs[0] < x < xs[-1] else 0.0
 
     text = run_vspscript(vsp_dir, wing_script(model, fin_names), work, case + ".fins", log, timeout)
     surfaces = wing_rings(text)
     if not surfaces:
         raise DriverError("no fin surfaces found")
-    plan = [fin_planform([[(q[0], q[1] - axis_y, q[2] - axis_z) for q in r] for r in rl], body_radius_at)
-            for rl in surfaces.values()]
+    plan = [fin_planform([r - [0.0, axis_y, axis_z] for r in rl], body_radius_at) for rl in surfaces.values()]
     ref = plan[0]
     for p in plan[1:]:  # measured where each fin meets the fitted round body
         for k in ("root_chord", "tip_chord", "span", "sweep"):
@@ -379,7 +356,7 @@ def main(settings_path):
             if gap > 0.01:
                 log(f"warning: the fins differ ({k}: {ref[k]:.4f} vs {p[k]:.4f} m, {100 * gap:.1f}% of the root "
                     "chord); RASAero II takes one fin set: their mean")
-    fins = {k: sum(p[k] for p in plan) / len(plan) for k in ref}
+    fins = {k: float(np.mean([p[k] for p in plan])) for k in ref}
     n_fins = len(plan)
     summary = (f"nose {shape} (RMS of r/R: " + ", ".join(f"{k} {v:.3f}" for k, v in rms.items()) +
                f"), length {n_len:.4f} m, diameter {2 * big:.4f} m; body to x = {xs[-1]:.4f} m"
@@ -392,11 +369,11 @@ def main(settings_path):
 
     # 2. run RASAero II
     def alpha_t(c):
-        a, b = math.radians(c["AoA"]), math.radians(c["Beta"])
-        return math.degrees(math.acos(max(-1.0, min(1.0, math.cos(a) * math.cos(b)))))
+        a, b = np.radians(c["AoA"]), np.radians(c["Beta"])
+        return float(np.degrees(np.arccos(np.clip(np.cos(a) * np.cos(b), -1.0, 1.0))))
 
     # RASAero II's angle-of-attack box takes whole degrees only (it drops a decimal point: 8.94 becomes 894)
-    angles = list(range(0, int(math.ceil(max(alpha_t(c) for c in conds) - 1e-9)) + 1))
+    angles = list(range(0, int(np.ceil(max(alpha_t(c) for c in conds) - 1e-9)) + 1))
     if len(angles) < 2:
         angles = [0, 1]
     started = start_rasaero(folder, log)
@@ -429,7 +406,7 @@ def main(settings_path):
 
     # 3. coefficients on the flight condition's reference
     sref, bref, cref, (xr, yr, zr) = flight.ref
-    scale = math.pi * big * big / sref  # RASAero's coefficients are on the body's cross-section area
+    scale = np.pi * big * big / sref  # RASAero's coefficients are on the body's cross-section area
     rows = []
     for c in conds:
         at = alpha_t(c)
@@ -442,16 +419,12 @@ def main(settings_path):
         # the moment (CN x_cp) is linear between the runs.
         x_cp = ((1 - t) * lo_[0] * lo_[2] + t * hi_[0] * hi_[2]) / cn if abs(cn) > 1e-9 else lo_[3]
         cn, ca = cn * scale, ca * scale
-        a, b = math.radians(c["AoA"]), math.radians(c["Beta"])
-        vy, vz = -math.sin(b), math.sin(a) * math.cos(b)
-        h = math.hypot(vy, vz)
-        cy, cz = (cn * vy / h, cn * vz / h) if h > 1e-12 else (0.0, 0.0)
-        rx, ry, rz = x_cp + xs[0] - xr, axis_y - yr, axis_z - zr  # x_cp is from the nose tip
-        f = (ca, cy, cz)  # CA along +x (aft): drag
-        mx = ry * f[2] - rz * f[1]
-        my = rz * f[0] - rx * f[2]
-        mz = rx * f[1] - ry * f[0]
-        rows.append([c["Mach"], c["Altitude"], c["AoA"], c["Beta"], ca, cy, cz, mx / bref, my / cref, mz / bref,
+        a, b = np.radians(c["AoA"]), np.radians(c["Beta"])
+        v = np.array([-np.sin(b), np.sin(a) * np.cos(b)])  # the crossflow in (y, z)
+        h = np.hypot(*v)
+        f = np.array([ca, *(cn * v / h if h > 1e-12 else (0.0, 0.0))])  # CA along +x (aft): drag
+        m = np.cross([x_cp + xs[0] - xr, axis_y - yr, axis_z - zr], f) / [bref, cref, bref]  # x_cp from the nose tip
+        rows.append([c["Mach"], c["Altitude"], c["AoA"], c["Beta"], *f.tolist(), *m.tolist(),
                      sref, bref, cref, xr, yr, zr])
     write_csv(os.path.join(work, case + ".ntvsp.coefficients.csv"), HEADER_ALT, rows)
     log(f"{len(rows)} conditions written; RASAero II coefficients scaled by {scale:.4f} (body area over Sref)")

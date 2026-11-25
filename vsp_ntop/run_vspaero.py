@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 import csv
-import math
 import os
 import re
 
+import numpy as np
 
 from . import adb
 from . import pressure
@@ -16,6 +16,8 @@ from . import vspgeom
 from .common import (openvsp_dir, DriverError, Log, Settings, fmt, main_wrapper, run, run_vspscript, vsp_path,
                      write_csv, write_point_map)
 from .flight import Flight
+from .geometry import ls_slope, wind_axes
+from .vspmodel import MIRRORS
 
 # Solver settings written to <case>.vspaero, in OpenVSP's order
 SOLVER_KEYS = [
@@ -110,7 +112,7 @@ def read_polar(path):
         elif header is not None and len(r) >= len(header):
             # NaN rows are kept (as nan) for the convergence check.
             values = [_float(v) for v in r[:len(header)]]
-            if not all(math.isnan(v) for v in values[:3]):
+            if not np.isnan(values[:3]).all():
                 data.append(values)
     if header is None:
         raise DriverError(f"{path}: no header line")
@@ -128,7 +130,7 @@ def _float(x):
     try:
         return float(x)
     except ValueError:
-        return math.nan
+        return np.nan
 
 
 def _same(a, b):
@@ -194,13 +196,13 @@ def convergence(work, case, header, data, s: Settings, log):
     for n, row in enumerate(data, start=1):
         cond = (row[i_m], row[i_a], row[i_b])
         rec = next((r for c, r in solves if r and _same(c, cond)), None)
-        wake = next(((it, ch) for c, it, ch in wakes if _same(c, cond)), (0, math.nan))
+        wake = next(((it, ch) for c, it, ch in wakes if _same(c, cond)), (0, np.nan))
         why = []
-        if any(math.isnan(row[i]) or math.isinf(row[i]) for i in coefs):
+        if not np.isfinite([row[i] for i in coefs]).all():
             why.append("non-finite results")
         if rec is None:
             why.append("no solver record in the log")
-            final = (0, 0) + (math.nan,) * 4
+            final = (0, 0) + (np.nan,) * 4
         else:
             final = rec[-1]
             _, its, red, red_t, mx, mx_t = final
@@ -242,30 +244,20 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, l
     condition case (``pressure.py``): p = p_inf + q Cp on thick components."""
     tris = vspgeom.level0(g)
     thin = vspgeom.thin_parts(os.path.join(work, case + ".vkey"))
-    faces = [t for t, _ in tris]
-    is_thin = [g.parts[i] in thin for _, i in tris]
+    faces = np.array([t for t, _ in tris], int)
+    is_thin = np.array([g.parts[i] in thin for _, i in tris], bool)
     nf = len(faces)
-    centroids = [tuple(sum(g.nodes[i][c] for i in f) / 3.0 for c in range(3)) for f in faces]
-    areas = []
-    for f in faces:
-        a, b, c = (g.nodes[i] for i in f)
-        u, v = [b[k] - a[k] for k in range(3)], [c[k] - a[k] for k in range(3)]
-        cx = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
-        areas.append(0.5 * math.sqrt(cx[0] ** 2 + cx[1] ** 2 + cx[2] ** 2))
-    one_pts, one_areas, four_pts, four_areas = [], [], [], []
-    for f, a, c, t in zip(faces, areas, centroids, is_thin):
-        if t:
-            continue
-        one_pts.append(c)
-        one_areas.append(a)
-        p, q_, r = (g.nodes[i] for i in f)
-        pq, qr, rp = ([(u[k] + v[k]) / 2 for k in range(3)] for u, v in ((p, q_), (q_, r), (r, p)))
-        for tri in ((p, pq, rp), (pq, q_, qr), (rp, qr, r), (pq, qr, rp)):
-            four_pts.append(tuple(sum(v[k] for v in tri) / 3.0 for k in range(3)))
-            four_areas.append(a / 4.0)
-    if one_pts:
-        write_point_map(os.path.join(work, case + ".ntvsp.faces.1.csv"), one_pts, one_areas)
-        write_point_map(os.path.join(work, case + ".ntvsp.faces.4.csv"), four_pts, four_areas)
+    corners = g.nodes[faces]  # (face, corner, xyz)
+    centroids = corners.mean(axis=1)
+    areas = 0.5 * np.linalg.norm(np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1)
+    thick = ~is_thin
+    if thick.any():
+        write_point_map(os.path.join(work, case + ".ntvsp.faces.1.csv"), centroids[thick], areas[thick])
+        p, q, r = corners[thick].transpose(1, 0, 2)
+        pq, qr, rp = 0.5 * (p + q), 0.5 * (q + r), 0.5 * (r + p)
+        four = np.stack([(p + pq + rp) / 3.0, (pq + q + qr) / 3.0, (rp + qr + r) / 3.0, (pq + qr + rp) / 3.0], axis=1)
+        write_point_map(os.path.join(work, case + ".ntvsp.faces.4.csv"), four.reshape(-1, 3),
+                        np.repeat(areas[thick] / 4.0, 4))
     mode = s.text("export_pressure", "off").strip().lower()
     if mode not in PRESSURE_POINTS:
         raise DriverError(f"export_pressure = {mode}: expected one of {', '.join(PRESSURE_POINTS)}")
@@ -287,8 +279,7 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, l
         f"{err:.1e})")
     i_mach, i_aoa, i_beta = header.index("Mach"), header.index("AoA"), header.index("Beta")
     i_re = header.index("Re/1e6")
-    kinds = {"pressure": [k for k in range(nf) if not is_thin[k]], "pressure_jump": [k for k in range(nf) if is_thin[k]]}
-    nodes = {kind: sorted({i for k in sel for i in faces[k]}) for kind, sel in kinds.items()}
+    kinds = {"pressure": np.flatnonzero(thick), "pressure_jump": np.flatnonzero(is_thin)}
 
     def solution(row):
         # VSPAERO solves Mach 0 as Mach 0.001 and lists it so in .adb.cases.
@@ -296,7 +287,7 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, l
         match = [k for k, c in enumerate(cases) if all(abs(a - b) < 1e-5 for a, b in zip(c, cond))]
         if not match:
             raise DriverError(f"no surface solution for Mach {cond[0]}, alpha {cond[1]}, beta {cond[2]}")
-        return blocks[match[0]][:nf]
+        return np.asarray(blocks[match[0]][:nf])
 
     written = []
     for fc in flight.conditions:
@@ -304,28 +295,27 @@ def surface_outputs(work, case, g: vspgeom.VSPGeom, s: Settings, header, data, l
                 and abs(r[i_beta] - fc["Beta"]) < 1e-6]
         if not rows:
             continue  # outside the Mach numbers this run solved (Mach Min / Mach Max)
-        row = min(rows, key=lambda r: abs(math.log(max(r[i_re] * 1e6, 1.0)) - math.log(max(fc["Re_cref"], 1.0))))
+        row = min(rows, key=lambda r: abs(np.log(max(r[i_re] * 1e6, 1.0)) - np.log(max(fc["Re_cref"], 1.0))))
         cp = solution(row)
         q, p_inf = fc["Dynamic_Pressure"], fc["Pressure"]
         for kind, sel in kinds.items():
-            if not sel:
+            if not len(sel):
                 continue
             offset = p_inf if kind == "pressure" else 0.0  # the jump is q Delta Cp
             pts, vals = [], []
             if mode in ("centroids", "both"):
-                pts += [centroids[k] for k in sel]
-                vals += [offset + q * cp[k] for k in sel]
-            if mode in ("nodes", "both"):
-                node_sum, node_w = {}, {}
-                for k in sel:
-                    for i in faces[k]:
-                        node_sum[i] = node_sum.get(i, 0.0) + areas[k] * cp[k]
-                        node_w[i] = node_w.get(i, 0.0) + areas[k]
-                pts += [g.nodes[i] for i in nodes[kind]]
-                vals += [offset + q * node_sum[i] / node_w[i] for i in nodes[kind]]
-            pressure.write(base, fc["Case"], pts, vals, kind)
+                pts.append(centroids[sel])
+                vals.append(offset + q * cp[sel])
+            if mode in ("nodes", "both"):  # area-weighted average of the faces around each node
+                at = faces[sel].ravel()
+                used = np.unique(at)
+                num = np.bincount(at, np.repeat(areas[sel] * cp[sel], 3), len(g.nodes))
+                den = np.bincount(at, np.repeat(areas[sel], 3), len(g.nodes))
+                pts.append(g.nodes[used])
+                vals.append(offset + q * num[used] / den[used])
+            pressure.write(base, fc["Case"], np.vstack(pts), np.concatenate(vals), kind)
         written.append(int(fc["Case"]))
-    which = " and ".join(k for k, sel in kinds.items() if sel)
+    which = " and ".join(k for k, sel in kinds.items() if len(sel))
     where = {"centroids": "centroids", "nodes": "nodes", "both": "centroids and nodes"}[mode]
     log(f"{which} (Pa) at the panels' {where} of flight condition cases {', '.join(map(str, written))}")
 
@@ -347,14 +337,9 @@ def pressure_centers(work, case, header, data, s: Settings, log):
         groups.setdefault((row[i["Mach"]], row[i["Beta"]], row[i["Re/1e6"]]), []).append(row)
     ac = []
     for (m, b, re), rows_g in groups.items():
-        f = [r[i["CFiz"]] for r in rows_g]
-        c = [r[i["CMiy"]] for r in rows_g]
-        n = len(f)
-        mf, mc = sum(f) / n, sum(c) / n
-        sff = sum((x - mf) ** 2 for x in f)
-        if n < 2 or sff < 1e-12:
+        slope = ls_slope([r[i["CFiz"]] for r in rows_g], [r[i["CMiy"]] for r in rows_g])
+        if slope is None:
             continue
-        slope = sum((x - mf) * (y - mc) for x, y in zip(f, c)) / sff
         ac.append([m, b, re * 1e6, xr - slope * cref, yr, zr, slope])
     write_csv(os.path.join(work, case + ".ntvsp.aerodynamic_center.csv"),
               ["Mach", "Beta", "Re_cref", "X", "Y", "Z", "dCMy_dCFz"], ac)
@@ -392,7 +377,7 @@ def read_lod(path):
                     cur.append([float(x) for x in p[:39]])
                 except ValueError:
                     pass
-    return cases
+    return {k: np.array(v, float).reshape(-1, 39) for k, v in cases.items()}
 
 
 def exposed_wings(model_vsp3):
@@ -406,28 +391,21 @@ def exposed_wings(model_vsp3):
         for r in csv.DictReader(f):
             if r["Accounting"] not in ("exposed", "carryover"):
                 continue
-            s, n, q = ([float(r[k + c]) for c in "xyz"] for k in ("S", "N", "Q"))
-            flips = {"none": [(1, 1)], "xz": [(1, 1), (-1, 1)], "xy": [(1, 1), (1, -1)],
-                     "xzxy": [(1, 1), (-1, 1), (1, -1), (-1, -1)]}[r["Symmetry"]]
-            copies = []
-            for fy, fz in flips:
-                m = lambda v: (v[0], fy * v[1], fz * v[2])  # noqa: E731
-                copies.append((m(s), m(n), m(q), float(r["Root_Span"])))
-            out.append((r["Name"], copies))
+            s, n, q = (np.array([float(r[k + c]) for c in "xyz"]) for k in ("S", "N", "Q"))
+            out.append((r["Name"], [(m * s, m * n, m * q, float(r["Root_Span"])) for m in MIRRORS[r["Symmetry"]]]))
     return out
 
 
-def inboard(strip, wings):
-    """Whether a strip lies on an Exposed Strip wing inboard of its root: between the origin plane and the root,
-    in the wing's own plane."""
-    p = strip[3:6]
+def inboard(strips, wings):
+    """Which strips lie on an Exposed Strip wing inboard of its root: between the origin plane and the root, in the
+    wing's own plane."""
+    p = strips[:, 3:6]
+    out = np.zeros(len(strips), bool)
     for _, copies in wings:
         for s, n, q, root in copies:
-            along = sum(a * b for a, b in zip(p, s))
-            off = abs(sum((a - b) * c for a, b, c in zip(p, q, n)))
-            if -1e-6 <= along < root * (1.0 - 1e-6) and off <= 0.05 * max(root, 1e-6) + 1e-6:
-                return True
-    return False
+            along, off = p @ s, np.abs((p - q) @ n)
+            out |= (-1e-6 <= along) & (along < root * (1.0 - 1e-6)) & (off <= 0.05 * max(root, 1e-6) + 1e-6)
+    return out
 
 
 def exposed_accounting(header, data, lod_path, wings, s: Settings, log):
@@ -443,25 +421,25 @@ def exposed_accounting(header, data, lod_path, wings, s: Settings, log):
         if strips is None:
             raise DriverError(f"Force Accounting: no spanwise loads for Mach {k[0]:g}, alpha {k[1]:g}, beta {k[2]:g} "
                               f"in {lod_path}")
-        inner = [st for st in strips if inboard(st, wings)]
-        lift_all = sum(st[17] * st[9] for st in strips)
-        if abs(lift_all) > 1e-3 * sum(st[9] for st in strips):  # skip conditions without lift
-            shares.append(sum(st[17] * st[9] for st in inner) / lift_all)
+        inner = strips[inboard(strips, wings)]
+        lift_all = strips[:, 17] @ strips[:, 9]
+        if abs(lift_all) > 1e-3 * strips[:, 9].sum():  # skip conditions without lift
+            shares.append(inner[:, 17] @ inner[:, 9] / lift_all)
         for name, j in LOD_FORCES.items():
             if name in col:
-                row[col[name]] -= sum(st[j] * st[9] for st in inner) / sref
+                row[col[name]] -= float(inner[:, j] @ inner[:, 9]) / sref
         for name, (j, length) in LOD_MOMENTS.items():
             if name in col:
-                row[col[name]] -= sum(st[j] * st[9] * st[8] for st in inner) / (sref * ref[length])
+                row[col[name]] -= float(inner[:, j] @ (inner[:, 9] * inner[:, 8])) / (sref * ref[length])
         if "L/D" in col and abs(row[col["CDtot"]]) > 1e-12:
             row[col["L/D"]] = row[col["CLtot"]] / row[col["CDtot"]]
-    first = next(iter(cases.values()), [])
-    n_in = sum(1 for st in first if inboard(st, wings))
+    first = next(iter(cases.values()), np.empty((0, 39)))
+    n_in = int(inboard(first, wings).sum())
     log(f"Force Accounting Exposed Strip ({', '.join(w for w, _ in wings)}): {n_in} inboard strips left out; they "
         + (f"carried {100 * min(shares):.0f} to {100 * max(shares):.0f}% of the inviscid lift" if shares else ""))
 
 
-def carryover_fins(model_vsp3):
+def read_carryover(model_vsp3):
     """Each copy of the wings with Force Accounting Exposed Strip + Carry-over, as OpenVSP Model measured it
     (``.ntvsp.carryover.csv``)."""
     path = model_vsp3[:-5] + ".ntvsp.carryover.csv"
@@ -478,44 +456,35 @@ def carryover_accounting(header, data, lod_path, fins, s: Settings, log):
     from . import carryover as CO
     cases = read_lod(lod_path)
     sref, ref = s.real("sref"), {"bref": s.real("bref"), "cref": s.real("cref")}
-    xyz = (s.real("xcg"), s.real("ycg"), s.real("zcg"))
+    xyz = np.array([s.real("xcg"), s.real("ycg"), s.real("zcg")])
     col = {h: i for i, h in enumerate(header)}
     factors, notes = {}, {}
     for row in data:
         mach, a, b = (row[col[c]] for c in ("Mach", "AoA", "Beta"))
         strips = cases[tuple(round(v, 6) for v in (mach, a, b))]
-        force, moment = [0.0] * 3, [0.0] * 3
+        p = strips[:, 3:6]
+        force, moment = np.zeros(3), np.zeros(3)
         for f in fins:
-            sv, nv, q = (tuple(f[k + c] for c in "xyz") for k in ("S", "N", "Q"))
-            fin_n = 0.0
-            for st in strips:
-                p = st[3:6]
-                along = sum(x * y for x, y in zip(p, sv))
-                off = abs(sum((x - y) * z for x, y, z in zip(p, q, nv)))
-                if f["Root"] * (1.0 - 1e-6) <= along <= f["Semispan"] * 1.02 and off <= 0.05 * f["Semispan"]:
-                    fin_n += sum(st[20 + i] * nv[i] for i in range(3)) * st[9] / sref
+            sv, nv, q = (np.array([f[k + c] for c in "xyz"]) for k in ("S", "N", "Q"))
+            along, off = p @ sv, np.abs((p - q) @ nv)
+            on = (f["Root"] * (1.0 - 1e-6) <= along) & (along <= f["Semispan"] * 1.02) & (off <= 0.05 * f["Semispan"])
+            fin_n = (strips[on, 20:23] @ nv) @ strips[on, 9] / sref
             key = (f["Name"], f["Copy"], round(mach, 6))
             if key not in factors:
                 factors[key] = CO.body_factor(mach, f["Root"], f["Semispan"], f["Root_Chord"], f["Tip_Chord"],
                                               f["LE_Slope"], f["Planform"], f["Body_Width"], f["Body_Length"])
             k, xi, eta, method = factors[key]
             notes[(f["Name"], round(mach, 6))] = (k, method)
-            dF = [k * fin_n * c for c in nv]
-            at = [q[i] + xi * (1.0 if i == 0 else 0.0) - eta * sv[i] - xyz[i] for i in range(3)]
-            dM = (at[1] * dF[2] - at[2] * dF[1], at[2] * dF[0] - at[0] * dF[2], at[0] * dF[1] - at[1] * dF[0])
-            force = [x + y for x, y in zip(force, dF)]
-            moment = [x + y for x, y in zip(moment, dM)]
-        al, be = math.radians(a), math.radians(b)
-        V = (math.cos(al) * math.cos(be), -math.sin(be), math.sin(al) * math.cos(be))
-        L = (-math.sin(al), 0.0, math.cos(al))
-        S = (math.cos(al) * math.sin(be), math.cos(be), math.sin(al) * math.sin(be))
-        dot3 = lambda u: sum(x * y for x, y in zip(u, force))  # noqa: E731
-        add = {"L": dot3(L), "D": dot3(V), "S": dot3(S), "Fx": force[0], "Fy": force[1], "Fz": force[2],
+            d_force = k * fin_n * nv
+            force += d_force
+            moment += np.cross(q + [xi, 0.0, 0.0] - eta * sv - xyz, d_force)
+        v, lift, side = wind_axes(a, b)
+        add = {"L": lift @ force, "D": v @ force, "S": side @ force, "Fx": force[0], "Fy": force[1], "Fz": force[2],
                "Mx": moment[0] / ref["bref"], "My": moment[1] / ref["cref"], "Mz": moment[2] / ref["bref"]}
         for q_, v in add.items():
             for name in (f"C{q_}i", f"C{q_}tot") if len(q_) == 1 else (f"C{q_[0]}i{q_[1]}", f"C{q_}tot"):
                 if name in col:
-                    row[col[name]] += v
+                    row[col[name]] += float(v)
         if "L/D" in col and abs(row[col["CDtot"]]) > 1e-12:
             row[col["L/D"]] = row[col["CLtot"]] / row[col["CDtot"]]
     for (name, mach), (k, method) in sorted(notes.items()):
@@ -604,7 +573,7 @@ def main(settings_path):
                   ["Case"] + [clean(h) for h in header] + ["Converged"],
                   [[i] + list(row) + [f] for i, (row, f) in enumerate(zip(data, flags), start=1)])
         exposed_accounting(header, data, os.path.join(work, case + ".lod"), wings, s, log)
-        fins = carryover_fins(model)
+        fins = read_carryover(model)
         if fins:
             carryover_accounting(header, data, os.path.join(work, case + ".lod"), fins, s, log)
     write_csv(os.path.join(work, case + ".ntvsp.polar.csv"), ["Case"] + [clean(h) for h in header] + ["Converged"],

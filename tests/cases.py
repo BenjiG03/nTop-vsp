@@ -1,5 +1,5 @@
 """The E2E cases, shared by the tests and the local notebook generator."""
-import math
+import numpy as np
 
 MACHS = (3.0, 8.0)
 ALPHAS = (0.0, 10.0, 30.0)
@@ -12,7 +12,7 @@ CONE_LENGTH = 0.1  # m
 MESH_TOL = 0.5e-3  # m (finer takes many GB)
 COARSE_TOL = 2e-3  # m, for the pressure export
 USER_CP_MAX = 1.5
-DEG = math.radians(1.0)
+DEG = np.radians(1.0)
 
 # (case name, block kind, body, Stagnation Pressure index, extra choice inputs: name -> index)
 CASES = (

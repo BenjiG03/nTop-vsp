@@ -9,7 +9,7 @@ import os
 import subprocess
 import sys
 
-from .common import DriverError, Log, Settings, conda_dll_dirs
+from .common import DriverError, Log, Settings
 
 AXIS_LABELS = {"AoA": "angle of attack (deg)", "Beta": "sideslip (deg)", "Mach": "Mach number", "Altitude": "altitude (m)",
                "L_over_D": "L/D"}
@@ -98,7 +98,6 @@ def figure(s: Settings):
 
 
 def main(settings_path, show_only=False):
-    conda_dll_dirs()
     s = Settings(settings_path)
     if show_only:
         import matplotlib.pyplot as plt

@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
+
 
 @dataclass
 class VSPGeom:
-    nodes: list            # (x, y, z)
+    nodes: np.ndarray      # (n, 3)
     faces: list            # [node index, ...], 0-based
     parts: list            # part number of each face (1-based, as in the .vkey file)
     wakes: list            # (part, [node index, ...])
@@ -31,7 +33,7 @@ def read(path) -> VSPGeom:
     head = lines[2].split()
     n_nodes, n_faces = int(head[0]), int(head[1])
     pos = 3
-    nodes = [tuple(map(float, lines[pos + i].split()[:3])) for i in range(n_nodes)]
+    nodes = np.array([lines[pos + i].split()[:3] for i in range(n_nodes)], float).reshape(n_nodes, 3)
     pos += n_nodes
     if int(lines[pos].split()[0]) != n_faces:
         raise ValueError(f"{path}: face count mismatch")

@@ -11,7 +11,6 @@ from . import step_write as W
 from .common import DriverError, Log, Settings, main_wrapper, write_csv
 from .run_model import contours, frame_of, num, parse_components
 
-X = (1.0, 0.0, 0.0)
 EDGE_NAMES = ("right", "bottom", "left", "top")
 
 

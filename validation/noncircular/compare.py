@@ -49,7 +49,7 @@ def carryover_term(flight, case="vspaero", model="model"):
     data = [[float(r[h]) if h in keep else 0.0 for h in header] for r in rows]
     sref, bref, cref, (xr, yr, zr) = flight.ref
     s = _S(sref=sref, bref=bref, cref=cref, xcg=xr, ycg=yr, zcg=zr)
-    fins = rv.carryover_fins(f"{W}/{model}.vsp3")
+    fins = rv.read_carryover(f"{W}/{model}.vsp3")
     rv.carryover_accounting(header, data, f"{W}/{case}.lod", fins, s, lambda *_: None)
     import shutil
     shutil.copy(f"{W}/{case}.ntvsp.settings.txt", f"{W}/{case}_carry_only.ntvsp.settings.txt")
